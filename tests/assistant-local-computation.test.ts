@@ -20,6 +20,14 @@ describe('shared local computation capability', () => {
     expect(result?.claims[0].support).toContain(result?.evidence[0]?.id);
   });
 
+  it('renders an Arabic lead while preserving the computed unit expression', () => {
+    const result = evaluateLocalComputation('Convert 3.5 kilometres to metres.', now, undefined, { lang: 'ar' });
+    const evidence = result?.evidence.find(item => item.id === 'calculation');
+    expect(result?.status).toBe('completed');
+    expect(evidence?.value).toBe(String(3.5 * 1000));
+    expect(result?.text).toBe(`النتيجة: «${evidence?.quote}».`);
+  });
+
   it.each([
     ['Calculate 2^100.', 'number range'],
     ['احسب ٧ ÷ ٠', 'صفر'],

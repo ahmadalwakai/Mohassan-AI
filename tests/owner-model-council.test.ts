@@ -89,6 +89,16 @@ describe('owner model council over signed-in sessions', () => {
     expect(share.statusCode).toBe(409);
   });
 
+  it('passes the turn constraints to the council and stores a trimmed reply with its model label', async () => {
+    const verses = ['ضوء القمر فوق التلال.', 'يلمع فوق الطريق.', 'يغيب مع الفجر.'];
+    mockGenerate.mockResolvedValue(verses.join(' '));
+    const conversation = await sendNew(`${goal.slice(0, -1)} in two Arabic sentences.`, ownerCookie);
+    expect(conversation.status, JSON.stringify({ question: conversation.question, error: conversation.error })).toBe('idle');
+    expect(conversation.messages.at(-1)).toMatchObject({ role: 'assistant', experiment: 'v5',
+      text: `${verses.slice(0, 2).join(' ')}\n\n${V5_CHAT_LABEL}`, council: { chosen: 'chat-v5' } });
+    expect(mockGenerate.mock.calls[0]?.[1]?.at(-1)?.content).toMatch(/Arabic\.[\s\S]*2 sentences/u);
+  });
+
   it('keeps a local answer and records that the pipeline stood', async () => {
     const calculation = await sendNew('احسب 37 × 24', ownerCookie);
     const reply = calculation.messages.at(-1);

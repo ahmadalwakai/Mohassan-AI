@@ -7,6 +7,7 @@ import type { z } from 'zod';
 import { tryEnterPhase } from '../agent-run.js';
 import type { BrainState } from '../brain.js';
 import { recognizeEverydayClarification } from '../everyday-clarification.js';
+import { replyConstraintsFor } from '../reply-turn.js';
 import { parseUserRequestConstraints } from '../request-constraints.js';
 import { parseRequestContextState, resolveRequestContext } from '../request-context.js';
 import type { RequestRoutingInput, RequestRoutingDecision } from '../routing-decision.js';
@@ -102,7 +103,9 @@ async function completeSocialRun(admission: Admission, detection: MannersDetecti
   if (state.routing && state.routing.handler !== 'local_conversation') return admission.dispatch(ownerId, id, runId, token);
   const full = await admission.fullAccess?.(ownerId) ?? true;
   const facts = detection.act === 'capabilities' ? await admission.capabilitiesFor(ownerId) : undefined;
-  const reply = renderMannersReply(detection, facts, runId).text;
+  const constraints = replyConstraintsFor(state);
+  const language = constraints?.lang ?? detection.language;
+  const reply = renderMannersReply({ ...detection, language, dialect: language === detection.language ? detection.dialect : null }, facts, runId).text;
   tryEnterPhase(state.agentRun, 'understanding', Date.now());
   await admission.execution.run({ ownerId, id, runId, token, request: run.goal, state, full, controller: new AbortController() }, async () => {
     try {
@@ -133,6 +136,8 @@ export async function admitManners<T>(admission: Admission,
   const clause = renderMannersClause(turn.detection, facts, randomUUID());
   return proceed({ ...input, text: turn.request }, mannersRequestHash(requestOriginalHash, input.text, turn.request), async (tx, id, role) => {
     await addMessage(tx, id, role, input.text);
+    const constraints = replyConstraintsFor();
+    if (constraints?.lang || constraints?.brief || constraints?.sentences || constraints?.list !== undefined || constraints?.links !== undefined) return;
     await tx.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role: 'assistant', text: clause,
       created_at: sql`CURRENT_TIMESTAMP + interval '1 microsecond'` }).execute();
   }, dispatch);

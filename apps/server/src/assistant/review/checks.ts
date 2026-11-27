@@ -1,4 +1,6 @@
 import { questionLanguage } from '../answer-check.js';
+import { enforceReplyConstraints } from '../reply-constraint-review.js';
+import type { ReplyConstraints } from '../reply-directive.js';
 import { coverageTokens, uncoveredParts } from './coverage.js';
 import { comparable } from './language.js';
 import {
@@ -10,10 +12,11 @@ import { checkPreferences } from './preferences.js';
 export const REVIEW_CHECKS = ['contradiction', 'coverage', 'commitments', 'corrections', 'preferences', 'repetition'] as const;
 export type ReviewCheck = typeof REVIEW_CHECKS[number];
 export interface ReviewFinding { check: ReviewCheck; code: string }
-export interface ReviewResult { action: 'send' | 'fix' | 'note'; reply: string; findings: ReviewFinding[] }
+export interface ReviewResult { action: 'send' | 'fix' | 'note'; reply: string; findings: ReviewFinding[]; withheld?: boolean }
 export interface ReviewOptions {
   status?: string | null;
   evidence?: readonly { text: string }[];
+  constraints?: ReplyConstraints;
   /** A host-owned transcript, quote, receipt, or prompt must keep its text verbatim. */
   preserveContent?: boolean;
 }
@@ -274,9 +277,12 @@ function requestParts(ledger: ConversationLedger, request: string): RequestPart[
 
 export function reviewReply(ledger: ConversationLedger, draft: string, options: ReviewOptions = {}): ReviewResult {
   const request = ledger.messages[ledger.currentRequestIndex]?.content ?? '';
-  const preferences = ledger.preferences;
+  // The current turn has already merged these fields with durable preferences. The transcript can contain deleted or superseded values.
+  const preferences = options.constraints ? ledger.preferences.filter(preference => preference.kind !== 'language'
+    && !(preference.kind === 'length' && (preference.limit === 'sentences' || ['short', 'detailed'].includes(preference.value)))
+    && !(preference.kind === 'format' && ['bullets', 'numbered'].includes(preference.value))) : ledger.preferences;
   const preferredLanguage = preferences.findLast(preference => preference.kind === 'language')?.value;
-  const lang = preferredLanguage === 'ar' || preferredLanguage === 'en' ? preferredLanguage : questionLanguage(request || draft);
+  const lang = options.constraints?.lang ?? (preferredLanguage === 'ar' || preferredLanguage === 'en' ? preferredLanguage : questionLanguage(request || draft));
   const findings: ReviewFinding[] = [];
   const unresolved = new Set<ReviewCheck>();
   const add = (check: ReviewCheck, code: string, resolved = false) => {
@@ -284,6 +290,12 @@ export function reviewReply(ledger: ConversationLedger, draft: string, options: 
     if (!resolved) unresolved.add(check);
   };
   const allowEdits = !options.preserveContent && !literalSource.test(draft);
+  const finalize = (candidate: string, action: ReviewResult['action']): ReviewResult => {
+    const checked = enforceReplyConstraints(candidate, options.constraints);
+    for (const code of checked.findings) add('preferences', code, true);
+    return { action: action === 'send' && checked.text !== draft ? 'fix' : action, reply: checked.text, findings,
+      ...(checked.withheld ? { withheld: true } : {}) };
+  };
   const currentParts = requestParts(ledger, request);
   const claims = getClaims(draft);
   let reply = draft;
@@ -331,7 +343,7 @@ export function reviewReply(ledger: ConversationLedger, draft: string, options: 
     const knownViolations = new Set(checkPreferences(preferences, reply, request).map(issue => issue.code));
     const introducesViolation = checkPreferences(preferences, candidate, request).some(issue =>
       !knownViolations.has(issue.code) && ['reply_format', 'reply_length', 'avoided_content'].includes(issue.code));
-    if (candidate !== reply && (!introducesViolation || replacement)) return { action: 'note', reply: candidate, findings };
+    if (candidate !== reply && (!introducesViolation || replacement)) return finalize(candidate, 'note');
   }
-  return { action: reply === draft ? 'send' : 'fix', reply, findings };
+  return finalize(reply, reply === draft ? 'send' : 'fix');
 }

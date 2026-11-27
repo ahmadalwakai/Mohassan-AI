@@ -1,6 +1,7 @@
 import { buildFrame } from './mind/frame.js';
 import { limits, type LocalReply } from './mind/limits.js';
 import { matchText, normalizeRequest, stripCourtesyTail } from './mind/normalize.js';
+import { replyBodyFor, replyConstraintsFor } from './reply-turn.js';
 import { scratchLocalReply } from './scratch-reply.js';
 import type { RequestRoutingDecision } from './routing-decision.js';
 
@@ -9,11 +10,13 @@ const IDENTITY = /^(?:who (?:are you|made you|created you|developed you|built yo
 /** Fixed application facts and standalone greetings need no model or public lookup. */
 export function evaluateLocalConversation(request: string, routing?: Pick<RequestRoutingDecision, 'reason'>): LocalReply | null {
   if (!request.trim() || request.length > 4000) return null;
-  const frame = buildFrame(request);
+  const body = replyBodyFor(request);
+  const frame = buildFrame(body);
+  frame.lang = replyConstraintsFor()?.lang ?? frame.lang;
   const learnedReply = scratchLocalReply(frame, routing);
   if (learnedReply?.status === 'blocked') return learnedReply;
   if (frame.intent === 'smalltalk') return limits(frame);
-  const normalized = normalizeRequest(request);
+  const normalized = normalizeRequest(body);
   const text = stripCourtesyTail(matchText(normalized.text));
   if (!IDENTITY.test(text)) return learnedReply;
   const nameOnly = /^(?:اذكر اسمك|ما اسمك|وش اسمك|ايش اسمك)|\b(?:your name|called)\b/iu.test(text);

@@ -1,7 +1,7 @@
 import { analyzeCompoundRequest } from '../compound-request.js';
 import type { HandsStep } from '../hands.js';
 import type { Evidence, Lang } from '../mind/contract.js';
-import { requestLanguage, splitReplyDirective } from '../reply-directive.js';
+import { requestLanguage, splitReplyDirective, type ReplyConstraints } from '../reply-directive.js';
 import { reasonCalendar } from './calendar.js';
 import { isComparisonRequest, reasonComparison, type ComparisonPage } from './comparison.js';
 import { reasonConversationComparison } from './comparison-conversation.js';
@@ -63,9 +63,9 @@ function comparePreviousTurn(body: string, previous: string, lang: Lang): Reason
   return reasonComparison(question, lang, evidence);
 }
 
-export function evaluateLocalReasoning(request: string, now: Date, context: ReasoningContext = {}): ReasoningResult | null {
+export function evaluateLocalReasoning(request: string, now: Date, context: ReasoningContext = {}, reply?: ReplyConstraints): ReasoningResult | null {
   if (!reasoningEnabled()) return null;
-  const { body, directive } = splitReplyDirective(request);
+  const { body, directive } = reply ? { body: request, directive: reply } : splitReplyDirective(request);
   if (directive?.fields?.length) return null;
   const lang = directive?.lang ?? requestLanguage(body);
   if (!context.pages?.length && !context.evidence?.length && isPageReasoningRequest(body)) return null;

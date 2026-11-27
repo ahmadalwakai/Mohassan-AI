@@ -3,6 +3,7 @@ import { performance } from 'node:perf_hooks';
 import type { Kysely } from 'kysely';
 import type { JudgeVerdict } from '../judge.js';
 import type { JudgeShadowInput } from '../judge-shadow.js';
+import { enforceReplyConstraints } from '../reply-constraint-review.js';
 import { reviewReply, type ReviewFinding, type ReviewResult } from './checks.js';
 import { buildConversationLedger, buildConversationSummary, SUMMARY_MIN_MESSAGES, type ConversationLedger, type ConversationSummary, type ReviewMessage } from './ledger.js';
 
@@ -28,6 +29,7 @@ const activeReview = new AsyncLocalStorage<{
   ledger?: ConversationLedger;
   startedAt: number;
   replacement?: string;
+  withheld?: boolean;
 }>();
 
 export function conversationReviewForJudge(input: JudgeShadowInput, verdict: JudgeVerdict, applied: boolean): ConversationReviewLog | undefined {
@@ -40,10 +42,15 @@ export function conversationReviewForJudge(input: JudgeShadowInput, verdict: Jud
   try {
     const { clean, allowApply } = scope.context;
     const preserveContent = withheld || !allowApply || Boolean(input.evidence?.some(source => source.kind === 'page'));
-    const result = reviewReply(scope.ledger, clean(candidate), { status: input.status, evidence: input.evidence, preserveContent });
+    const result = reviewReply(scope.ledger, clean(candidate), { status: input.status, evidence: input.evidence, preserveContent, constraints: input.constraints });
     if (allowApply && !withheld && process.env.MOHASSAN_CONVERSATION_REVIEW_APPLY === '1' && result.action !== 'send') {
-      if (!preserveContent) scope.replacement = clean(result.reply);
+      if (!preserveContent) { scope.replacement = clean(result.reply); scope.withheld = result.withheld; }
       else if (result.reply.startsWith(candidate)) scope.replacement = candidate + clean(result.reply.slice(candidate.length));
+    }
+    if (input.constraints) {
+      const checked = enforceReplyConstraints(scope.replacement ?? candidate, input.constraints);
+      if (checked.text !== candidate) scope.replacement = checked.text;
+      scope.withheld ||= checked.withheld;
     }
     return {
       version: 1, action: result.action, applied: scope.replacement !== undefined && scope.replacement !== candidate,
@@ -89,7 +96,7 @@ export async function reviewJudgedReply<T extends { text: string; withheld: bool
   const scope: NonNullable<ReturnType<typeof activeReview.getStore>> = { context, ledger, startedAt };
   try {
     const judged = activeReview.run(scope, judgeReply);
-    return scope.replacement === undefined ? judged : { ...judged, text: scope.replacement };
+    return scope.replacement === undefined ? judged : { ...judged, text: scope.replacement, withheld: judged.withheld || Boolean(scope.withheld) };
   } finally {
     // The judge queues its file write. Do not retain the transcript through it.
     scope.ledger = undefined;

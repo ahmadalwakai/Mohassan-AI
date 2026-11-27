@@ -4,6 +4,7 @@ import { fixedReply, type LocalReply } from './mind/limits.js';
 import { matchText } from './mind/normalize.js';
 import { explicitKnowledgeDocumentRequest, knowledgeSummaryRequest, mentionsKnowledgeDocument, requestsKnowledgeSummary } from './knowledge-document-request.js';
 import { summarizeKnowledgeDocument } from './knowledge-summary.js';
+import { replyBodyFor, replyConstraintsFor } from './reply-turn.js';
 
 export interface LocalKnowledgeDocument { title: string; text: string; source: string }
 export interface LocalKnowledgeDeps {
@@ -114,7 +115,9 @@ export async function evaluateLocalKnowledge(request: string, deps: LocalKnowled
     options: LocalKnowledgeOptions = {}): Promise<LocalReply | null> {
   signal.throwIfAborted();
   if (typeof request !== 'string' || !request.trim() || request.length > 4000) return null;
+  request = replyBodyFor(request);
   const frame = buildFrame(request);
+  frame.lang = replyConstraintsFor()?.lang ?? frame.lang;
   const folded = matchText(frame.text);
   const documentRequest = isKnowledgeDocumentRequest(folded);
   const explicitDocument = explicitKnowledgeDocumentRequest(request);

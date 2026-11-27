@@ -209,13 +209,13 @@ export function ownWords(line: string): string {
  * One line against one question. `topic` are the question's subject words (hands.topicWords), folded; when given,
  * a line sharing none of them is off topic.
  */
-export function checkAnswerLine(question: string, line: string, options: { topic?: readonly string[]; fold?: (text: string) => string } = {}): AnswerLineCheck {
+export function checkAnswerLine(question: string, line: string, options: { topic?: readonly string[]; fold?: (text: string) => string; lang?: 'ar' | 'en' } = {}): AnswerLineCheck {
   const reasons: AnswerProblem[] = [];
   const text = line.trim();
   if (isMetaLine(text)) reasons.push('meta_line');
   if (isUiText(text)) reasons.push('ui_text');
   // Judge the line's own words; a quoted English title inside an Arabic frame stays Arabic. A quote alone (no frame) is judged as it is.
-  const own = ownWords(text).trim(), asked = questionLanguage(question);
+  const own = ownWords(text).trim(), asked = options.lang ?? questionLanguage(question);
   let answered: AnswerLanguage = textLanguage(own || text);
   // A short frame («وصلت إلى …:») has too few letters to count; the script it is written in still names its language.
   if (answered === 'none' && own) { const arabic = /\p{Script=Arabic}/u.test(own), latin = /[A-Za-z]/u.test(own); answered = arabic && !latin ? 'ar' : latin && !arabic ? 'en' : 'none'; }

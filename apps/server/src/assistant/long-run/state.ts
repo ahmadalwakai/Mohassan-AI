@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { SiteBriefSchema } from '@mohassan/contracts';
 import { createRunLedger, enterPhase, planStep, RunLedgerSchema, setPlan } from '../agent-run.js';
+import type { ReplyConstraints } from '../reply-directive.js';
+import { ReplyConstraintsSchema } from '../reply-preferences.js';
 
 export const LONG_RUN_WORKER = 'response-policy-long-run-v1';
 export const LONG_RUN_LIMITS = {
@@ -32,6 +34,7 @@ const checkpoint = z.object({
   version: z.literal(1),
   background: background.optional(),
   language: z.enum(['ar', 'en']),
+  replyConstraints: ReplyConstraintsSchema.optional(),
   steps: z.array(step).min(1).max(LONG_RUN_LIMITS.steps),
   next: z.number().int().min(0).max(LONG_RUN_LIMITS.steps),
   resources: z.number().int().min(0).max(LONG_RUN_LIMITS.resourceUnits),
@@ -70,15 +73,16 @@ function acceptance(operation: LongRunStep, language: LongRunLanguage) {
 }
 const capability = { search: 'web.search', read_source: 'web.read', monitor: 'web.read', prepare_site: 'local.computation', build_site: 'site.build' } as const;
 
-export function initialLongRunState(id: string, plan: LongRunPlan, at: number): LongRunState {
+export function initialLongRunState(id: string, plan: LongRunPlan, at: number, replyConstraints?: ReplyConstraints): LongRunState {
+  const language = replyConstraints?.lang ?? plan.language;
   const ledger = createRunLedger({ runId: id, at, path: 'action' });
   enterPhase(ledger, 'understanding', at);
   enterPhase(ledger, 'planning', at);
   const operations = plan.steps.map((operation, index) => planStep({
     id: stepId(index),
     capability: capability[operation.kind],
-    outcome: label(operation, plan.language),
-    acceptance: [acceptance(operation, plan.language)],
+    outcome: label(operation, language),
+    acceptance: [acceptance(operation, language)],
     input: null,
     ...(operation.kind === 'build_site' && operation.approval ? { authorization: 'required' } : {}),
     required: operation.kind !== 'read_source',
@@ -89,7 +93,7 @@ export function initialLongRunState(id: string, plan: LongRunPlan, at: number): 
   enterPhase(ledger, 'executing', at);
   return LongRunStateSchema.parse({
     agentRun: ledger,
-    longRun: { version: 1, ...(plan.background ? { background: plan.background } : {}), language: plan.language, steps: plan.steps, next: 0, resources: 0, deadline: at + LONG_RUN_LIMITS.wallMs,
+    longRun: { version: 1, ...(plan.background ? { background: plan.background } : {}), language, replyConstraints, steps: plan.steps, next: 0, resources: 0, deadline: at + LONG_RUN_LIMITS.wallMs,
       dueAt: at, inFlight: null, candidates: [], observations: [], site: null, inputId: null },
   });
 }

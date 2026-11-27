@@ -3,6 +3,9 @@ import type { ModelCouncil, ModelCouncilMember } from '@mohassan/contracts';
 import { ModelRelationsManager, type TurnDecisionLog, type TurnObservation } from '../../../../packages/model-relations/src/manager.js';
 import type { ModelRunResult } from '../../../../packages/model-relations/src/runtime.js';
 import { comparable, judge, type JudgeDecision, type JudgeEvidence } from './judge.js';
+import { enforceReplyConstraints } from './reply-constraint-review.js';
+import type { ReplyConstraints } from './reply-directive.js';
+import { replyConstraintPrompt, withReplyConstraintPrompt } from './reply-turn.js';
 
 /**
  * The owner's model council: for one finished turn, the trained models that fit it speak in three rounds, and a fixed
@@ -30,6 +33,7 @@ export interface CouncilRunner {
 export interface CouncilTurn {
   question: string;
   previous: string | null;
+  constraints?: ReplyConstraints;
   pipeline: { text: string; status: CouncilStatus };
   /** Pages read for this turn (judge evidence); empty when the turn read nothing. */
   evidence: readonly JudgeEvidence[];
@@ -151,9 +155,10 @@ export function selectPassage(question: string, evidence: readonly JudgeEvidence
   return best && best.score >= Math.min(2, asked.size) ? { text: best.text, title: best.title, url: best.url } : null;
 }
 
-export function readerPrompt(question: string, passage: string): string {
+export function readerPrompt(question: string, passage: string, constraints?: ReplyConstraints): string {
   const template = arabic(question) ? TEMPLATE.ar : TEMPLATE.en;
-  return `${passage}\n\n${template.q}${question}\n${template.a}`;
+  const format = replyConstraintPrompt(constraints);
+  return `${passage}\n\n${format ? `${format}\n\n` : ''}${template.q}${question}\n${template.a}`;
 }
 
 /** Whether `haystack` states `answer`: the whole folded answer, or every number in it with most of its words. */
@@ -314,15 +319,19 @@ export function createModelCouncil(options: ModelCouncilOptions) {
     const started = performance.now();
     const deadline = started + budgetMs;
     const left = (cap: number) => Math.min(cap, Math.floor(deadline - performance.now()));
-    const ar = arabic(turn.question);
+    const arabicQuestion = arabic(turn.question);
+    const ar = turn.constraints?.lang ? turn.constraints.lang === 'ar' : arabicQuestion;
     const members: ModelCouncilMember[] = [];
     const pipelineText = turn.pipeline.text.trim();
+    const review = (reply: string) => enforceReplyConstraints(reply, turn.constraints);
+    const pipelineReply = review(turn.pipeline.text);
     const judgeOf = (reply: string, status: string, evidence: readonly JudgeEvidence[]): JudgeDecision | undefined => {
       try {
-        return judge({ question: turn.question, previous: turn.previous, reply, status, ...(evidence.length ? { evidence } : {}) }).decision;
+        return judge({ question: turn.question, previous: turn.previous, reply, status, constraints: turn.constraints,
+          ...(evidence.length ? { evidence } : {}) }).decision;
       } catch { return undefined; }
     };
-    const pipelineStands = turn.pipeline.status === 'completed' && pipelineText.length > 0
+    const pipelineStands = turn.pipeline.status === 'completed' && pipelineText.length > 0 && !pipelineReply.withheld
       && judgeOf(pipelineText, turn.pipeline.status, turn.evidence) !== 'withhold';
 
     // Understanding: the organizer's own stage models, bounded by its turn budget.
@@ -356,14 +365,14 @@ export function createModelCouncil(options: ModelCouncilOptions) {
         note: turn.pipeline.status === 'completed' ? 'أكمل الجواب' : turn.pipeline.status === 'partial' ? 'جواب ناقص' : 'لم يجد جواباً' });
     }
     if (options.v5 && turn.history.at(-1)?.role === 'user') {
-      const spoken = await capped(() => options.v5!(turn.history, turn.signal), left(caps.v5), turn.signal);
+      const spoken = await capped(() => options.v5!(withReplyConstraintPrompt(turn.history, turn.constraints), turn.signal), left(caps.v5), turn.signal);
       const text = spoken.status === 'ok' ? spoken.value?.trim() : undefined;
       candidates.push({ model: V5, text: text ?? '', reply: text ?? '', ms: spoken.ms, agreements: 0, note: MEASURED[V5],
         outcome: spoken.status === 'timeout' ? 'timeout' : text ? 'ok' : 'failed' });
     }
     const passage = evidence.length ? selectPassage(turn.question, evidence) : null;
     if (passage) {
-      const read = await capped(() => options.runner.run(READER, { prompt: readerPrompt(turn.question, passage.text), maxNewTokens: 20 }),
+      const read = await capped(() => options.runner.run(READER, { prompt: readerPrompt(turn.question, passage.text, turn.constraints), maxNewTokens: 20 }),
         left(caps.reader), turn.signal);
       const raw = read.status === 'ok' && read.value.ok ? outputText(read.value.output) : undefined;
       const answer = raw?.split('\n')[0]?.trim() ?? '';
@@ -374,20 +383,21 @@ export function createModelCouncil(options: ModelCouncilOptions) {
         note: `${MEASURED[READER]}؛ قرأ فقرة من: ${passage.title || passage.url || 'صفحة'}`.slice(0, 240),
         outcome: read.status === 'timeout' ? 'timeout' : read.status === 'ok' && read.value.ok ? abstained ? 'abstained' : 'ok' : 'failed' });
     } else if (!evidence.length) {
-      const spoken = await capped(() => options.runner.run(V4, { text: turn.question, maxNewTokens: 48 }), left(caps.v4), turn.signal);
+      const textPrompt = [turn.question, replyConstraintPrompt(turn.constraints)].filter(Boolean).join('\n\n');
+      const spoken = await capped(() => options.runner.run(V4, { text: textPrompt, maxNewTokens: 48 }), left(caps.v4), turn.signal);
       const raw = spoken.status === 'ok' && spoken.value.ok ? outputText(spoken.value.output) : undefined;
       const text = raw?.split(/\n\s*\n/u)[0]?.trim() ?? '';
       candidates.push({ model: V4, text, reply: text, ms: spoken.ms, agreements: 0, note: MEASURED[V4],
         outcome: spoken.status === 'timeout' ? 'timeout' : text ? 'ok' : 'failed' });
     }
-    if (!ar && /\d/u.test(turn.question) && turn.baseline.refusal === 'allow') {
+    if (!arabicQuestion && /\d/u.test(turn.question) && turn.baseline.refusal === 'allow') {
       const solved = await capped(() => options.runner.run(ARITHMETIC, { text: turn.question }), left(caps.arithmetic), turn.signal);
       const output = solved.status === 'ok' && solved.value.ok ? solved.value.output as { value?: unknown; expression?: unknown } | null : undefined;
       const value = typeof output?.value === 'string' ? output.value : undefined;
       const expression = typeof output?.expression === 'string' ? output.expression : undefined;
       if (solved.status !== 'ok' || !solved.value.ok || value) {
         candidates.push({ model: ARITHMETIC, text: value ?? '', ms: solved.ms, agreements: 0, note: MEASURED[ARITHMETIC],
-          reply: value ? `${value}${expression ? `\n\n${expression} = ${value}` : ''}\n\n— Answer from the arithmetic model (experimental)` : '',
+          reply: value ? `${value}${expression ? `\n\n${expression} = ${value}` : ''}\n\n${ar ? '— جواب نموذج الحساب (تجريبي)' : '— Answer from the arithmetic model (experimental)'}` : '',
           outcome: solved.status === 'timeout' ? 'timeout' : value ? 'ok' : 'failed' });
       }
     }
@@ -396,7 +406,10 @@ export function createModelCouncil(options: ModelCouncilOptions) {
     const evidenceText = evidence.map(item => item.text).join('\n');
     for (const candidate of candidates) {
       if (candidate.outcome !== 'ok' || !candidate.text) continue;
-      candidate.judge = judgeOf(candidate.text, candidate.model === PIPELINE ? turn.pipeline.status : 'completed', evidence);
+      const pipeline = candidate.model === PIPELINE;
+      const formatted = pipeline ? pipelineReply : review(candidate.reply);
+      candidate.judge = formatted.withheld ? 'withhold' : judgeOf(candidate.text, pipeline ? turn.pipeline.status : 'completed', evidence);
+      candidate.reply = formatted.text;
       if (evidenceText && candidate.model !== PIPELINE) candidate.inEvidence = states(evidenceText, candidate.text);
     }
     for (const candidate of candidates) {
@@ -422,8 +435,8 @@ export function createModelCouncil(options: ModelCouncilOptions) {
       });
     }
     return {
-      text: changed ? winner!.reply : turn.pipeline.text,
-      status: changed ? 'completed' : turn.pipeline.status,
+      text: changed ? winner!.reply : pipelineReply.text,
+      status: changed ? 'completed' : pipelineReply.withheld && turn.pipeline.status === 'completed' ? 'partial' : turn.pipeline.status,
       chosen,
       changed,
       council: {

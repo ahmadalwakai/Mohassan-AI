@@ -1,6 +1,7 @@
 import { evaluateLocalConversation } from './local-conversation.js';
 import { fixedReply, type LocalReply } from './mind/limits.js';
 import { normalizeRequest, stripCourtesyTail } from './mind/normalize.js';
+import { replyBodyFor, replyConstraintsFor } from './reply-turn.js';
 
 /**
  * Questions about Mohassan itself, answered without a model: step 2 of the task cycle («فهم الطلب وتجميع السياق»).
@@ -451,6 +452,10 @@ export function answerSelfQuestion(question: SelfQuestion, facts: SelfFacts): Lo
 
 /** The whole local answer to a question about the assistant, or null when the message is something else. */
 export function evaluateSelfQuestion(request: string, facts: SelfFacts): LocalReply | null {
-  const question = recognizeSelfQuestion(request);
-  return question ? answerSelfQuestion(question, facts) : null;
+  const question = recognizeSelfQuestion(replyBodyFor(request));
+  if (!question) return null;
+  const constraints = replyConstraintsFor();
+  const sentences = constraints?.sentences;
+  const brief = sentences === 1 || sentences === 2 ? sentences : constraints?.brief ? 2 : question.brief;
+  return answerSelfQuestion({ ...question, lang: constraints?.lang ?? question.lang, brief }, facts);
 }

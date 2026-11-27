@@ -72,6 +72,23 @@ it('answers a question by reading its sources over HTTP, with no browser action'
   expect(runs.map(run => run.status)).toEqual(['completed']);
 });
 
+it('applies a saved brief preference to the real HTTP answer and keeps only the primary citation', async () => {
+  const { control, queries, actions } = await harness();
+  const { id } = await control.create(owner, { goal: 'من الآن إجابات مختصرة' });
+  await control.settled(id);
+  await control.send(owner, id, { text: 'ما عاصمة اليابان؟' });
+  await control.settled(id);
+  const { messages, error } = await control.detail(owner, id);
+  const reply = messages.at(-1)!.text;
+  expect(error).toBeNull();
+  expect(reply).toContain('عاصمتها طوكيو');
+  expect(reply).toContain(japan);
+  expect(reply).not.toContain('يبلغ عدد سكان اليابان');
+  expect(reply).not.toContain(tokyo);
+  expect(queries).toEqual(['ما عاصمة اليابان']);
+  expect(actions).toEqual([]);
+});
+
 it('keeps the earlier topic in a follow-up that only points at it', async () => {
   const { control, queries } = await harness();
   const { id } = await control.create(owner, { goal: 'ما عاصمة اليابان؟' });

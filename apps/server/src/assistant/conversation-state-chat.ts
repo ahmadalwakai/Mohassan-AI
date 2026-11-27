@@ -13,6 +13,7 @@ import { projectInventoryFormat } from './inventory.js';
 import { memoryRecallFormat } from './memory-recall.js';
 import { ownFactQuestion } from './own-fact-question.js';
 import { publicConversationFollowup } from './public-conversation-followup.js';
+import { replyBodyFor } from './reply-turn.js';
 import { MAX_CONTEXT_REQUEST, requestActionText, resolveRequestContext, type RequestResolution } from './request-context.js';
 import {
   parseRequestScopeAssessment, parseUserRequestConstraints, requestCapabilityAllowed, requestScopeActionText,
@@ -117,7 +118,7 @@ async function selectConversationPage(input: ConversationTurnEntry, history: rea
 
   const browserAllowed = requestCapabilityAllowed(constraints, 'browser_navigation') && requestCapabilityAllowed(constraints, 'browser_action');
   if (browserAllowed && source.scope === 'public' && source.destination === 'browser_command') {
-    const page = planConversationPageRead(input.text);
+    const page = planConversationPageRead(replyBodyFor(input.text));
     if (page) return pageSelection(page, 'browser_command', source);
   }
 
@@ -138,19 +139,19 @@ async function selectConversationPage(input: ConversationTurnEntry, history: rea
 
   if (browserAllowed && previousSource.source === 'public_lookup' && previousSource.scope === 'public'
     && previousSource.destination === 'browser_command') {
-    const page = planConversationPageRead(input.text, { goal: previous.goal, status: previous.status, openedUrl: observed.url });
+    const page = planConversationPageRead(replyBodyFor(input.text), { goal: previous.goal, status: previous.status, openedUrl: observed.url });
     if (page) return pageSelection(page, 'browser_command', previousSource, previousSource);
   }
   if (!input.canReadPublicPage || !isPublicLookup(previousSource) || !requestCapabilityAllowed(constraints, 'public_search')
     || !['lookup', 'unknown'].includes(source.operation)) return null;
-  const page = planPublicConversationRead({ text: input.text, previous: previousAsk.text, topic: state.topics.at(-1), understanding, found: observed });
+  const page = planPublicConversationRead({ text: replyBodyFor(input.text), previous: previousAsk.text, topic: state.topics.at(-1), understanding, found: observed });
   return page ? pageSelection(page, 'web_search', previousSource, previousSource) : null;
 }
 
 async function selectConversationTurn(input: ConversationTurnEntry, latest: StoredConversationEntry,
     history: readonly StoredConversationEntry[]): Promise<ConversationChatSelection> {
   const state = replayConversationTranscript(history);
-  const understanding = understandTurn(state, input.text, latest.id);
+  const understanding = understandTurn(state, replyBodyFor(input.text), latest.id);
   const page = await selectConversationPage(input, history, state, understanding);
   if (page) return page;
   const { decision } = understanding;

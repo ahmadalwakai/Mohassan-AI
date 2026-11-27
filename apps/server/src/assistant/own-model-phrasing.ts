@@ -64,7 +64,7 @@ export async function phraseCheckedEvidence(provider: Pick<ModelProvider, 'gener
 
   const check = (sentence: string, checked: JudgeEvidence) => judge({ question, previous, status, reply: `${sentence}\n\n${citation}`, evidence: [checked] });
   const original = check(quote, source);
-  const lang = last.reply?.lang ?? plan.lang ?? original.lang;
+  const lang = plan.replyConstraints?.lang ?? last.reply?.lang ?? plan.lang ?? original.lang;
   if (!cleanProse(quote, lang) || !supported(original)) return fallback;
 
   const started = performance.now();

@@ -44,6 +44,14 @@ describe('model council building blocks', () => {
     expect(readerPrompt('When was it built?', 'Text')).toBe('Text\n\nQuestion: When was it built?\nAnswer:');
   });
 
+  it('passes the requested reply language to the reader with its original passage and question', () => {
+    const question = turn().question;
+    const prompt = readerPrompt(question, PARIS, { lang: 'ar' });
+    expect(prompt).toContain('Arabic');
+    expect(prompt).toMatch(/^Paris is the capital.*\n\n/su);
+    expect(prompt).toContain(`\n\nQuestion: ${question}\nAnswer:`);
+  });
+
   it('checks that a text states an answer, numbers exactly', () => {
     expect(states(PARIS, 'Paris')).toBe(true);
     expect(states('Completed in 1889 for the fair.', '1889')).toBe(true);
@@ -104,6 +112,50 @@ describe('the referee', () => {
 });
 
 describe('deliberation', () => {
+  it('checks the standing pipeline answer against the turn sentence and link limits', async () => {
+    const sentences = ['The alert arrived.', 'The owner confirmed.', 'The schedule continued.'];
+    const council = createModelCouncil({ runner: runner({}) });
+    const outcome = await council.deliberate(turn({ constraints: { sentences: 2, links: 0 },
+      pipeline: { text: `${sentences.join(' ')}\n\nSource: https://example.test/receipt`, status: 'completed' } }));
+    expect(outcome).toMatchObject({ changed: false, chosen: 'pipeline', text: sentences.slice(0, 2).join(' '), status: 'completed' });
+  });
+
+  it('prompts the models with current constraints and never selects a wrong-language last resort', async () => {
+    const generate = vi.fn(async () => 'The message was delivered to the recipient. The alert was closed.');
+    const run = vi.fn(runner({}).run);
+    const council = createModelCouncil({ runner: { run }, v5: generate });
+    const source = turn({ constraints: { lang: 'ar', sentences: 2 }, v5MayAnswer: true,
+      pipeline: { text: 'تعذّر التحقق من الجواب.', status: 'blocked' } });
+    const outcome = await council.deliberate(source);
+    expect(generate).toHaveBeenCalledWith([{ role: 'user', content: expect.stringContaining('Arabic') }], source.signal);
+    expect(source.history[0]?.content).toBe(source.question);
+    expect(run).toHaveBeenCalledWith('chat-v4', expect.objectContaining({ text: expect.stringContaining('Arabic') }));
+    expect(outcome).toMatchObject({ changed: false, chosen: 'pipeline' });
+    expect(outcome.council.members.find(member => member.model === 'chat-v5')?.judge).toBe('withhold');
+  });
+
+  it('sends the selected model answer trimmed to the requested count', async () => {
+    const sentences = ['وصل الرد إلى صاحبه.', 'تأكد الاستلام.', 'أُغلق التنبيه.'];
+    const council = createModelCouncil({ runner: runner({}), v5: async () => sentences.join(' ') });
+    const outcome = await council.deliberate(turn({ constraints: { lang: 'ar', sentences: 2 }, v5MayAnswer: true,
+      pipeline: { text: 'تعذّر التحقق من الجواب.', status: 'blocked' } }));
+    expect(outcome).toMatchObject({ changed: true, chosen: 'chat-v5', text: sentences.slice(0, 2).join(' '), status: 'completed' });
+  });
+
+  it('preserves the selected reader’s source and disclosure with a sentence limit', async () => {
+    const [first, second] = PARIS.split(/(?<=\.) /u);
+    const source = page(PARIS);
+    const models = runner({ 'reading-v3-last': { ok: true, output: { text: PARIS }, elapsedMs: 1 } });
+    const council = createModelCouncil({ runner: models, v5: async () => first });
+    const outcome = await council.deliberate(turn({ constraints: { sentences: 1 },
+      pipeline: { text: 'I could not find it.', status: 'blocked' }, evidence: [source] }));
+    expect(outcome).toMatchObject({ changed: true, chosen: 'reading-v3-last', status: 'completed' });
+    expect(outcome.text).toContain(first);
+    expect(outcome.text).not.toContain(second);
+    expect(outcome.text).toContain(source.url);
+    expect(outcome.text).toContain('reading model v3');
+  });
+
   it('keeps a completed pipeline answer, shows the members, and searches nothing', async () => {
     const search = vi.fn();
     const models = runner({ 'reading-v3-last': { ok: true, output: { text: ' Paris', stopReason: 'eos' }, elapsedMs: 40 } });

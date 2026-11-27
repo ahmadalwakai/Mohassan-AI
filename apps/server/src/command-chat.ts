@@ -3,7 +3,7 @@ import { cleanRejectedChatCreate } from './rejected-chat-create.js';
 import { createHash, randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import type { ImageReading } from '@mohassan/vision';
-import { composeImageReply, readingForTrail } from './assistant/image-reading.js';
+import { acceptImageReply, readingForTrail } from './assistant/image-reading.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { FastifyInstance } from 'fastify';
 import { sql, type Kysely, type Transaction } from 'kysely';
@@ -20,6 +20,10 @@ import { rememberRemovedConversationProfile } from './member-profile-storage.js'
 import { withMemberChatDeletionFence } from './member-chat-deletion-fence.js';
 import { redactSensitiveCredentialText as clean } from './sensitive-credential-text.js';
 import { V5_CHAT_LABEL } from './v5-chat.js';
+import { applyHandsReplyConstraints } from './assistant/hands.js';
+import { migrateReplyPreferences } from './assistant/reply-preferences.js';
+import { enforceReplyConstraints } from './assistant/reply-constraint-review.js';
+import { acceptReplyTurn, advanceReplyTurn, bindAcceptedReplyTurn, bindReplyTurn, experimentalReplyBody, experimentalReplyText, replyConstraintsFor, replyPreferenceAcknowledgement, verifiedExperimentalReply, withReplyConstraintPrompt, withReplyTurn } from './assistant/reply-turn.js';
 import { classifyExperience, escapedContextLength, recordExperience, type ExperienceInput } from '@mohassan/learning';
 import {
   boundedDecisionJsonSchema, decisionJsonSchema, decisionSchema, recoverDecision, ModelPool, buildPrompt, chooseTier, cookieRejectButton, directRoute, estimateTokens, newBrainState,
@@ -466,6 +470,7 @@ export async function commandChatMigration(db: Kysely<any>, beforeShares?: (tx: 
       await tx.insertInto('schema_migrations').values({ version: 'chat_message_council_v1' }).execute();
     }
     await campaignEventsMigration(tx);
+    await migrateReplyPreferences(tx);
     await beforeShares?.(tx);
     await migrateConversationShares(tx);
   });
@@ -832,6 +837,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   }
 
   async function addMessage(connection: Kysely<any>, id: string, role: 'user' | 'assistant', text: string, experiment?: 'v5', council?: ModelCouncil) {
+    if (role === 'assistant' && !experiment) text = enforceReplyConstraints(text, replyConstraintsFor()).text;
     await connection.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role, text: clean(text), run_id: role === 'assistant' ? execution.getStore()?.runId ?? null : null,
       ...(experiment && { experiment }),
       // The council's members quote model outputs and page titles: the same scrub as the reply text.
@@ -1347,6 +1353,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     // The run ledger: the run is suspended, waiting for the owner. An approval card is bound to its exact action first; an
     // action already refused in this run ends the run instead of being asked again.
     const pausedAt = Date.now();
+    if (say) say = enforceReplyConstraints(say, replyConstraintsFor(state)).text;
     if (status === 'waiting_approval') {
       const gated = gateApprovalCard(id, runId, state, fields, pausedAt);
       if (gated === 'refused') {
@@ -1428,6 +1435,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const applyFix = Boolean(allowChange && config.judgeFixForOwner && current.full);
       const applyWithhold = Boolean(allowChange && config.judgeWithholdForOwner && current.full);
       const verdict = config.judgeShadow.observe({ conversationId: id, runId, question: asked?.question ?? current.request, previous: asked ? asked.previous : current.previousRequest ?? null, reply, status,
+        constraints: replyConstraintsFor(current.state),
         applyFix, applyWithhold, keepText: config.judgeLogText !== 'owner' || Boolean(current.full), ...(evidence.length ? { evidence } : {}) });
       if (applyWithhold && verdict?.decision === 'withhold' && verdict.withholdText?.trim()) return { text: verdict.withholdText, withheld: true };
       if (applyFix && verdict?.decision === 'fix' && verdict.fixedReply?.trim()) return { text: verdict.fixedReply, withheld: false };
@@ -1444,7 +1452,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     if (!config.judgeShadow || !config.judgeWithholdForOwner || !current?.request || !current.full) return null;
     try {
       const evidence = judgeEvidence(current);
-      const verdict = judgeAnswer({ question: asked?.question ?? current.request, previous: asked ? asked.previous : current.previousRequest ?? null, reply, status, ...(evidence.length ? { evidence } : {}) });
+      const verdict = judgeAnswer({ question: asked?.question ?? current.request, previous: asked ? asked.previous : current.previousRequest ?? null, reply, status, constraints: replyConstraintsFor(current.state), ...(evidence.length ? { evidence } : {}) });
       return verdict.decision === 'withhold' ? verdict.codes : null;
     } catch { return null; }
   }
@@ -1460,7 +1468,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     });
     if (recent[0]?.role !== 'user') return undefined;
     return recent.reverse().map((message): { role: 'user' | 'assistant'; content: string } => {
-      const text = message.experiment === 'v5' && message.text.endsWith(V5_CHAT_FOOTER) ? message.text.slice(0, -V5_CHAT_FOOTER.length) : message.text;
+      const text = message.experiment === 'v5' ? experimentalReplyBody(message.text, V5_CHAT_FOOTER) : message.text;
       return { role: message.role, content: vault.scrub(id, clean(text)) };
     });
   }
@@ -1470,8 +1478,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     if (!v5Chat || !current) return;
     const turns = await v5Turns(id, runId, current);
     if (!turns) return;
-    const reply = await v5Chat.generate(turns, current.controller.signal);
-    return reply && vault.scrub(id, clean(reply)).trim();
+    const constraints = replyConstraintsFor(current.state);
+    const reply = await v5Chat.generate(withReplyConstraintPrompt(turns, constraints), current.controller.signal);
+    return verifiedExperimentalReply(reply && vault.scrub(id, clean(reply)), constraints);
   }
 
   /**
@@ -1503,6 +1512,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       proof?: ChatExperienceProof, memoryPublication?: 'saved_note' | 'saved_result' | 'memory_recall', prejudged = false, preparedMonitor?: PreparedMonitorTurn,
       noModelFallback = false) {
     const source = execution.getStore();
+    const replyConstraints = replyConstraintsFor(state);
     const blockedMonitor = monitor && !preparedMonitor && status !== 'completed' && source?.request && !memoryPublication ? await monitor.forBlockedTurn({ ownerId: source.ownerId, conversationId: id, runId, text: source.request, signal: source.controller.signal, trail: state.trail, pages: [...(source.readPages ?? []), ...(source.page ? [source.page] : [])] }) : null;
     const noAction = !state.actionCompletion?.contract.requirements.length && !state.actionCompletion?.events.length && !state.actionCompletion?.fault;
     const v5MayAnswer = noModelFallback && status === 'blocked' && !blockedMonitor && !state.steps && noAction;
@@ -1522,6 +1532,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       try {
         council = await config.modelCouncil.deliberate({
           question: baseline.question?.trim() || request, previous: source.previousRequest ?? null,
+          constraints: replyConstraints,
           pipeline: { text, status }, evidence: judgeEvidence(source), baseline, v5MayAnswer,
           history: config.v5Chat ? await v5Turns(id, runId, source) ?? [] : [],
           search: (question, signal) => councilSearch(source.ownerId, request, state, question, signal),
@@ -1536,7 +1547,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         status = council.status;
       }
     }
-    const modelReply = v5Reply ?? (council?.changed && council.chosen === 'chat-v5' ? vault.scrub(id, clean(council.text)).trim() : undefined);
+    const modelReply = v5Reply ?? (council?.changed && council.chosen === 'chat-v5' ? verifiedExperimentalReply(vault.scrub(id, clean(council.text)), replyConstraints) : undefined);
     // The judge sees the reply first: logged in shadow for everyone; for the owner's account its fix, or its fixed withhold
     // sentence, is what goes on. Memory publications keep their own stricter checks and are never changed here.
     // A reply the council picked from a model was already judged there.
@@ -1544,6 +1555,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     text = judged.text;
     // A withheld answer is not a completed task.
     if (judged.withheld && status === 'completed') status = 'partial';
+    const constrained = enforceReplyConstraints(text, replyConstraints);
+    if (constrained.withheld && status === 'completed') status = 'partial';
+    if (!memoryPublication && state.supervision?.contract.mode !== 'enforced') text = constrained.text;
     if (state.supervision) state.completionReview = reviewChatAnswer(state.supervision, text);
     // A campaign task the reply leaves open ends with it, stating only what was really checked or done.
     const campaignEnd = campaignEndEvent(state.campaign, Boolean(state.adsApproved));
@@ -1606,7 +1620,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       });
       if (blockedMonitor && !monitorError) finalText += `\n\n${blockedMonitor.text}`;
       if (!experiment && !council?.changed && monitor?.v2 && !preparedMonitor && finalStatus === 'completed' && !judged.withheld && !memoryPublication && !state.questionAnswer && source?.request) finalText += await monitor.publishAnswerOffer(tx, { ownerId: source.ownerId, conversationId: id, runId, text: source.request, pages: [...(source.readPages ?? []), ...(source.page ? [source.page] : [])] }, finalText);
-      await addMessage(tx, id, 'assistant', experiment ? `${modelReply}${V5_CHAT_FOOTER}` : finalText, experiment, councilRecord);
+      const publication = enforceReplyConstraints(finalText, replyConstraints);
+      finalText = experiment ? experimentalReplyText(modelReply!, V5_CHAT_FOOTER, replyConstraints) : publication.text;
+      if (!experiment && publication.withheld && finalStatus === 'completed') finalStatus = 'partial';
+      await addMessage(tx, id, 'assistant', finalText, experiment, councilRecord);
       if (state.completionReview) await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId,
         kind: 'task_review', message: 'مراجعة شروط المهمة المعلنة؛ لا تعني تصديق كل عبارة في الجواب.',
         data: JSON.stringify({ contractHash: state.supervision?.contract.hash, review: state.completionReview }) }).execute();
@@ -2153,6 +2170,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         return;
       }
       const request = effectiveSource.request;
+      await bindAcceptedReplyTurn(db, ownerId, id, state, request);
       if (await dispatchReminderTurn({
         db, state, runId, ownerId, id, run, effectiveSource, runTransaction, pause, addMessage, recordTerminalRun, ledgerSafe,
         recordSkillGap: config.recordSkillGap, scrub: value => vault.scrubValue(id, value, clean), releaseVault: () => forgetVault(id, execution.getStore()!.token),
@@ -2171,6 +2189,11 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const constraints = parseUserRequestConstraints(request);
       const currentExecution = execution.getStore()!;
       currentExecution.request = request; currentExecution.constraints = constraints; currentExecution.state = state;
+      const preferenceReply = replyPreferenceAcknowledgement(state.replyTurn);
+      if (preferenceReply) {
+        if (state.dropHeld) { await browser.dropHeld(ownerId, id); state.dropHeld = false; }
+        await finish(id, runId, state, preferenceReply, 'completed', undefined, undefined, true); return;
+      }
       // The run ledger: the worker starts (or resumes, after a card or an approval) by understanding the request.
       ledgerSafe(state, runId, ledger => tryEnterPhase(ledger, 'understanding', Date.now()));
       const refusal = run.intent === 'task' && reviewWorkRefusal(request, state, currentExecution.full,
@@ -2655,7 +2678,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const intrinsicAllowed = !handsPlan && !state.site && !state.writer && !state.planner && !state.document && !state.adsBrief && freshRequest;
       const intrinsicStartedAt = Date.now();
       const intrinsicConversation = intrinsicAllowed ? evaluateLocalConversation(actionRequest, state.routing) : null;
-      const intrinsicComputation = intrinsicAllowed ? evaluateLocalComputation(actionRequest, new Date(effectiveSource.evaluatedAt), { previousUserTurn: currentExecution.previousRequest ?? undefined }) : null;
+      const intrinsicComputation = intrinsicAllowed ? evaluateLocalComputation(actionRequest, new Date(effectiveSource.evaluatedAt), { previousUserTurn: currentExecution.previousRequest ?? undefined }, replyConstraintsFor(state)) : null;
       const feature = (configured: boolean, allowed = true) => ({ configured, accountAccess: allowed ? 'allowed' : 'denied', health: configured ? 'unverified' : 'unknown' });
       const intrinsicRuntime = intrinsicAllowed ? answerRuntimeStatus(actionRequest, {
         version: 1, app: 'Mohassan', source: 'host_runtime', accountFiltered: true,
@@ -2827,7 +2850,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         if (shorter) {
           const previousAnswer = history.findLast(entry => entry.role === 'assistant')?.text ?? null;
           // This deterministic path stores the excerpt as a trail result and learning experience.
-          const experimental = previousAnswer?.endsWith(V5_CHAT_FOOTER) && await db.selectFrom('chat_messages as m').select('m.id')
+          const experimental = previousAnswer && experimentalReplyBody(previousAnswer, V5_CHAT_FOOTER) !== previousAnswer && await db.selectFrom('chat_messages as m').select('m.id')
             .where('m.conversation_id', '=', id).where('m.role', '=', 'assistant').where('m.text', '=', previousAnswer)
             .where(sql<boolean>`to_jsonb(m)->>'experiment' = 'v5'`).limit(1).executeTakeFirst();
           const shortened = previousAnswer && !experimental ? shorterAnswer(previousAnswer, shorter) : null;
@@ -3115,6 +3138,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         return;
       }
       async function runHandsPlan(plan: HandsPlan): Promise<void> {
+        applyHandsReplyConstraints(plan, replyConstraintsFor(state));
         const first = plan.steps[0];
         if (!plan.results && plan.next === 0 && (first?.kind === 'click' && first.ordinal || first?.kind === 'read')) {
           // A new turn keeps the numbered search choices, and the page the last answer was read from over HTTP,
@@ -3903,7 +3927,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             warning = 'Your last action had no visible effect. Check the page really shows the result before saying it is done.';
             continue;
           }
-          if (needsReview(state, tier) && decision.text) {
+          if (decision.text && (needsReview(state, tier) || !state.reviewed && enforceReplyConstraints(decision.text, replyConstraintsFor(state)).withheld)) {
             state.reviewed = true;
             await setProgress(id, 'يراجع الرد…');
             warning = reviewRequest(decision.text);
@@ -4100,13 +4124,13 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     controllers.set(id, {runId,token,controller});
     if(!preserveVault){const prior=vaultOwners.get(id);if(prior)forgetVault(id,prior);}
     vaultOwners.set(id,token);
-    const worker = execution.run({ownerId,id,runId,token,controller,full},()=>withArbiterExecution(runId, () => work(ownerId, id, runId, controller))).catch(() => {});
+    const worker = execution.run({ownerId,id,runId,token,controller,full},()=>withReplyTurn(() => withArbiterExecution(runId, () => work(ownerId, id, runId, controller)))).catch(() => {});
     workers.set(id, worker);
     void worker.finally(() => { if (workers.get(id) === worker) workers.delete(id); });
   }
 
   /** Continues the paused run after the owner has answered it. */
-  async function resume(ownerId: string, id: string, runId: string, change: (state: BrainState, tx: Kysely<any>, message: { id: string; createdAt: number; text: string; priorRequest?: string }) => void | Promise<void>, say: string, expected:{status:string;field?:'question'|'approval'|'secure';requestId?:string;stop?:boolean;afterClaim?:()=>void}) {
+  async function resume(ownerId: string, id: string, runId: string, change: (state: BrainState, tx: Kysely<any>, message: { id: string; createdAt: number; text: string; priorRequest?: string }) => void | Promise<void>, say: string, expected:{status:string;field?:'question'|'approval'|'secure';requestId?:string;stop?:boolean;afterClaim?:()=>void;replyInstruction?:boolean}) {
     if(closing)throw new BrowserError('CHAT_SHUTTING_DOWN','الخدمة تتوقف الآن.',503);
     const token=randomUUID();
     let previousToken:string|undefined;
@@ -4124,6 +4148,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const message = { id: randomUUID(), createdAt: new Date(), text: clean(say) };
       await tx.insertInto('chat_messages').values({ id: message.id, conversation_id: id, role: 'user', text: message.text, created_at: message.createdAt }).execute();
       await change(state, tx, { ...message, createdAt: message.createdAt.getTime(), ...(priorSource ? { priorRequest: priorSource.request } : {}) });
+      if (expected.replyInstruction) await advanceReplyTurn(tx, ownerId, id, state, message.text);
       await tx.updateTable('chat_runs').set({ status:expected.stop?'cancelled':'running', state: JSON.stringify(state),lease_token:token,attempt:run.attempt+1,lease_expires_at:sql`CURRENT_TIMESTAMP + ${leaseMs} * interval '1 millisecond'`, updated_at: new Date() }).where('id', '=', runId).execute();
       await tx.updateTable('chat_conversations').set({ status:expected.stop?'idle':'running',active_run_id:expected.stop?null:runId, question: null, approval: null, secure: null, error: null, progress:expected.stop?null:'يتابع العمل…', updated_at: new Date() }).where('id', '=', id).execute();
       if (expected.stop) await recordTerminalRun(tx, runId, 'cancelled');
@@ -4199,7 +4224,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         state.trail.push({ step: state.steps, action: 'asked the user', result: `user answered: ${clean(input.text).slice(0, 400)}`, changed: true });
         state.failures = 0;
         state.unchanged = 0;
-      }, input.text,{status:'waiting_user',field:'question',requestId:row.question?.id});
+      }, input.text,{status:'waiting_user',field:'question',requestId:row.question?.id,replyInstruction:!input.answers});
     }
     // A message sent while a task works, or waits for an approval or for the owner's hands on a page, corrects that task
     // (steering): the old run ends as superseded in the same transaction that starts the corrected one, everything it had
@@ -4292,7 +4317,11 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         // A request the page tried to send, held for the corrected run's approval, is dropped: it belonged to the old objective.
         ...((superseded as { held: boolean } | null)?.held ? { dropHeld: true } : {}) };
       bindTestDrivenCodingHash(initialState, input.text);
-      await addMessage(tx, id, 'user', input.text);
+      initialState.replyTurn = await acceptReplyTurn(tx, ownerId, id, clean(input.text), intent === 'task' && !input.answers);
+      await withReplyTurn(() => {
+        bindReplyTurn(initialState, input.text);
+        return addMessage(tx, id, 'user', input.text);
+      });
       await tx.insertInto('chat_runs').values({ id: runId, conversation_id: id, owner_id: ownerId, status: 'running', intent, goal: clean(input.text), steps: 0, lease_token:token,worker_id:instanceId,lease_expires_at:sql`CURRENT_TIMESTAMP + ${leaseMs} * interval '1 millisecond'`, state: JSON.stringify(initialState), created_at: createdAt }).execute();
       await tx.updateTable('chat_conversations').set({ status: 'running', active_run_id: runId, question: null, approval: null, secure: null, error: null, progress: 'يفهم طلبك…', updated_at: new Date() }).where('id', '=', id).execute();
       // The browser level the request asks for (plan §6.1), logged with its reason and time after the run row it refers to. detail() re-derives the current level from the rows.
@@ -4397,16 +4426,15 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       throw new BrowserError('CHAT_IMAGE_READ_FAILED', controller.signal.aborted ? 'استغرقت قراءة الصورة وقتًا طويلًا. جرّب صورة أصغر.' : 'تعذرت قراءة الصورة. تأكد من أنها PNG أو JPEG سليمة.', 422);
     } finally { clearTimeout(deadline); }
     const imageReadMs = performance.now() - readingStarted;
-    const reply = composeImageReply({ request: text, readings });
     const attached = ordered.map(image => ({ id: image.id as string, width: Number(image.width), height: Number(image.height) }));
     const shown = clean(text);
-    const userText = shown || (reply.language === 'ar' ? (attached.length > 1 ? `${attached.length} صور` : 'صورة') : attached.length > 1 ? `${attached.length} images` : 'an image');
     const messageId = randomUUID();
-    await db.transaction().execute(async tx => {
+    const result = await db.transaction().execute(async tx => {
       if (config.accountActive && !await config.accountActive(ownerId, tx)) throw new BrowserError('CHAT_ACCOUNT_INACTIVE', 'هذا الحساب غير نشط.', 403);
       const current = await tx.selectFrom('chat_conversations').select(['status', 'title']).where('id', '=', id).where('owner_id', '=', ownerId).forUpdate().executeTakeFirst();
       if (!current) throw notFound();
       if (current.status === 'running' || WAITING_STATUSES.includes(current.status)) throw new BrowserError('CHAT_BUSY', 'بدأت مهمة أخرى في هذه المحادثة أثناء قراءة الصورة.', 409);
+      const { reply, userText } = await acceptImageReply(tx, ownerId, id, shown, readings);
       const now = Date.now();
       await tx.insertInto('chat_messages').values({ id: messageId, conversation_id: id, role: 'user', text: userText, images: JSON.stringify(attached), created_at: new Date(now) }).execute();
       await tx.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role: 'assistant', text: reply.text, created_at: new Date(now + 1) }).execute();
@@ -4414,9 +4442,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const title = current.title === 'محادثة جديدة' || current.title === 'قراءة صورة' ? { title: (shown || (reply.language === 'ar' ? 'قراءة صورة' : 'Image reading')).slice(0, 100) } : {};
       await tx.updateTable('chat_conversations').set({ status: 'idle', error: null, progress: null, updated_at: new Date(), ...title }).where('id', '=', id).execute();
       await commitChatRequest(tx, ownerId, id);
+      return { userText, text: reply.text };
     });
-    observeImageRelations(messageId, userText, reply.text, imageReadMs);
-    observePlanMessage(userText);
+    observeImageRelations(messageId, result.userText, result.text, imageReadMs);
+    observePlanMessage(result.userText);
     return detail(ownerId, id);
   }
 

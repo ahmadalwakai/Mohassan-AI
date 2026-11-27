@@ -1,4 +1,7 @@
 import type { ImageReading } from '@mohassan/vision';
+import type { Kysely } from 'kysely';
+import { enforceReplyConstraints } from './reply-constraint-review.js';
+import { acceptReplyTurn } from './reply-turn.js';
 
 /**
  * Replies about attached images from what the own reader measured: the text it
@@ -8,7 +11,7 @@ import type { ImageReading } from '@mohassan/vision';
  */
 
 export type ImageIntent = 'read' | 'describe' | 'count' | 'numbers' | 'translate' | 'summarize' | 'question' | 'other';
-export interface ImageReplyInput { readonly request: string; readonly readings: readonly ImageReading[] }
+export interface ImageReplyInput { readonly request: string; readonly readings: readonly ImageReading[]; readonly language?: 'ar' | 'en' }
 export interface ImageReply { readonly text: string; readonly outcome: 'read' | 'no_text'; readonly intent: ImageIntent; readonly language: 'ar' | 'en' }
 
 const ARABIC = /[؀-ۿ]/u;
@@ -146,7 +149,7 @@ export function composeImageReply(input: ImageReplyInput): ImageReply {
   const request = input.request.trim();
   const intent = imageIntent(request);
   const anyArabicText = input.readings.some(reading => reading.direction === 'rtl' || reading.direction === 'mixed');
-  const language: 'ar' | 'en' = request ? (ARABIC.test(request) ? 'ar' : 'en') : anyArabicText || !input.readings.some(reading => reading.text) ? 'ar' : 'en';
+  const language = input.language ?? (request ? ARABIC.test(request) ? 'ar' : 'en' : anyArabicText || !input.readings.some(reading => reading.text) ? 'ar' : 'en');
   const parts = input.readings.map((reading, index) => {
     const body = oneReading(reading, intent, request, language);
     if (input.readings.length === 1) return body;
@@ -154,6 +157,15 @@ export function composeImageReply(input: ImageReplyInput): ImageReply {
   });
   const outcome: ImageReply['outcome'] = input.readings.some(reading => reading.text.trim()) ? 'read' : 'no_text';
   return { text: parts.join('\n\n'), outcome, intent, language };
+}
+
+/** Called with the conversation locked, so attachments use the same accepted preferences as text turns. */
+export async function acceptImageReply(db: Kysely<any>, ownerId: string, id: string, request: string, readings: readonly ImageReading[]) {
+  const turn = await acceptReplyTurn(db, ownerId, id, request);
+  const reply = composeImageReply({ request: turn.body ?? request, readings, language: turn.constraints.lang });
+  const userText = request || (reply.language === 'ar' ? (readings.length > 1 ? `${readings.length} صور` : 'صورة')
+    : readings.length > 1 ? `${readings.length} images` : 'an image');
+  return { userText, reply: { ...reply, text: enforceReplyConstraints(reply.text, turn.constraints).text } };
 }
 
 /** A short English note for the brain's trail when a screenshot is looked at without a vision model. */

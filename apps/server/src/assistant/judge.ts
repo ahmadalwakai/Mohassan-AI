@@ -19,9 +19,11 @@ import { factualPassage, formatFactualPassage } from './factual-evidence.js';
 import { entityWords, fold, isFollowUp, refersBack, topicWords } from './hands.js';
 import { buildFrame } from './mind/frame.js';
 import { applyReplyFixes, checkReply, questionLanguage, type ReplyFindingCode } from './reply-check.js';
+import { enforceReplyConstraints, type ReplyConstraintFinding } from './reply-constraint-review.js';
+import type { ReplyConstraints } from './reply-directive.js';
 
 export type ReplyKind = 'answer' | 'quote' | 'list' | 'computed' | 'memory' | 'question' | 'abstain' | 'action' | 'composed' | 'fixed';
-export type JudgeCode = ReplyFindingCode
+export type JudgeCode = ReplyFindingCode | ReplyConstraintFinding
   | 'lead_meta' | 'lead_ui' | 'lead_off_topic' | 'lead_needs_number' | 'lead_needs_name' | 'fragment_lead' | 'lead_not_best'
   | 'definition_form_missing' | 'duration_unit_missing' | 'self_question_from_web' | 'local_intent_abstained' | 'page_subject_mismatch' | 'subject_missing'
   | 'unsupported_sentence' | 'evidence_unavailable';
@@ -41,6 +43,7 @@ export interface JudgeInput {
   evidence?: readonly JudgeEvidence[];
   /** Fixed texts of the host (templates, notes) that need no evidence. */
   fixedTexts?: readonly string[];
+  constraints?: ReplyConstraints;
 }
 export interface ScoredLine { line: number; text: string; score: number }
 export interface JudgeVerdict {
@@ -68,6 +71,7 @@ export const SEVERITY: Record<JudgeCode, JudgeSeverity> = {
   lead_meta: 'block', lead_ui: 'review', lead_off_topic: 'block', lead_needs_number: 'block', lead_needs_name: 'review', fragment_lead: 'review', lead_not_best: 'fix',
   definition_form_missing: 'review', duration_unit_missing: 'block', self_question_from_web: 'block', local_intent_abstained: 'review', page_subject_mismatch: 'review',
   subject_missing: 'block', unsupported_sentence: 'block', evidence_unavailable: 'info',
+  reply_language: 'block', reply_length: 'fix', reply_format: 'fix', reply_links: 'fix',
 };
 const ORDER: JudgeSeverity[] = ['block', 'fix', 'review', 'info'];
 
@@ -427,11 +431,11 @@ export function isFragment(text: string, lang: 'ar' | 'en'): boolean {
   return false;
 }
 
-export function judge(input: JudgeInput): JudgeVerdict {
+function judgeAnswer(input: JudgeInput): JudgeVerdict {
   const started = performance.now();
   const question = input.question ?? '';
   const reply = input.reply ?? '';
-  const lang = questionLanguage(question);
+  const lang = input.constraints?.lang ?? questionLanguage(question);
   // What the first brain answered: a follow-up resolved with the previous turn's subject. Lines are scored against it.
   const asked = resolvedQuestion(question, input.previous);
   const frame = buildFrame(asked);
@@ -453,7 +457,7 @@ export function judge(input: JudgeInput): JudgeVerdict {
   // rq097). On other replies (desktop actions, templates, computed values) nothing else changes.
   const replyLines = reply.split('\n');
   const keepForm = (code: string, line: string | undefined) => (code === 'foreign_heading' || pageText) && formFindingHolds(code, line);
-  const form = checkReply({ question, reply });
+  const form = checkReply({ question, reply, lang });
   for (const finding of form.findings) {
     if (finding.severity === 'fix' && !keepForm(finding.code, replyLines[finding.line - 1])) continue;
     add(finding.code, finding.line, finding.excerpt, finding.detail, finding.severity === 'fix' ? 'fix' : SEVERITY[finding.code]);
@@ -493,7 +497,7 @@ export function judge(input: JudgeInput): JudgeVerdict {
     if (!extracted && topic.length && first.relevance.topicHits === 0) {
       add('lead_off_topic', first.line, first.text, lang === 'ar' ? `لا يذكر السطر الأول أي كلمة من الموضوع (${topic.join('، ')})` : `The first line names none of the subject words (${topic.join(', ')})`);
     } else if (!extracted) {
-      const subject = questionSubject(asked, ownTopic, lang);
+      const subject = questionSubject(asked, ownTopic, questionLanguage(asked));
       const named = (word: string) => mentions(fold(first.text), word)
         || titleWords.some(title => mentions(title, word) || title.length >= 4 && mentions(word, title));
       if (subject && !subject.words.some(named)) add('subject_missing', first.line, first.text, lang === 'ar'
@@ -582,7 +586,7 @@ export function judge(input: JudgeInput): JudgeVerdict {
       lines[best.line - 1] = dropOldLead ? '' : prefix(bestRaw) + leadRaw.replace(bullet, '');
     }
     // The same form findings the verdict kept, recomputed on the reordered text, so a sentence opening with «كتبت» is never cut.
-    const rebuilt = { question, reply: lines.join('\n').replace(/\n{3,}/gu, '\n\n').trim() };
+    const rebuilt = { question, lang, reply: lines.join('\n').replace(/\n{3,}/gu, '\n\n').trim() };
     const recheck = checkReply(rebuilt);
     const rebuiltLines = rebuilt.reply.split('\n');
     fixedReply = applyReplyFixes(rebuilt, { ...recheck, findings: recheck.findings.filter(finding => keepForm(finding.code, rebuiltLines[finding.line - 1])) });
@@ -593,4 +597,18 @@ export function judge(input: JudgeInput): JudgeVerdict {
     decision, kind, lang, frame: { intent: frame.intent, answerType: frame.answerType, topic }, sourced, codes, findings, lead, best,
     fixedReply, withholdText: decision === 'withhold' ? withholdReply(lang, codes, reply) : null, support, ms: Number((performance.now() - started).toFixed(3)),
   };
+}
+
+export function judge(input: JudgeInput): JudgeVerdict {
+  const verdict = judgeAnswer(input);
+  if (!input.constraints) return verdict;
+  const selected = verdict.withholdText ?? verdict.fixedReply ?? input.reply;
+  const checked = enforceReplyConstraints(selected, input.constraints);
+  if (checked.text === selected) return verdict;
+  const decision = verdict.decision === 'withhold' || checked.withheld ? 'withhold' : 'fix';
+  const findings = [...verdict.findings, ...checked.findings.map(code => ({
+    code, severity: SEVERITY[code], line: 0, excerpt: '', detail: code,
+  }))];
+  return { ...verdict, decision, findings, codes: [...new Set(findings.map(finding => finding.code))],
+    fixedReply: decision === 'fix' ? checked.text : null, withholdText: decision === 'withhold' ? checked.text : null };
 }

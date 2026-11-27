@@ -1,13 +1,15 @@
 import { createComputationMemoryReceipt, restoreComputationMemoryReceipt, type ComputationMemoryBinding } from './computation-memory-receipt.js';
 import { validateComputationMemoryReadback, type ComputationMemoryFlowResult } from './computation-memory-flow.js';
 import { createChatSupervisor } from './chat-supervision.js';
+import { replyConstraintsFor } from './reply-turn.js';
 import { observeTaskStep, reviewTaskCompletion, taskEvidenceHash, type TaskObservation, type TaskSupervisorState } from './task-supervisor.js';
 
 /** Compose only host-derived math plus fixed persistence wording, never provider prose. */
 export function completeComputationMemory(supervision: TaskSupervisorState, input: {
   request: string; binding: ComputationMemoryBinding; result: ComputationMemoryFlowResult; startedAt: number; now?: number;
 }): { text: string; status: 'completed' | 'partial' | 'blocked' } {
-  const now = input.now ?? Date.now(), ar = /[\u0600-\u06ff]/u.test(input.request);
+  const lang = replyConstraintsFor()?.lang;
+  const now = input.now ?? Date.now(), ar = lang ? lang === 'ar' : /[\u0600-\u06ff]/u.test(input.request);
   const receipt = createComputationMemoryReceipt(input.request, input.binding);
   if (!receipt) return { status: 'blocked', text: ar ? 'لم أتحقق من حساب مكتمل صالح للحفظ.' : 'I could not verify a complete calculation suitable for saving.' };
   const supplied = restoreComputationMemoryReceipt(input.result.receipt, input.request, input.binding);

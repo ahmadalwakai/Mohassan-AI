@@ -11,6 +11,7 @@ import { GoogleAdsBriefSchema } from '@mohassan/contracts';
 import { buildOperations, operationsHash, summarizeOperations } from '@mohassan/google-ads';
 import { listZip } from '@mohassan/sites';
 import { createApplication } from '../apps/server/src/app.ts';
+import { resolveReplyTurn } from '../apps/server/src/assistant/reply-preferences.ts';
 import { createMemberDataExport } from '../apps/server/src/member-data-export.ts';
 import { addPlatformMemberData } from './fixtures/platform-member-data.ts';
 
@@ -113,6 +114,7 @@ describe('signed-in account exports', () => {
     image.data.fill(pixel);
     const png = PNG.sync.write(image);
     await db().insertInto('chat_conversations').values({ id: conversationId, owner_id: account.id, title: account.name }).execute();
+    await resolveReplyTurn(db(), account.id, conversationId, account.label === 'member' ? 'أجب بالعربية دائماً' : 'Always answer in English');
     const platform = await addPlatformMemberData(db(), account.id, conversationId);
     await db().insertInto('chat_messages').values({ id: randomUUID(), conversation_id: conversationId, text: message, role: 'user' }).execute();
     await db().insertInto('chat_images').values({
@@ -195,7 +197,7 @@ describe('signed-in account exports', () => {
         field: 'Safe fixture value', text: `Connected as ${adsSecrets.login_customer_id}` } }),
     }).execute();
 
-    return { message, png, imageId, siteImageId, document, documentId, documentName, files, adsName, campaign: summary!.campaignName, platform,
+    return { conversationId, message, png, imageId, siteImageId, document, documentId, documentName, files, adsName, campaign: summary!.campaignName, platform,
       secrets: [...Object.values(oauthSecrets), ...Object.values(adsSecrets), ...platform.secrets, apiKey, privateConfig, copiedCookie, credential.password as string],
     };
   }
@@ -249,6 +251,7 @@ describe('signed-in account exports', () => {
 
     expect(archive.get('README.txt')?.toString('utf8')).toMatch(/\p{Script=Arabic}+/u);
     expect(readTable(archive, 'user')).toMatchObject([{ id: member.id, email: member.email }]);
+    expect(readTable(archive, 'chat_conversations')).toMatchObject([{ id: ownData.conversationId, reply_preferences: { lang: 'ar' } }]);
     expect(readTable(archive, 'chat_messages')).toMatchObject([{ text: ownData.message }]);
     expect(readTable(archive, 'chat_events')).toMatchObject([{ data: { detail: { field: 'Safe fixture value' } } }]);
     expect(readTable(archive, 'google_ads_connections')).toEqual([{ account_name: ownData.adsName }]);

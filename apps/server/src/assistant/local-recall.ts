@@ -2,6 +2,7 @@ import { buildFrame } from './mind/frame.js';
 import { recall } from './mind/recall.js';
 import type { LocalReply } from './mind/limits.js';
 import { explicitKnowledgeDocumentRequest } from './knowledge-document-request.js';
+import { replyBodyFor, replyConstraintsFor } from './reply-turn.js';
 
 export interface LocalRecallDependencies {
   /** Only explicit evidence returned by the owner's memory adapter belongs here. */
@@ -17,8 +18,11 @@ export interface LocalRecallContext { intent: 'memory'; topic: string }
  */
 export async function evaluateLocalRecall(request: string, deps: LocalRecallDependencies, signal: AbortSignal, context?: LocalRecallContext): Promise<LocalReply | null> {
   signal.throwIfAborted();
-  if (!request.trim() || request.length > 4000 || explicitKnowledgeDocumentRequest(request)) return null;
+  if (!request.trim() || request.length > 4000) return null;
+  request = replyBodyFor(request);
+  if (explicitKnowledgeDocumentRequest(request)) return null;
   const frame = buildFrame(request);
+  frame.lang = replyConstraintsFor()?.lang ?? frame.lang;
   if (context && context.topic.length <= 600) {
     frame.intent = 'memory_recall';
     frame.personal = true;

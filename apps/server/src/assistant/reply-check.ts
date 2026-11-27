@@ -23,7 +23,7 @@ export interface ReplyFinding {
   excerpt: string;
   detail: string;
 }
-export interface ReplyCheckInput { question: string; reply: string }
+export interface ReplyCheckInput { question: string; reply: string; lang?: ReplyLanguage }
 export interface ReplyCheck {
   /** The question's language: Arabic script anywhere makes it Arabic, as the rest of the assistant decides. */
   lang: ReplyLanguage;
@@ -130,7 +130,7 @@ const excerptOf = (text: string) => text.replace(/\s+/gu, ' ').trim().slice(0, 1
 const sentences = (line: string) => line.split(/(?<=[.!?؟])\s+/u).filter(Boolean);
 
 export function checkReply(input: ReplyCheckInput): ReplyCheck {
-  const lang = questionLanguage(input.question);
+  const lang = input.lang ?? questionLanguage(input.question);
   const reply = input.reply ?? '';
   const lines = reply.split('\n');
   const findings: ReplyFinding[] = [];

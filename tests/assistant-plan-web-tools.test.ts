@@ -15,14 +15,14 @@ const signal = new AbortController().signal;
 const initial = { number: 1, strategy: 'initial' } as const;
 const alternate = { number: 2, strategy: 'another_source' } as const;
 
-function fixture(request: string) {
+function fixture(request: string, replyConstraints?: PlanWebToolContext['replyConstraints']) {
   const search = vi.fn<SearchProvider['search']>().mockResolvedValue([]);
   const readPage = vi.fn<NonNullable<PlanWebToolContext['readPage']>>().mockResolvedValue(null);
   const openPage = vi.fn<NonNullable<PlanWebToolContext['openPage']>>();
   const onWebAction = vi.fn<NonNullable<PlanWebToolContext['onWebAction']>>();
   const active = vi.fn(async () => {});
   const tools = createPlanWebTools({ request, ownerId: 'isolated-owner', search: { name: 'fixture', search }, readPage, openPage, onWebAction,
-    active, signal, scrub: text => text });
+    active, signal, scrub: text => text, replyConstraints });
   return { tools, search, readPage, openPage, onWebAction, active };
 }
 
@@ -32,6 +32,23 @@ function watchPage(text: string): AgentPage {
 }
 
 describe('public web plan adapters', () => {
+  it('shortens the displayed web answer while retaining the text for dependent steps', async () => {
+    const goal = 'Search for a solar panel guide.';
+    const [lookup] = compilePlan(`${goal} Then read the result.`).steps;
+    const step = { ...lookup!, output: 'text' as const };
+    const { tools, search, readPage } = fixture(goal, { brief: true });
+    const title = 'Solar panel guide';
+    const lead = 'The solar panel guide introduces the equipment used during the workshop.';
+    const extra = 'The solar panel guide lists the materials kept at each workbench.';
+    const text = [lead, extra].join('\n');
+    search.mockResolvedValue([{ url: source1, title, snippet: text }]);
+    readPage.mockResolvedValue({ url: source1, title, text, status: 200 });
+    const result = await tools.search(step, { text: step.text, references: [] }, initial);
+    expect(result).toMatchObject({ ok: true, value: { type: 'text', value: text } });
+    if (!result.ok) throw new Error('Expected a web result');
+    expect(result.text).toBe(`${lead}\n[${title}](${source1})`);
+  });
+
   it('uses the original query and cached references for physical current quantities', async () => {
     const goal = 'Search for the alternating current rating of the harbour transformer.';
     const [lookup] = compilePlan(`${goal} Then read the result.`).steps;
