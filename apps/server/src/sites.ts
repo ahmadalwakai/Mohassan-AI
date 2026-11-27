@@ -174,7 +174,8 @@ export async function createSitesControl(db: Kysely<any>, config: SitesConfig) {
       const row = await rowFor(ownerId, id, tx, true);
       const brief = SiteBriefSchema.parse(row.brief), images = await imagesOf(id, tx);
       const result = siteCommand(request.text, brief, { whilePending: Boolean(request.want) });
-      if (!result && request.want) {
+      const singleLineQuestion = /^[^\r\n]*[؟?]$/u.test(request.text);
+      if (!result && request.want && !singleLineQuestion) {
         const patch = fulfilWant(brief, request.want, request.text, request.title);
         if (!patch) {
           const summary = request.want === 'address'
