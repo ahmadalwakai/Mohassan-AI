@@ -12,6 +12,16 @@ import type { ModelRunResult } from '../packages/model-relations/src/runtime.js'
 const page = (text: string, title = 'Paris - Encyclopedia', url = 'https://example.org/paris') => ({ kind: 'page' as const, text, title, url });
 const PARIS = 'Paris is the capital and largest city of France. It is located on the river Seine in the north of the country.';
 
+// Gate 3 and frozen-probe EOS, retrieved 2026-11-27.
+// https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/docs/V5-OWNER-CHAT-2026-11-26.md#v5-owner-chat-experiment
+const V5_GATE_3_FAILURE = /^لم يجتز Gate 3 \(القاعدتان A وB\)/u;
+
+function expectV5Measurement(label: string | undefined) {
+  expect(label).toMatch(V5_GATE_3_FAILURE);
+  expect(label).toContain('docs/V5-OWNER-CHAT-2026-11-26.md');
+  expect(label).toMatch(/توقف عند EOS.*العربية 49\/60.*الإنجليزية 47\/60/u);
+}
+
 function runner(answers: Record<string, ModelRunResult | (() => Promise<ModelRunResult>)>): CouncilRunner & { calls: string[] } {
   const calls: string[] = [];
   return {
@@ -42,7 +52,9 @@ describe('model council building blocks', () => {
     const parsed = ModelListSchema.parse({ models, council: false });
     expect(parsed.models.map(({ id, measured }) => ({ id, measured })))
       .toEqual(modelRegistry.map(({ id }) => ({ id, measured: modelMeasurementLabel(id) })));
-    expect(parsed.models.find(({ id }) => id === 'chat-v5')?.gates).toContain('لم يجتز Gate 3');
+    const v5 = parsed.models.find(({ id }) => id === 'chat-v5');
+    expect(v5?.gates).toContainEqual(expect.stringMatching(V5_GATE_3_FAILURE));
+    expectV5Measurement(v5?.measured);
   });
 
   it('picks the passage that shares the most question words', () => {
@@ -125,7 +137,7 @@ describe('deliberation', () => {
     expect(search).not.toHaveBeenCalled();
     const answers = outcome.council.members.filter(member => member.round === 'answer');
     expect(answers.map(member => member.model)).toEqual(['pipeline', 'chat-v5', 'reading-v3-last']);
-    expect(answers.find(member => member.model === 'chat-v5')).toMatchObject({ note: modelMeasurementLabel('chat-v5') });
+    expectV5Measurement(answers.find(member => member.model === 'chat-v5')?.note);
     expect(answers.find(member => member.model === 'reading-v3-last')).toMatchObject({ output: 'Paris', inEvidence: true, agreements: 1,
       note: expect.stringContaining(modelMeasurementLabel('reading-v3-last')) });
     expect(answers.find(member => member.model === 'pipeline')).toMatchObject({ chosen: true });
@@ -143,7 +155,10 @@ describe('deliberation', () => {
     expect(outcome.text).toContain('Paris');
     expect(outcome.text).toContain('Source: Capital of France guide — https://travel.example/france-capital');
     expect(outcome.text).toContain('reading model v3');
-    expect(outcome.text).toContain(modelMeasurementLabel('reading-v3-last', 'en'));
+    // XQuAD F1 report, retrieved 2026-11-27.
+    // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/docs/MOHASSAN-DEVELOPMENT-PLAN-2026-11-22.md#L55
+    expect(outcome.text).toContain('F1 · Fresh XQuAD split · Arabic 18.0 · English 26.4');
+    expect(outcome.text).toContain('docs/MOHASSAN-DEVELOPMENT-PLAN-2026-11-22.md § 1.2 النماذج الخاصة');
     expect(outcome.council.members.find(member => member.round === 'search')).toMatchObject({ model: 'web-search', outcome: 'ok' });
     expect(models.calls).toContain('reading-v3-last');
     expect(models.calls).not.toContain('chat-v4');

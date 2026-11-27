@@ -63,13 +63,26 @@ describe('a model card on the models page', () => {
   it('shows the registry measurement and its source, or explicitly marks it unmeasured', () => {
     const measured = getModelEntry('chat-v5')!;
     const evidence = measured.measurement;
-    if (evidence === 'not measured') throw new Error('Missing v5 frozen-probe evidence');
+    if (evidence === 'not measured' || evidence.kind !== 'counts') throw new Error('Missing v5 frozen-probe counts');
     const measuredHtml = renderToStaticMarkup(createElement(ModelCard, { model: { ...model, id: measured.id,
       measured: modelMeasurementLabel(measured.id) }, selected: false, onSelect: () => {} }));
     expect(measuredHtml).toContain(evidence.source.path);
     for (const { numerator, denominator } of evidence.results) expect(measuredHtml).toContain(`${numerator}/${denominator}`);
 
-    const unmeasuredHtml = renderToStaticMarkup(createElement(ModelCard, { model, selected: false, onSelect: () => {} }));
+    const unmeasured = 'reading-v4-hn-last';
+    const unmeasuredHtml = renderToStaticMarkup(createElement(ModelCard, { model: { ...model, id: unmeasured,
+      version: unmeasured, measured: modelMeasurementLabel(unmeasured) }, selected: false, onSelect: () => {} }));
     expect(unmeasuredHtml).toContain('لا قياس موثّق ببسط ومقام لكل لغة');
+  });
+
+  it('shows the reader’s reported F1 scores and their source', () => {
+    const html = renderToStaticMarkup(createElement(ModelCard, { model, selected: false }));
+    // XQuAD F1 report, retrieved 2026-11-27.
+    // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/docs/MOHASSAN-DEVELOPMENT-PLAN-2026-11-22.md#L55
+    expect(html).toContain('F1');
+    expect(html).toContain('XQuAD');
+    expect(html).toContain('العربية 18.0');
+    expect(html).toContain('الإنجليزية 26.4');
+    expect(html).toContain('docs/MOHASSAN-DEVELOPMENT-PLAN-2026-11-22.md');
   });
 });

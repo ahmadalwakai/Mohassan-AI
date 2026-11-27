@@ -23,18 +23,30 @@ export interface ModelArtifact {
 type MeasurementLanguage = 'ar' | 'en';
 type MeasurementText = Readonly<Record<MeasurementLanguage, string>>;
 
-interface MeasurementResult {
+interface MeasurementCount {
   readonly language: MeasurementLanguage;
   readonly numerator: number;
   readonly denominator: number;
 }
 
-interface ModelMeasurement {
+interface ReportedF1Score {
+  readonly language: MeasurementLanguage;
+  readonly score: number;
+}
+
+type ModelMeasurement = {
   readonly metric: MeasurementText;
   readonly split: MeasurementText;
-  readonly results: readonly [MeasurementResult, ...MeasurementResult[]];
   readonly source: { readonly path: string; readonly section: string };
-}
+} & ({
+  readonly kind: 'counts';
+  readonly results: readonly [MeasurementCount, ...MeasurementCount[]];
+  /** A separate quality gate documented by the same source as these counts. */
+  readonly gateFailure?: MeasurementText;
+} | {
+  readonly kind: 'reported-f1';
+  readonly results: readonly [ReportedF1Score, ...ReportedF1Score[]];
+});
 
 export interface ModelEntry {
   readonly id: string;
@@ -107,6 +119,7 @@ const imageReport = 'docs/IMAGE-READING-2026-11-22.md';
 const responseReport = 'docs/RESPONSE-QUALITY-RESULTS-2026-11-22.md';
 const developmentPlan = 'docs/MOHASSAN-DEVELOPMENT-PLAN-2026-11-22.md';
 const v5OwnerReport = 'docs/V5-OWNER-CHAT-2026-11-26.md';
+const v5GateFailure: MeasurementText = { ar: 'لم يجتز Gate 3 (القاعدتان A وB)', en: 'Failed Gate 3 (rules A and B)' };
 const contextExperiment = 'scripts/router/CONTEXT-EXPERIMENT.md';
 const slotDir = 'artifacts/brain-slot-development-v1/typescript-export-v1-20261121-b';
 const datePlaceDir = 'artifacts/brain-slot-date-place-typescript-v1/typescript-export-v1-20261121-a';
@@ -218,10 +231,12 @@ export const modelRegistry: readonly ModelEntry[] = [
     runtime: 'python-worker', input: `${generateInput} or the equivalent with text instead of inputIds`,
     output: generateOutput,
     resources: worker(30_000), state: 'experimental',
-    gates: [gate('لم يجتز Gate 3', `${v5OwnerReport}#v5-owner-chat-experiment`)],
+    gates: [gate(v5GateFailure.ar, `${v5OwnerReport}#v5-owner-chat-experiment`)],
     // Retrieved 2026-11-27 from https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/docs/V5-OWNER-CHAT-2026-11-26.md#v5-owner-chat-experiment
     measurement: {
-      metric: { ar: 'بلوغ رمز نهاية النص (EOS)', en: 'End-of-sequence (EOS) reached' },
+      kind: 'counts',
+      gateFailure: v5GateFailure,
+      metric: { ar: 'توقف عند EOS', en: 'Stopped at EOS' },
       split: { ar: 'اختبارات v5 التجريبية الثابتة', en: 'Frozen experimental v5 probes' },
       results: [
         { language: 'ar', numerator: 49, denominator: 60 },
@@ -337,6 +352,7 @@ export const modelRegistry: readonly ModelEntry[] = [
     owner: 'packages/execution-pipeline/scripts/train_full_foundation.py', input: rawGenerateInput, output: generateOutput,
     // Retrieved 2026-11-27 from https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/docs/MOHASSAN-DEVELOPMENT-PLAN-2026-11-22.md#12-النماذج-الخاصة
     measurement: {
+      kind: 'counts',
       metric: { ar: 'اجتياز الاستمرار الدلالي', en: 'Semantic continuation passes' },
       split: { ar: 'اختبار Gate 3', en: 'Gate 3 evaluation' },
       results: [
@@ -353,6 +369,15 @@ export const modelRegistry: readonly ModelEntry[] = [
     artifacts: [artifact('checkpoint', `${v4Dir}/${id}/best.pt`),
       artifact('tokenizer', `${v4Dir}/tokenizer.json`), artifact('tokenizer-report', `${v4Dir}/tokenizer-report.json`)],
     input: rawGenerateInput, output: 'Generated answer or abstention text',
+    // The section records F1 scores without sample counts. Retrieved 2026-11-27.
+    // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/docs/MOHASSAN-DEVELOPMENT-PLAN-2026-11-22.md#L55
+    measurement: id === 'reading-v3-last' ? {
+      kind: 'reported-f1',
+      metric: { ar: 'F1', en: 'F1' },
+      split: { ar: 'مجموعة XQuAD الجديدة', en: 'Fresh XQuAD split' },
+      results: [{ language: 'ar', score: 18.0 }, { language: 'en', score: 26.4 }],
+      source: { path: developmentPlan, section: '1.2 النماذج الخاصة' },
+    } : notMeasured,
     dataCard: responseReport, dependencies: [v4Dependency] })),
   historical({ id: 'reading-abstain-verifier', version: 'v1-20261120',
     task: 'Determine if an experimental reading model should abstain', owner: 'scripts/context-use/abstain_verifier.py',
@@ -399,9 +424,15 @@ export function modelMeasurementLabel(id: string, locale: MeasurementLanguage = 
   if (measurement === notMeasured) {
     return locale === 'ar' ? 'لا قياس موثّق ببسط ومقام لكل لغة' : 'No measurement with documented per-language counts';
   }
-  const scores = measurement.results.map(({ language, numerator, denominator }) =>
-    `${measurementLanguages[language][locale]} ${numerator}/${denominator}`).join(' · ');
-  return `${measurement.metric[locale]} · ${measurement.split[locale]} · ${scores} · ${measurement.source.path} § ${measurement.source.section}`;
+  const scores = measurement.kind === 'counts'
+    ? measurement.results.map(({ language, numerator, denominator }) => `${measurementLanguages[language][locale]} ${numerator}/${denominator}`)
+    : measurement.results.map(({ language, score }) => `${measurementLanguages[language][locale]} ${score.toFixed(1)}`);
+  const result = [measurement.metric[locale], measurement.split[locale], ...scores].join(' · ');
+  const source = `${measurement.source.path} § ${measurement.source.section}`;
+  if (measurement.kind === 'counts' && measurement.gateFailure) {
+    return `${measurement.gateFailure[locale]} · ${source} · ${result}`;
+  }
+  return `${result} · ${source}`;
 }
 
 function relativeArtifactPath(root: string, item: ModelArtifact, env: NodeJS.ProcessEnv): string {

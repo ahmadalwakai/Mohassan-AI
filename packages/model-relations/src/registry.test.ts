@@ -38,7 +38,7 @@ describe('model registry', () => {
     }
   });
 
-  it('records explicit unmeasured status or per-language counts with an existing documentation section', async () => {
+  it('records per-language counts, reported F1, or explicit unmeasured status', async () => {
     for (const entry of modelRegistry) {
       const { measurement } = entry;
       const englishLabel = modelMeasurementLabel(entry.id, 'en');
@@ -60,6 +60,12 @@ describe('model registry', () => {
 
       for (const result of results) {
         expect(['ar', 'en']).toContain(result.language);
+        if ('score' in result) {
+          expect(metric.en).toBe('F1');
+          expect(Number.isFinite(result.score)).toBe(true);
+          expect(englishLabel).toContain(result.score.toFixed(1));
+          continue;
+        }
         expect(Number.isSafeInteger(result.denominator)).toBe(true);
         expect(result.denominator).toBeGreaterThan(0);
         expect(Number.isFinite(result.numerator)).toBe(true);
