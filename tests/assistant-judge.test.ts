@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { comparable, cueWords, definitionForm, isFragment, judge, mentions, ownLines, pageKey, pageSubjectMismatch, questionSubject, relevance, resolvedQuestion, sourceTitleWords, sourceUrls, stem, supportedBy } from '../apps/server/src/assistant/judge.js';
 import { topicWords } from '../apps/server/src/assistant/hands.js';
+import { checkReply } from '../apps/server/src/assistant/reply-check.js';
 
 // Real replies of the 2026-11-22 run (artifacts/plan-2026-11-22/real-answers-2026-11-22T02-17-34.jsonl), shortened where noted.
 const SOURCE = (title: string, url: string) => `**المصدر:** [ويكيبيديا — ${title}](${url})`;
@@ -191,6 +192,18 @@ describe('the lead against the question', () => {
     expect(verdict.fixedReply?.split('\n')[0]).toMatch(/^The speed of light traveling through a vacuum is exactly 299,792,458 meters/u);
     expect(verdict.fixedReply).not.toMatch(/Vicky Stein|Subscribe to our newsletter/u);
     expect(verdict.fixedReply).toContain('**Source:**');
+  });
+
+  it('keeps distinct Arabic-Indic gold prices when fixing site chrome', () => {
+    const goldQuote = [
+      'من **أسعار الذهب**',
+      '> عيار ٢١: ٢٥٠ ريال للغرام الواحد.',
+      '> عيار ٢٤: ٢٨٥ ريال للغرام الواحد.',
+    ].join('\n');
+    const input = { question: 'كم سعر الذهب اليوم؟', reply: `${goldQuote}\nاشترك في النشرة` };
+
+    expect(checkReply(input).findings.map(finding => finding.code)).toEqual(['site_chrome']);
+    expect(judge(input)).toMatchObject({ decision: 'fix', fixedReply: goldQuote });
   });
 
   it('sends the clean answers as they are (rq005, rq026 with the answer form on the page\'s own subject, rq027, rq008 superlative, rq025 long lead cut with an ellipsis)', () => {

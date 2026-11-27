@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { ChatQuestionSchema } from '@mohassan/contracts';
-import { clarificationCard, clarificationLanguage, decideClarification, missingClarificationSlot,
+import { foldArabicForMatch } from '../apps/server/src/assistant/arabic-fold.js';
+import { clarificationCard, clarificationLanguage, clarificationSlotPatterns, decideClarification, missingClarificationSlot,
   type ClarificationChoice } from '../apps/server/src/assistant/clarify/policy.js';
+import { resolveRequestContext } from '../apps/server/src/assistant/request-context.js';
 
 // Development-only policy assertions. Numeric evidence is constructed in-process.
 // The subject comes from the owner's request. These inputs are never training data.
@@ -43,7 +45,39 @@ describe('clarification choice policy', () => {
   it('leaves an explicitly named document and account alone', () => {
     expect(missingClarificationSlot('Read the file on my computer.')).toBe('file');
     expect(missingClarificationSlot('Read the file AGENTS.md.')).toBeNull();
+    expect(missingClarificationSlot('افتح الملف على جهازي')).toBe('file');
+    expect(missingClarificationSlot('افتح الملف علي جهازي')).toBe('file');
     expect(missingClarificationSlot('Show the balance in my account.')).toBe('account');
     expect(missingClarificationSlot('Show the balance in my personal account.')).toBeNull();
+  });
+
+  it('recognizes the supplied reminder date with either spelling of Friday', () => {
+    for (const request of ['ذكرني يوم الجمعه بالاجتماع', 'ذكرني يوم الجمعة بالاجتماع']) {
+      const resolution = resolveRequestContext(request);
+      expect(resolution.intent).toBe('reminder');
+      expect(missingClarificationSlot(request, resolution)).toBeNull();
+    }
+  });
+
+  it('recognizes the account slot with either spelling of the preposition', () => {
+    expect(missingClarificationSlot('اعرض الفواتير علي حسابي')).toBe('account');
+    expect(missingClarificationSlot('اعرض الفواتير على حسابي')).toBe('account');
+  });
+
+  it.each([
+    'ذكرني بعد 5 دقائق بالاجتماع',
+    'ذكرني بعد ٥ دقائق بالاجتماع',
+  ])('recognizes a supplied duration in %s', request => {
+    const resolution = resolveRequestContext(request);
+    expect(resolution.intent).toBe('reminder');
+    expect(missingClarificationSlot(request, resolution)).toBeNull();
+  });
+
+  it('writes every Arabic slot-pattern literal in folded form', () => {
+    for (const [name, pattern] of Object.entries(clarificationSlotPatterns)) {
+      const literals = pattern.source.match(/\p{Script_Extensions=Arabic}+/gu) ?? [];
+      expect(literals, name).not.toHaveLength(0);
+      expect(literals.map(literal => foldArabicForMatch(literal.normalize('NFKC'))), name).toEqual(literals);
+    }
   });
 });
