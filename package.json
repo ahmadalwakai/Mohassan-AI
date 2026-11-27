@@ -21,7 +21,7 @@
     "desktop:dist": "npm run dist --workspace @mohassan/desktop-shell",
     "start": "node scripts/dev.mjs --production",
     "build": "npm run build --workspace @mohassan/web",
-    "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck --workspace @mohassan/web",
+    "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck --workspace @mohassan/web && tsc --noEmit -p apps/desktop/tsconfig.json",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "ai:check": "tsx scripts/check-ai.ts",
