@@ -14,12 +14,14 @@
  *   surface notes in the check reply and approval card, and compare two controls.
  * - `rename` (2026-11-27): two successful renames, two refusals after approval, and two controls whose replies must
  *   match exactly between arms. Uses a passing variant of the demo with a declaration and its import in separate files.
+ * - `projects` (2026-11-27): list registered projects, choose editable files and approve registration, register with
+ *   named files, refuse a project outside the allowed roots, and compare two control replies verbatim across arms.
  *
  * Each request runs in a fresh conversation; an approval card is approved once. The demo project is registered, no chat
  * model is configured, and the database is embedded and in memory. Records the first and final replies, the run status
  * and the time per request.
  *
- * Usage: npx tsx scripts/mohassan-code/measure-no-model-coding.ts [checkout] [out.json] [--set=slice1|slice2|before-after|logic|show-change|instructions|rename] [--real-sandbox]
+ * Usage: npx tsx scripts/mohassan-code/measure-no-model-coding.ts [checkout] [out.json] [--set=slice1|slice2|before-after|logic|show-change|instructions|rename|projects] [--real-sandbox]
  * `checkout` (default: the current directory) is the repository to measure, so one copy of this file measures a base
  * checkout too. That checkout needs its own installed node_modules. `--real-sandbox` uses the Windows AppContainer
  * sandbox instead of the stub (Windows only; its first isolation probe takes about half a minute).
@@ -32,12 +34,12 @@ import { PASSING_OUTPUT, REAL_OUTPUT } from '../../tests/fixtures/coding-test-ou
 import { REPAIR_DEMO_FAILURE_OUTPUT, REPAIR_DEMO_SUCCESS_OUTPUT } from '../../tests/fixtures/coding-repair-demo-output.js';
 import { git } from '../../packages/coding/src/git.ts';
 
-interface Case { id: string; goal: string; expect?: string[]; approval?: boolean; expectApproval?: string[]; control?: boolean; blocked?: boolean }
+interface Case { id: string; goal: string; expect?: string[]; approval?: boolean; expectApproval?: string[]; question?: { option: string; expect: string[] }; control?: boolean; blocked?: boolean }
 const beforeAfter = ['قبل التعديل: نجح 0 من 2، وفشل 2.', 'بعد التعديل: نجح 2 من 2، وفشل 0.', 'adds positive values', 'test/sum.test.mjs:5', 'ReferenceError', 'src/sum.ts:2'];
 const LOGIC_AR = ['مشروع تجربة الجمع', 'تغيير المنطق يحتاج إلى نموذج لا يعمل الآن', 'تشغيل الفحوص وشرح نتائجها', 'البحث', 'الاستيراد', 'الإصلاحات المثبتة', 'بعد موافقتك'];
 const LOGIC_EN = ['مشروع تجربة الجمع', 'A logic change needs a model, which is not running now', 'run the checks and explain the results', 'search', 'imports', 'proven fixes', 'with your approval'];
 const REPAIR_DIFF = ['mohassan/', 'src/sum.ts', '-  return leftHandValue + rightHandVaule;', '+  return leftHandValue + rightHandValue;', 'git merge'];
-const SETS: Record<'slice1' | 'slice2' | 'before-after' | 'logic' | 'show-change' | 'instructions' | 'rename', Case[]> = {
+const SETS: Record<'slice1' | 'slice2' | 'before-after' | 'logic' | 'show-change' | 'instructions' | 'rename' | 'projects', Case[]> = {
   slice1: [
     'أصلح الكود في مشروع تجربة الجمع',
     'أصلح مشروع تجربة الجمع',
@@ -106,6 +108,15 @@ const SETS: Record<'slice1' | 'slice2' | 'before-after' | 'logic' | 'show-change
     { id: 'K1', goal: 'ابحث عن ملف اسمه README', control: true },
     { id: 'K3', goal: 'صحح هذا النص: انا ذهبت الي المدرسه', control: true },
   ],
+  projects: [
+    { id: 'P1', goal: 'ما مشاريعي البرمجية؟', expect: ['مشروع تجربة الجمع', 'الملفات القابلة للتعديل', 'src/sum.ts', 'ملفات الاختبار', 'test/sum.test.mjs'] },
+    { id: 'P2', goal: 'list my coding projects', expect: ['مشروع تجربة الجمع', 'Editable files', 'src/sum.ts', 'Test files', 'test/sum.test.mjs'] },
+    { id: 'P3', goal: 'سجّل مشروع "{selection}" باسم مشروع الاختيار', question: { option: 'src/sum.ts', expect: ['اختر من ملف واحد إلى 5', 'src/sum.ts'] }, approval: true, expect: ['سُجّل مشروع', 'مشروع الاختيار', 'src/sum.ts'] },
+    { id: 'P4', goal: 'register project "{direct}" as Direct Project with files src/sum.ts', approval: true, expect: ['Registered coding project', 'Direct Project', 'src/sum.ts'] },
+    { id: 'P5', goal: 'register project "{outside}" as Outside Project', expect: ['المشروع خارج الجذور المصرح بها.'] },
+    { id: 'K1', goal: 'ابحث عن ملف اسمه README', control: true },
+    { id: 'K2', goal: 'صحح هذا النص: انا ذهبت الي المدرسه', control: true },
+  ],
 };
 
 // Recorded Windows AppContainer demo output from tests/assistant-no-model-code-read.test.ts.
@@ -120,7 +131,7 @@ const recordedFailure = [
 const flags = process.argv.slice(2).filter(value => value.startsWith('--'));
 const [checkoutArgument, out] = process.argv.slice(2).filter(value => !value.startsWith('--'));
 const set = flags.find(value => value.startsWith('--set='))?.slice('--set='.length) ?? 'slice1';
-if (set !== 'slice1' && set !== 'slice2' && set !== 'before-after' && set !== 'logic' && set !== 'show-change' && set !== 'instructions' && set !== 'rename') throw new Error(`unknown set ${set}`);
+if (set !== 'slice1' && set !== 'slice2' && set !== 'before-after' && set !== 'logic' && set !== 'show-change' && set !== 'instructions' && set !== 'rename' && set !== 'projects') throw new Error(`unknown set ${set}`);
 const realSandbox = flags.includes('--real-sandbox');
 const checkout = resolve(checkoutArgument ?? process.cwd());
 const { createApplication } = await import(pathToFileURL(join(checkout, 'apps/server/src/app.ts')).href);
@@ -162,9 +173,11 @@ async function createRenameDemo(directory: string) {
 }
 
 const directory = await mkdtemp(join(tmpdir(), 'mohassan-measure-coding-'));
+const dataDir = set === 'projects' ? join(directory, 'projects') : directory;
+await mkdir(dataDir, { recursive: true });
 const secret = 'measure-coding-fixture-internal-secret-01', origin = 'http://127.0.0.1:3000';
 const headers = { 'x-mohassan-internal': secret, origin };
-const stub = {
+const fixture = {
   available: async () => ({ available: true, provider: 'unit-fixture', message: 'measurement stub' }),
   run: async (request: { files: { path: string; content: string }[] }) => {
     const hash = snapshotHash(request.files);
@@ -181,10 +194,14 @@ const stub = {
     };
   },
 };
+const stub = set === 'projects' ? {
+  available: fixture.available,
+  run: async () => { throw new Error('Project registration and listing need no sandbox run.'); },
+} : fixture;
 const startedApp = Date.now();
 const application = await createApplication({
   authSecret: 'measure-coding-fixture-auth-secret-000001', internalSecret: secret, setupToken: 'measure-coding-fixture-setup-token-001', webOrigin: origin,
-  production: false, runWorker: true, testRequestLimit: 2000, codingDataDir: directory, codingAllowedRoots: [directory], browserChannel: null,
+  production: false, runWorker: true, testRequestLimit: 2000, codingDataDir: dataDir, codingAllowedRoots: [dataDir], browserChannel: null,
   // Without a runner the coding control builds the Windows AppContainer sandbox itself (apps/server/src/coding.ts).
   ...(realSandbox ? {} : { sandboxRunner: stub }),
 });
@@ -245,16 +262,34 @@ try {
     const registered = await api('POST', '/api/coding/projects', { name: 'Sum Instructions', path: project.path, allowedPaths: project.allowedPaths });
     if (registered.statusCode !== 200) throw new Error(`Instructions fixture registration failed: ${registered.statusCode}`);
   }
+  const fixturePaths: Record<string, string> = set === 'projects' ? {
+    selection: (await createRepairDemoProject(join(dataDir, 'choose files'))).path,
+    direct: (await createRepairDemoProject(join(dataDir, 'named files'))).path,
+    outside: (await createRepairDemoProject(join(directory, 'outside'))).path,
+  } : {};
   const replyLimit = set === 'show-change' ? undefined : 1200;
   const rows: Record<string, unknown>[] = [];
-  for (const item of SETS[set]) {
+  const cases: Case[] = SETS[set];
+  for (const item of cases) {
     const started = Date.now();
-    const first = await settled((await application.chat.create(ownerId, { goal: item.goal })).id);
+    const goal = item.goal.replace(/\{(selection|direct|outside)\}/g, (placeholder, name: string) => fixturePaths[name] ?? placeholder);
+    const first = await settled((await application.chat.create(ownerId, { goal })).id);
     const row: Record<string, unknown> = { id: item.id, goal: item.goal, first: first.status, firstRun: first.run?.verdict?.status ?? first.run?.phase ?? null, firstText: first.messages?.at(-1)?.text?.slice(0, replyLimit) ?? null };
     let finalText = row.firstText as string | null;
-    if (first.status === 'waiting_approval' && first.approval) {
-      if (item.expectApproval) row.approvalDetail = first.approval.detail;
-      await api('POST', `/api/chat/conversations/${first.id}/approve`, { approvalId: first.approval.id, approved: true });
+    let decision = first;
+    let questionMet = !item.question;
+    if (item.question && first.status === 'waiting_user') {
+      const option = first.question?.options?.find((option: { label: string }) => option.label === item.question?.option);
+      questionMet = Boolean(option && item.question.expect.every(text => (finalText ?? '').includes(text)));
+      if (option) {
+        await api('POST', `/api/chat/conversations/${first.id}/respond`, { questionId: first.question.id, optionId: option.id });
+        decision = await settled(first.id);
+        row.afterQuestion = decision.status;
+      }
+    }
+    if (decision.status === 'waiting_approval' && decision.approval) {
+      if (item.expectApproval) row.approvalDetail = decision.approval.detail;
+      await api('POST', `/api/chat/conversations/${first.id}/approve`, { approvalId: decision.approval.id, approved: true });
       const done = await settled(first.id);
       row.final = done.status;
       row.finalRun = done.run?.verdict?.status ?? done.run?.phase ?? null;
@@ -262,10 +297,10 @@ try {
       row.finalText = finalText;
     }
     row.ms = Date.now() - started;
-    if (item.expect) row.met = (item.approval === undefined || (item.approval
-      ? first.status === 'waiting_approval' : first.status !== 'waiting_approval' && !first.approval))
+    if (item.expect) row.met = questionMet && (item.approval === undefined || (item.approval
+      ? decision.status === 'waiting_approval' : decision.status !== 'waiting_approval' && !decision.approval))
       && (!item.blocked || first.run?.verdict?.status === 'blocked')
-      && (item.expectApproval ?? []).every(text => (first.approval?.detail ?? '').includes(text))
+      && (item.expectApproval ?? []).every(text => (decision.approval?.detail ?? '').includes(text))
       && item.expect.every(text => (finalText ?? '').includes(text));
     if (item.control) row.control = true;
     rows.push(row);

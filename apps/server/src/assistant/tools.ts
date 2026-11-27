@@ -9,6 +9,7 @@ import { z } from 'zod';
 import type { CampaignPorts } from './campaign-run.js';
 import { codingOutcomeFields } from './coding-outcome-report.js';
 import { readCodeChangeView } from './code-change-view.js';
+import type { CodeProjectsPort } from './code-projects-chat.js';
 
 /**
  * What the assistant may reach outside the browser. Each adapter calls the
@@ -58,6 +59,7 @@ export interface AssistantTools {
     codeCheck?(ownerId: string, projectId: string, signal: AbortSignal): Promise<CodingCheckResult>;
     codeChangeView?: ReturnType<typeof readCodeChangeView>;
     codeInstructions?(ownerId: string, projectId: string, baseCommit?: string): Promise<ProjectInspection['instructions']>;
+    codeProjects?: CodeProjectsPort;
     studio?(ownerId: string, input: { id: string; goal: string }, idempotencyKey: string, runId?: string): Promise<PendingWorkTask>;
     approve(ownerId: string, taskId: string): Promise<void>;
     cancel(ownerId: string, taskId: string): Promise<void>;
@@ -174,6 +176,7 @@ interface ToolModules {
   };
   coding: { available: boolean; workspace(ownerId: string): Promise<{ projects: { id: string; name: string; path: string }[] }>;
     verify?: Parameters<typeof readCodeChangeView>[1]['verify'];
+    projects?: CodeProjectsPort['projects']; inspect?: CodeProjectsPort['inspect']; register?: CodeProjectsPort['register'];
     search?(ownerId: string, projectId: string, query: string): Promise<ProjectSearchResult>;
     imports?(ownerId: string, projectId: string, reference: string): Promise<ImportsLookup>;
     trackedPaths?(ownerId: string, projectId: string, baseCommit: string): Promise<readonly string[]>;
@@ -258,6 +261,7 @@ export function createAssistantTools({ memory, coding, studio, studioChange, run
         codeImports: (ownerId, projectId, reference) => guarded(() => coding.imports!(ownerId, projectId, reference)) } satisfies Pick<NonNullable<AssistantTools['work']>, 'codeSearch' | 'codeImports'> : {}),
       ...(coding.available && coding.check ? { codeCheck: (ownerId, projectId, signal) => guarded(() => coding.check!(ownerId, projectId, signal)) } satisfies Pick<NonNullable<AssistantTools['work']>, 'codeCheck'> : {}),
       ...(coding.instructions ? { codeInstructions: (ownerId, projectId, baseCommit) => guarded(() => coding.instructions!(ownerId, projectId, baseCommit)) } satisfies Pick<NonNullable<AssistantTools['work']>, 'codeInstructions'> : {}),
+      ...(coding.projects && coding.inspect && coding.register ? { codeProjects: { projects: coding.projects, inspect: coding.inspect, register: coding.register } } : {}),
       ...(studioChange ? { studio: (ownerId, raw, key, runId) => guarded(async () => {
         const input = StudioInput.parse({ sessionId: raw.id, goal: raw.goal });
         const session = await studio.detail(ownerId, input.sessionId);

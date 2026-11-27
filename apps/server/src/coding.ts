@@ -1,4 +1,5 @@
 import { createHash,randomUUID } from 'node:crypto';
+import { lstat } from 'node:fs/promises';
 import { resolve,join } from 'node:path';
 import { sql,type Kysely } from 'kysely';
 import { CodingEngine,createRepairDemoProject,deterministicCodingMessage,generateDeterministicEdits,inspectProject,lookupImports,searchProjectFiles,type SandboxRunner } from '@mohassan/coding';
@@ -8,6 +9,10 @@ import { verifyRecoveryAuthority,type VerificationRecoveryContext } from '@mohas
 
 export interface CodingConfig {
   dataDir?:string;allowedRoots?:string[];sandbox?:SandboxRunner;
+}
+export interface CodingProjectRegistrationOptions {
+  expectedBaseCommit: string;
+  persist: <T>(write: (db: Kysely<any>) => Promise<T>) => Promise<T>;
 }
 function projectDto(row:any):Project{return ProjectSchema.parse({id:row.id,ownerId:row.owner_id,name:row.name,path:row.repo_path,baseCommit:row.base_commit,allowedPaths:row.allowed_paths,testProfile:row.test_profile,createdAt:new Date(row.created_at).toISOString()});}
 function fault(code:string,message:string,statusCode=409){return Object.assign(new Error(message),{code,statusCode});}
@@ -21,16 +26,29 @@ export async function createCodingControl(db:Kysely<any>,config:CodingConfig){
   async function projects(ownerId:string){return (await db.selectFrom('coding_projects').selectAll().where('owner_id','=',ownerId).orderBy('created_at','desc').execute()).map(projectDto);}
   async function workspace(ownerId:string):Promise<CodingWorkspace>{return {projects:await projects(ownerId),sandbox:availability};}
   async function project(ownerId:string,id:string):Promise<Project>{const row=await db.selectFrom('coding_projects').selectAll().where('id','=',id).where('owner_id','=',ownerId).executeTakeFirst();if(!row)throw fault('PROJECT_NOT_FOUND','لم يُعثر على المشروع.',404);return projectDto(row);}
-  async function register(ownerId:string,input:unknown):Promise<Project>{
+  async function inspect(path: string) {
+    // The internal demo root may not exist until a demo is created. An absent
+    // fallback must not mask the engine's outside-roots error on a fresh setup.
+    const hasImplicitRoot = dataDir && await lstat(dataDir).then(() => true, (error: NodeJS.ErrnoException) => error.code !== 'ENOENT');
+    const { path: canonicalPath, baseCommit, candidateEditablePaths, testFiles } = await inspectProject(path, hasImplicitRoot ? roots : config.allowedRoots ?? []);
+    return { path: canonicalPath, baseCommit, candidateEditablePaths, testFiles };
+  }
+  async function register(ownerId:string,input:unknown,options?:CodingProjectRegistrationOptions):Promise<Project>{
     if(!dataDir)throw fault('CODING_NOT_CONFIGURED','محرك البرمجة غير مجهز.',503);
-    const request=RegisterProjectSchema.parse(input);const inspection=await inspectProject(request.path,roots);
+    const request=RegisterProjectSchema.parse(input);const inspection=await inspect(request.path);
+    if (options && inspection.baseCommit !== options.expectedBaseCommit) {
+      throw fault('PROJECT_HEAD_CHANGED', 'تغير HEAD منذ طلب الموافقة؛ يلزم طلب موافقة جديد لتسجيل المشروع.');
+    }
     const allowedPaths=[...new Set(request.allowedPaths)].sort();
     if(allowedPaths.length!==request.allowedPaths.length||allowedPaths.some(path=>!inspection.candidateEditablePaths.includes(path)))throw fault('INVALID_EDIT_SCOPE','اختر ملفات تنفيذ موجودة؛ الاختبارات والإعدادات محمية.',400);
     const scopeHash=createHash('sha256').update(JSON.stringify([process.platform==='win32'?inspection.path.toLowerCase():inspection.path,inspection.baseCommit,allowedPaths])).digest('hex');
-    const row=await db.insertInto('coding_projects').values({id:randomUUID(),owner_id:ownerId,name:request.name,repo_path:inspection.path,base_commit:inspection.baseCommit,allowed_paths:JSON.stringify(allowedPaths),test_profile:'node-test',scope_hash:scopeHash})
-      .onConflict(conflict=>conflict.columns(['owner_id','scope_hash']).doNothing()).returningAll().executeTakeFirst();
-    if(row)return projectDto(row);
-    return projectDto(await db.selectFrom('coding_projects').selectAll().where('owner_id','=',ownerId).where('scope_hash','=',scopeHash).executeTakeFirstOrThrow());
+    const write = async (connection: Kysely<any>): Promise<Project> => {
+      const row=await connection.insertInto('coding_projects').values({id:randomUUID(),owner_id:ownerId,name:request.name,repo_path:inspection.path,base_commit:inspection.baseCommit,allowed_paths:JSON.stringify(allowedPaths),test_profile:'node-test',scope_hash:scopeHash})
+        .onConflict(conflict=>conflict.columns(['owner_id','scope_hash']).doNothing()).returningAll().executeTakeFirst();
+      if(row)return projectDto(row);
+      return projectDto(await connection.selectFrom('coding_projects').selectAll().where('owner_id','=',ownerId).where('scope_hash','=',scopeHash).executeTakeFirstOrThrow());
+    };
+    return options ? options.persist(write) : write(db);
   }
   async function demo(ownerId:string):Promise<Project>{
     if(!dataDir)throw fault('CODING_NOT_CONFIGURED','محرك البرمجة غير مجهز.',503);
@@ -74,5 +92,5 @@ export async function createCodingControl(db:Kysely<any>,config:CodingConfig){
     if(!engine)throw fault('SANDBOX_UNAVAILABLE','لم يثبت توفر بيئة عزل؛ لم يُشغّل كود.',503);
     return engine.check({ownerId,project:await project(ownerId,projectId),signal});
   }
-  return {available:Boolean(engine),workspace,register,demo,execute,verify,sandbox,search,imports,check,trackedPaths,instructions};
+  return {available:Boolean(engine),workspace,projects,inspect,register,demo,execute,verify,sandbox,search,imports,check,trackedPaths,instructions};
 }

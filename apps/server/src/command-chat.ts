@@ -107,6 +107,7 @@ import { reviewWorkRefusal } from './assistant/refusal/turn.js';
 import { answerTestDrivenCoding, bindTestDrivenCodingHash, initializeTestDrivenCoding, publishTestDrivenCoding } from './assistant/test-driven-coding/reply.js';
 import { answerNoModelCodeRead, codingOutcomeReply, prepareNoModelCoding, recordCodeRead } from './assistant/no-model-coding.js';
 import { answerCodeChangeView } from './assistant/code-change-view.js';
+import { handleCodeProjectsChat } from './assistant/code-projects-chat.js';
 import { describeSearchDestination, extractPublicSearchQueries, isSearchEntryElement, mergePublicQueryTerms, reviewGeneratedPublicQuery } from './assistant/public-query-provenance.js';
 import { reviewExplicitPublicBrowserQuery } from './assistant/browser-public-query.js';
 import { ADS_REWRITE_JSON_SCHEMA, ADS_REWRITE_SCHEMA_NAME, ADS_REWRITE_SYSTEM, buildRewritePrompt, type RewriteRequest } from '@mohassan/google-ads';
@@ -2178,6 +2179,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const refusal = run.intent === 'task' && reviewWorkRefusal(request, state, currentExecution.full,
         { computer: Boolean(tools?.computer || config.desktop), memory: Boolean(tools?.memory) });
       if (refusal) { await finish(id, runId, state, refusal.text, 'blocked', undefined, undefined, true); return; }
+      if (run.intent === 'task' && fullReach() && !hasChatModel() && !constraints && await handleCodeProjectsChat({ request, state, ownerId, id, runId, signal, port: tools?.work?.codeProjects,
+        ledger: () => ledgerOf(state, runId), checkpoint: () => saveState(runId, state), transaction: work => runTransaction(id, runId, work),
+        ownerAccess: requireCurrentOwnerAccess, lockOwner: tx => config.accountFullAccess?.(ownerId, tx) ?? Promise.resolve(false), scrub: text => vault.scrub(id, clean(text)),
+        pause: (status, fields, text) => pause(id, runId, state, status, fields, text), finish: (text, status) => finish(id, runId, state, text, status, undefined, undefined, true) })) return;
       const monitorTurn = monitor && run.intent === 'task' && !state.questionAnswer ? await monitor.forTurn({ ownerId, conversationId: id, runId, text: request, signal, state }) : null;
       if (monitorTurn) { await finish(id, runId, state, monitorTurn.text, monitorTurn.status ?? (monitorTurn.proposal ? 'completed' : 'partial'), undefined, undefined, true, monitorTurn); return; }
       if (await completeQuestionRewrite(request, state, () => browser.dropHeld(ownerId, id),
