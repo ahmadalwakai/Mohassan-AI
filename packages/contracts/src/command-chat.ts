@@ -126,6 +126,30 @@ export const ModelCouncilSchema = z.object({
   reason: z.string().min(1).max(400),
   elapsedMs: z.number().int().min(0).max(600_000),
   members: z.array(ModelCouncilMemberSchema).max(48),
+  discussion: z.object({
+    proposals: z.array(z.object({
+      member: z.string().min(1).max(64),
+      answer: z.string().max(600),
+      evidenceUrl: z.string().max(2048).optional(),
+      evidenceQuote: z.string().max(400).optional(),
+    }).strict()).max(16),
+    checks: z.array(z.object({
+      checker: z.string().min(1).max(64),
+      member: z.string().min(1).max(64),
+      verdict: z.enum(['supports', 'contradicts', 'unsure']),
+      note: z.string().max(240).optional(),
+    }).strict()).max(64),
+    votes: z.array(z.object({
+      member: z.string().min(1).max(64),
+      weight: z.number().min(0).max(1),
+      weightSource: z.string().max(160),
+    }).strict()).max(16),
+    decision: z.object({
+      chosen: z.string().min(1).max(64),
+      reasonAr: z.string().min(1).max(400),
+      reasonEn: z.string().min(1).max(400),
+    }).strict(),
+  }).strict().optional(),
 }).strict();
 export type ModelCouncil = z.infer<typeof ModelCouncilSchema>;
 

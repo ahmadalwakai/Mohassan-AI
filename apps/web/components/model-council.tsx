@@ -3,6 +3,7 @@
 import { useId, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import type { ModelCouncil, ModelCouncilMember } from "@mohassan/contracts";
+import { CouncilDiscussionDetails, CouncilDiscussionPanel } from "./model-council-discussion";
 import styles from "./model-council.module.css";
 
 const OUTCOME: Record<ModelCouncilMember["outcome"], string> = { ok: "أجاب", abstained: "امتنع", failed: "تعذّر", timeout: "انتهى وقته" };
@@ -45,6 +46,7 @@ function Answer({ member }: { member: ModelCouncilMember }) {
 
 /** The council's record as the owner reads it: the decision, how each model read the request, the search and the answers. */
 export function CouncilPanel({ council, id }: { council: ModelCouncil; id?: string }) {
+  if (council.discussion) return <CouncilDiscussionPanel discussion={council.discussion} members={council.members} id={id} />;
   const understanding = council.members.filter(member => member.round === "understanding");
   const search = council.members.filter(member => member.round === "search");
   const answers = council.members.filter(member => member.round === "answer");
@@ -73,6 +75,11 @@ export function CouncilPanel({ council, id }: { council: ModelCouncil; id?: stri
 
 /** Under an owner's reply: the model council that picked it, closed until asked for. */
 export function ModelCouncilDetails({ council }: { council: ModelCouncil }) {
+  if (council.discussion) return <CouncilDiscussionDetails discussion={council.discussion} members={council.members} />;
+  return <LegacyCouncilDetails council={council} />;
+}
+
+function LegacyCouncilDetails({ council }: { council: ModelCouncil }) {
   const [open, setOpen] = useState(false);
   const panel = useId();
   const answering = council.members.filter(member => member.round === "answer").length;
