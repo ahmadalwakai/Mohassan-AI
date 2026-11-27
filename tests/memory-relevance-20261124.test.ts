@@ -137,6 +137,58 @@ describe('memory relevance and evidence filtering before the result limit', () =
     expect((await memory.search(owner, { query }, readOnly)).items.map(item => item.id)).toEqual([id]);
   });
 
+  it.each([
+    // Aljlayl and Frieder's examples, with tatweel inserted per the Unicode chart.
+    // https://ir.cs.georgetown.edu/publications/downloads/CIKM02-Arabic.pdf (retrieved 2026-11-27)
+    // https://www.unicode.org/charts/PDF/U0600.pdf (retrieved 2026-11-27)
+    ['hamza above alef', 'أحرف', 'احرف'],
+    ['hamza below alef', 'إنسان', 'انسان'],
+    ['tatweel', 'أحرف', 'أح\u0640رف'],
+    // The Academy of the Arabic Language's dictionary entry, with madda folded as above.
+    // https://www.arabicacademy.gov.eg/ar/محرك-البحث/الآلة (retrieved 2026-11-27)
+    ['alef with madda', 'آلة', 'آلة'.replace('آ', 'ا')],
+    // Eskander et al.'s example of Egyptian spelling variation.
+    // https://aclanthology.org/N13-1066.pdf (retrieved 2026-11-27)
+    ['alef maqsura', 'مصرى', 'مصري'],
+    // The owner's reported query, with the taa marbuta rule isolated.
+    ['taa marbuta', 'السيارة', 'السياره'],
+    ['the reported phrase', 'أوراق السيارة', 'اوراق السياره'],
+  ])('finds both spellings of %s in titles and content', async (_name, canonical, variant) => {
+    const owner = `memory-relevance-arabic-${randomUUID()}`;
+    const [titleId, contentId] = await seed(owner, [{ title: canonical }, { content: variant }]);
+
+    for (const query of [canonical, variant]) {
+      const { items } = await memory.search(owner, { query }, readOnly);
+      expect(items.map(item => item.id)).toEqual([titleId, contentId]);
+      expect(items[0]?.title).toBe(canonical);
+      expect(items[1]?.content).toBe(variant);
+    }
+  });
+
+  it('ignores Arabic stopwords in scoring and returns no matches for a stopword-only query', async () => {
+    const owner = 'memory-relevance-arabic-stopwords';
+    // The reported function words, verified against the published Arabic stopword list.
+    // https://github.com/apache/lucene/blob/releases/lucene/9.12.2/lucene/analysis/common/src/resources/org/apache/lucene/analysis/ar/stopwords.txt (retrieved 2026-11-27)
+    const stopwords = ['ما', 'في', 'هو'].join(' ');
+    const [matching] = await seed(owner, [
+      { content: 'أوراق السيارة', updatedAt: past },
+      { title: stopwords, content: stopwords },
+    ]);
+
+    const { items } = await memory.search(owner, { query: `${stopwords} اوراق السياره` }, readOnly);
+    expect(items.map(item => item.id)).toEqual([matching]);
+    expect(await memory.search(owner, { query: 'مَـا فِي هُوَ' }, readOnly)).toMatchObject({ items: [], citations: [] });
+  });
+
+  it('preserves a searchable name even when it folds like an Arabic stopword', async () => {
+    const owner = 'memory-relevance-arabic-name';
+    // The name/preposition spelling ambiguity described in the Arabizi orthography guidelines.
+    // https://aclanthology.org/W14-3612.pdf (retrieved 2026-11-27)
+    const [matching] = await seed(owner, [{ title: 'علي' }, { title: 'Unrelated journal' }]);
+    expect((await memory.search(owner, { query: 'علي' }, readOnly)).items.map(item => item.id)).toEqual([matching]);
+    expect((await memory.search(owner, { query: 'على' }, readOnly)).items).toEqual([]);
+  });
+
   it('does not interpret query punctuation as SQL wildcard syntax', async () => {
     const owner = 'memory-relevance-punctuation';
     const [matching] = await seed(owner, [{ title: 'Cerulean log', content: 'Plain entry' }, { title: 'No matching term', content: 'Plain entry' }]);

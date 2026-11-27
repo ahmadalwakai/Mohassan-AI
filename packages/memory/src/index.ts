@@ -1,14 +1,18 @@
 import { createHash,randomUUID } from 'node:crypto';
 import { sql,type Kysely } from 'kysely';
+import { assertLiveUserMemoryCapacity,pruneExpiredTaskOutcomes } from './capacity.ts';
 import { MemoryCorrectionSchema,MemoryCreateSchema,MemoryFeedbackSchema,MemoryItemSchema,MemoryMutationSchema,MemorySearchSchema,SkillActionSchema,SkillActivationSchema,SkillCreateSchema,SkillEvaluationSchema,SkillRevokeSchema,SkillRunSchema,SkillSchema,type MemoryLayer,type MemoryItem } from './contracts.ts';
+import { MemoryError } from './errors.ts';
 import { evaluateChecklist,executeChecklist,manifestHash } from './skills.ts';
+import { memoryQueryTerms,normalizeMemoryTextSql } from './search-normalization.ts';
 import { MemoryExactOwnerSchema,MemoryExactPayloadSchema,MemoryExactReconcileInputSchema,MemoryExactWriteInputSchema,MemoryExactWriteReceiptSchema,exactMemoryPayloadHash,type MemoryExactReconciliation,type MemoryExactWriteOptions,type MemoryExactWriteReceipt,type MemoryExactWriteResult } from './exact-write.ts';
 export * from './contracts.ts';
 export * from './skills.ts';
 export * from './exact-write.ts';
+export { assertLiveUserMemoryCapacity } from './capacity.ts';
+export { MemoryError } from './errors.ts';
 export { memoryMigration } from './migration.ts';
 
-export class MemoryError extends Error {constructor(public readonly code:string,message:string,public readonly statusCode=400){super(message);this.name='MemoryError';}}
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
 const iso=(value:unknown)=>new Date(value as string|Date).toISOString();
 const lifetime:Record<MemoryLayer,number>={working:1,episodic:90,semantic:180,procedural:365,failure:90,preference:365};
@@ -16,13 +20,13 @@ function clean(value:unknown,limit=1200):string {
   return String(value??'').replace(/\b(?:gsk_|sk-(?:proj-)?|ghp_|github_pat_|npg_)[A-Za-z0-9_-]{12,}/gi,'[اعتماد محجوب]').replace(/\bBearer\s+[A-Za-z0-9._~+/-]{12,}/gi,'[اعتماد محجوب]').replace(/\b((?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|https?):\/\/)[^\s/@:]+:[^\s/@]+@/gi,'$1[محجوب]@').replace(/\b(password|passwd|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret)\b\s*[:=]\s*["'`]?[A-Za-z0-9_./+~=-]{8,}["'`]?/gi,'$1=[محجوب]').slice(0,limit);
 }
 function checked(value:string){if(clean(value,10000)!==value)throw new MemoryError('MEMORY_SECRET_REJECTED','احذف بيانات الاعتماد من النص قبل حفظه في الذاكرة.');return value;}
-const normalize=(value:string)=>value.normalize('NFKC').toLowerCase().replace(/[\u064b-\u065f\u0670]/g,'');
 type MemoryLookupOptions = {readOnly?: boolean};
 
 export function createMemoryControl(db:Kysely<any>,options:{now?:()=>Date}={}){
   const now=()=>options.now?.()??new Date();
   const expiry=(layer:MemoryLayer,requested?:string)=>requested?new Date(requested):new Date(now().getTime()+lifetime[layer]*86400000);
-  async function ownerLock(connection:Kysely<any>,ownerId:string){if(!await connection.selectFrom('user').select('id').where('id','=',ownerId).forUpdate().executeTakeFirst())throw new MemoryError('UNAUTHORIZED','سجل الدخول للمتابعة.',401);}
+  const lockOwnerRow=(connection:Kysely<any>,ownerId:string)=>connection.selectFrom('user').select('id').where('id','=',ownerId).forUpdate().executeTakeFirst();
+  async function ownerLock(connection:Kysely<any>,ownerId:string){if(!await lockOwnerRow(connection,ownerId))throw new MemoryError('UNAUTHORIZED','سجل الدخول للمتابعة.',401);}
   async function ownedTask(ownerId:string,taskId:string,connection:Kysely<any>=db){const task=await connection.selectFrom('tasks').select(['id','title','status','updated_at']).where('id','=',taskId).where('owner_id','=',ownerId).executeTakeFirst();if(!task)throw new MemoryError('TASK_NOT_FOUND','لم يُعثر على المهمة.',404);return task;}
   async function evidence(ownerId:string,ids:string[],connection:Kysely<any>=db){
     if(!ids.length)return [];
@@ -55,7 +59,8 @@ export function createMemoryControl(db:Kysely<any>,options:{now?:()=>Date}={}){
     const request=MemoryCreateSchema.parse(input);checked(request.title);checked(request.content);
     const row=await db.transaction().execute(async tx=>{
       await ownerLock(tx,ownerId);await evidence(ownerId,request.evidenceIds,tx);
-      const count=await tx.selectFrom('memory_items').select(eb=>eb.fn.countAll().as('n')).where('owner_id','=',ownerId).executeTakeFirstOrThrow();if(Number(count.n)>=2000)throw new MemoryError('MEMORY_LIMIT','بلغت الذاكرة حد ألفي إصدار محفوظ.',409);
+      const savedAt=now();
+      if(expiry(request.layer,request.expiresAt)>savedAt)await assertLiveUserMemoryCapacity(tx,ownerId,savedAt);
       const ids=[...request.evidenceIds,await manualEvidence(tx,ownerId,`ملاحظة يدوية: ${request.title}`,'manual',request.taskId??null,request.content)];
       if(request.taskId)ids.push(await taskEvidence(tx,ownerId,request.taskId));
       return insertItem(tx,ownerId,{...request,evidenceIds:ids});
@@ -94,8 +99,7 @@ export function createMemoryControl(db:Kysely<any>,options:{now?:()=>Date}={}){
         if(previous.payload_hash!==request.payloadHash||previous.payload_bytes!==bytes)throw new MemoryError('MEMORY_OPERATION_CONFLICT','مفتاح العملية مرتبط بمحتوى مختلف.',409);
         result={created:false,receipt:exactReceipt(previous)};
       }else{
-        const count=await tx.selectFrom('memory_items').select(eb=>eb.fn.countAll().as('n')).where('owner_id','=',ownerId).executeTakeFirstOrThrow();
-        if(Number(count.n)>=2000)throw new MemoryError('MEMORY_LIMIT','بلغت الذاكرة حد ألفي إصدار محفوظ.',409);
+        await assertLiveUserMemoryCapacity(tx,ownerId,now());
         const evidenceId=randomUUID();
         await tx.insertInto('memory_evidence').values({id:evidenceId,owner_id:ownerId,source_key:`exact:${request.operationKey}`,
           kind:'manual',description:'محتوى صريح محفوظ بهوية عملية محددة.',task_id:null,event_id:null,content_hash:request.payloadHash,
@@ -158,8 +162,12 @@ export function createMemoryControl(db:Kysely<any>,options:{now?:()=>Date}={}){
   async function correct(ownerId:string,id:string,input:unknown){
     const request=MemoryCorrectionSchema.parse(input);checked(request.title);checked(request.content);
     const row=await db.transaction().execute(async tx=>{
+      await ownerLock(tx,ownerId);
       const current=await itemRow(ownerId,id,tx,true);
       if(current.version!==request.expectedVersion||current.status!=='active')throw new MemoryError('MEMORY_VERSION_CONFLICT','تغير إصدار الذاكرة؛ حدّثها قبل التصحيح.',409);
+      const savedAt=now();
+      const replacesLiveUserVersion=current.confidence_kind==='user_asserted'&&new Date(current.expires_at)>savedAt;
+      if(!replacesLiveUserVersion&&expiry(request.layer,request.expiresAt)>savedAt)await assertLiveUserMemoryCapacity(tx,ownerId,savedAt);
       await evidence(ownerId,request.evidenceIds,tx);
       const ids=[...request.evidenceIds,await manualEvidence(tx,ownerId,`تصحيح يدوي: ${request.title}`,'manual',current.task_id,request.content)];
       if(current.task_id)ids.push(await taskEvidence(tx,ownerId,current.task_id));
@@ -171,20 +179,33 @@ export function createMemoryControl(db:Kysely<any>,options:{now?:()=>Date}={}){
   async function revoke(ownerId:string,id:string,input:unknown){const request=MemoryMutationSchema.parse(input);await db.transaction().execute(async tx=>{const row=await itemRow(ownerId,id,tx,true);if(row.version!==request.expectedVersion||row.status!=='active')throw new MemoryError('MEMORY_VERSION_CONFLICT','تغير إصدار الذاكرة.',409);await tx.updateTable('memory_items').set({status:'revoked',updated_at:now()}).where('id','=',id).execute();await audit(tx,ownerId,id,'revoke',request.reason);});return {revoked:true};}
   async function remove(ownerId:string,id:string,input:unknown){const request=MemoryMutationSchema.parse(input);await db.transaction().execute(async tx=>{const row=await itemRow(ownerId,id,tx,true);const latest=await tx.selectFrom('memory_items').select(['id','version']).where('owner_id','=',ownerId).where('root_id','=',row.root_id).orderBy('version','desc').executeTakeFirstOrThrow();if(row.version!==request.expectedVersion||latest.id!==id)throw new MemoryError('MEMORY_VERSION_CONFLICT','تغير إصدار الذاكرة.',409);const versions=await tx.selectFrom('memory_items').select('id').where('owner_id','=',ownerId).where('root_id','=',row.root_id).execute();const ids=versions.map(version=>version.id);const refs=await tx.selectFrom('memory_provenance').select('evidence_id').where('memory_id','in',ids).execute();await tx.deleteFrom('memory_items').where('owner_id','=',ownerId).where('root_id','=',row.root_id).execute();for(const ref of refs){const linked=await tx.selectFrom('memory_provenance').select('memory_id').where('evidence_id','=',ref.evidence_id).executeTakeFirst();const skillLink=await sql`SELECT 1 FROM memory_skill_versions WHERE evidence_ids ? ${ref.evidence_id} LIMIT 1`.execute(tx);if(!linked&&!skillLink.rows.length)await tx.deleteFrom('memory_evidence').where('id','=',ref.evidence_id).where('owner_id','=',ownerId).where('kind','in',['manual','feedback']).execute();}await audit(tx,ownerId,row.root_id,'delete','حذف المستخدم محتوى الذاكرة وإصداراته.');});return {deleted:true};}
   async function sync(ownerId:string){
-    const observed=await sql<any>`SELECT t.id,t.title,t.status,t.attempt,t.error,t.updated_at,t.result->>'summary' AS summary,e.id AS event_id FROM tasks t LEFT JOIN LATERAL(SELECT id FROM task_events WHERE task_id=t.id ORDER BY sequence DESC LIMIT 1)e ON true WHERE t.owner_id=${ownerId} AND t.status IN('completed','failed','cancelled') ORDER BY t.updated_at DESC LIMIT 80`.execute(db);
-    const keys=observed.rows.map(task=>`outcome:${task.id}:${task.attempt}:${task.status}`);if(!keys.length)return {created:0};
-    const known=await db.selectFrom('memory_evidence').select('source_key').where('owner_id','=',ownerId).where('source_key','in',keys).execute();const seen=new Set(known.map(row=>row.source_key));let created=0;
-    await db.transaction().execute(async tx=>{await ownerLock(tx,ownerId);for(const task of observed.rows){const key=`outcome:${task.id}:${task.attempt}:${task.status}`;if(seen.has(key))continue;
-      const content=`المهمة «${clean(task.title,120)}» انتهت بالحالة المسجلة: ${task.status}.${task.summary?` ملخص النتيجة المسجل، وليس حقيقة مستقلة: ${clean(task.summary,800)}`:''}${task.error?` الخطأ المسجل: ${clean(task.error,400)}`:''}`;
-      const id=randomUUID(),source=await tx.insertInto('memory_evidence').values({id,owner_id:ownerId,source_key:key,kind:task.status==='failed'?'task_error':'task_result',description:`نتيجة فعلية محفوظة للمهمة ${clean(task.title,120)}`,task_id:task.id,event_id:task.event_id??null,content_hash:hash(content),trust:'observed',status:'active',observed_at:task.updated_at,expires_at:null}).onConflict(conflict=>conflict.columns(['owner_id','source_key']).doNothing()).returning('id').executeTakeFirst();
-      if(!source)continue;await insertItem(tx,ownerId,{title:`${task.status==='failed'?'تعثر':'نتيجة'}: ${clean(task.title,100)}`,content,layer:task.status==='failed'?'failure':'episodic',taskId:task.id,evidenceIds:[id]},{confidenceKind:'task_observed'});created++;
-    }});return {created};
+    return db.transaction().execute(async tx=>{
+      if(!await lockOwnerRow(tx,ownerId))return {created:0};
+      const slots=await pruneExpiredTaskOutcomes(tx,ownerId,now());
+      if(!slots)return {created:0};
+      const observed=await sql<any>`SELECT t.id,t.title,t.status,t.attempt,t.error,t.updated_at,t.result->>'summary' AS summary,e.id AS event_id FROM tasks t LEFT JOIN LATERAL(SELECT id FROM task_events WHERE task_id=t.id ORDER BY sequence DESC LIMIT 1)e ON true WHERE t.owner_id=${ownerId} AND t.status IN('completed','failed','cancelled') ORDER BY t.updated_at DESC LIMIT 80`.execute(tx);
+      const outcomes=observed.rows.map(task=>({task,key:`outcome:${task.id}:${task.attempt}:${task.status}`}));
+      if(!outcomes.length)return {created:0};
+      const known=await tx.selectFrom('memory_evidence').select('source_key').where('owner_id','=',ownerId).where('source_key','in',outcomes.map(({key})=>key)).execute();
+      const seen=new Set(known.map(row=>row.source_key));
+      let created=0;
+      for(const {task,key} of outcomes){
+        if(created>=slots)break;
+        if(seen.has(key))continue;
+        const content=`المهمة «${clean(task.title,120)}» انتهت بالحالة المسجلة: ${task.status}.${task.summary?` ملخص النتيجة المسجل، وليس حقيقة مستقلة: ${clean(task.summary,800)}`:''}${task.error?` الخطأ المسجل: ${clean(task.error,400)}`:''}`;
+        const id=randomUUID(),source=await tx.insertInto('memory_evidence').values({id,owner_id:ownerId,source_key:key,kind:task.status==='failed'?'task_error':'task_result',description:`نتيجة فعلية محفوظة للمهمة ${clean(task.title,120)}`,task_id:task.id,event_id:task.event_id??null,content_hash:hash(content),trust:'observed',status:'active',observed_at:task.updated_at,expires_at:null}).onConflict(conflict=>conflict.columns(['owner_id','source_key']).doNothing()).returning('id').executeTakeFirst();
+        if(!source)continue;
+        await insertItem(tx,ownerId,{title:`${task.status==='failed'?'تعثر':'نتيجة'}: ${clean(task.title,100)}`,content,layer:task.status==='failed'?'failure':'episodic',taskId:task.id,evidenceIds:[id]},{confidenceKind:'task_observed'});
+        created++;
+      }
+      return {created};
+    });
   }
   async function search(ownerId:string,input:unknown,options:MemoryLookupOptions={}){
     const request=MemorySearchSchema.parse(input);
     if(request.taskId)await ownedTask(ownerId,request.taskId);
     if(!options.readOnly)await sync(ownerId);
-    const lookupAt=now(),terms=[...new Set(normalize(request.query).split(/[^\p{L}\p{N}]+/u).filter(word=>word.length>1))].slice(0,20);
+    const lookupAt=now(),{terms,stopwordsOnly}=memoryQueryTerms(request.query);
     let query=db.selectFrom('memory_items').selectAll().where('owner_id','=',ownerId).where('status','=','active').where('expires_at','>',lookupAt);
     if(request.layers?.length)query=query.where('layer','in',request.layers);
     query=query.where(eb=>eb.or([eb('layer','!=','working'),request.taskId?eb('task_id','=',request.taskId):eb('task_id','is',null)]));
@@ -194,11 +215,11 @@ export function createMemoryControl(db:Kysely<any>,options:{now?:()=>Date}={}){
         WHERE p.memory_id=memory_items.id AND (e.id IS NULL OR e.owner_id<>${ownerId} OR e.status<>'active' OR e.expires_at<=${lookupAt}))`);
     if(terms.length){
       // Match the existing lexical policy in PostgreSQL, over all of this owner's eligible items, before LIMIT.
-      const normalizedTitle=sql<string>`regexp_replace(lower(normalize(title,NFKC)),${'[\u064b-\u065f\u0670]'},'','g')`;
-      const normalizedContent=sql<string>`regexp_replace(lower(normalize(content,NFKC)),${'[\u064b-\u065f\u0670]'},'','g')`;
+      const normalizedTitle=normalizeMemoryTextSql(sql.ref('title'));
+      const normalizedContent=normalizeMemoryTextSql(sql.ref('content'));
       const score=sql<number>`(${sql.join(terms.map(term=>sql<number>`(CASE WHEN position(${term} IN ${normalizedTitle})>0 THEN 3 ELSE 0 END + CASE WHEN position(${term} IN ${normalizedContent})>0 THEN 1 ELSE 0 END)`),sql` + `)})`;
       query=query.where(score,'>',0).orderBy(score,'desc');
-    }
+    }else if(stopwordsOnly)query=query.where(sql<boolean>`false`);
     const rows=await query.orderBy('updated_at','desc').orderBy('id','asc').limit(request.limit).execute(),items=await provenance(rows);
     const available=items.filter(item=>item.provenance.length&&item.provenance.every(ref=>ref.status==='active'&&(!ref.expiresAt||new Date(ref.expiresAt)>now())));
     const ranked=available;
@@ -210,7 +231,7 @@ export function createMemoryControl(db:Kysely<any>,options:{now?:()=>Date}={}){
     const request=MemoryFeedbackSchema.parse(input);checked(request.comment);await ownedTask(ownerId,request.taskId);
     return db.transaction().execute(async tx=>{await ownerLock(tx,ownerId);const existing=await tx.selectFrom('memory_feedback').selectAll().where('owner_id','=',ownerId).where('submission_key','=',request.submissionKey).executeTakeFirst();if(existing){if(existing.task_id!==request.taskId||existing.kind!==request.kind||existing.comment!==request.comment||existing.persisted_preference!==request.persistPreference)throw new MemoryError('FEEDBACK_CONFLICT','مفتاح التغذية الراجعة مرتبط بطلب مختلف.',409);return {id:existing.id,persistedPreference:existing.persisted_preference};}
       const id=randomUUID();await tx.insertInto('memory_feedback').values({id,owner_id:ownerId,task_id:request.taskId,kind:request.kind,comment:request.comment,rating:request.rating??null,persisted_preference:request.kind==='preference'&&request.persistPreference,submission_key:request.submissionKey,created_at:now()}).execute();
-      if(request.kind==='preference'&&request.persistPreference){const manual=await manualEvidence(tx,ownerId,'تفضيل مستمر وافق المستخدم على حفظه.','feedback',request.taskId,request.comment);await insertItem(tx,ownerId,{title:'تفضيل صريح من التغذية الراجعة',content:request.comment,layer:'preference',evidenceIds:[manual,await taskEvidence(tx,ownerId,request.taskId)]});}
+      if(request.kind==='preference'&&request.persistPreference){await assertLiveUserMemoryCapacity(tx,ownerId,now());const manual=await manualEvidence(tx,ownerId,'تفضيل مستمر وافق المستخدم على حفظه.','feedback',request.taskId,request.comment);await insertItem(tx,ownerId,{title:'تفضيل صريح من التغذية الراجعة',content:request.comment,layer:'preference',evidenceIds:[manual,await taskEvidence(tx,ownerId,request.taskId)]});}
       await audit(tx,ownerId,id,'feedback',`تغذية راجعة من نوع ${request.kind}`);return {id,persistedPreference:request.kind==='preference'&&request.persistPreference};
     });
   }

@@ -15,6 +15,8 @@ const question = 'where do I live?';
 const forgetText = 'انس رقم هاتفي';
 const phoneStatement = 'رقمي هو 0501234567'; // assistant-own-fact-question.test.ts
 const credentialStatement = 'تذكر أن رمز التحقق هو ١٢٣٤'; // assistant-legacy-memory-statement.test.ts
+// Existing owner limit, retrieved 2026-11-27: https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/apps/server/src/assistant/structured-memory-storage.ts#L37
+const ownerLimit = 2_000;
 
 let database: Awaited<ReturnType<typeof createDatabase>>;
 let ownerId: string, otherId: string;
@@ -45,6 +47,48 @@ function apply(text: string, scope: Parameters<typeof applyStructuredMemory>[1] 
     return applyStructuredMemory(tx, scope, intent);
   });
 }
+
+async function seedOwnerItems(count: number, kind: 'live' | 'superseded' | 'revoked' | 'expired' | 'automatic') {
+  const automatic = kind === 'automatic';
+  const status = kind === 'superseded' || kind === 'revoked' ? kind : 'active';
+  await sql`INSERT INTO memory_items (id, root_id, owner_id, version, layer, title, content, status, confidence,
+    confidence_kind, task_id, expires_at)
+    SELECT id, id, ${ownerId}, 1, ${automatic ? 'episodic' : 'semantic'}, 'Limit fixture', 'Limit fixture', ${status},
+      ${automatic ? 1 : 0.5}, ${automatic ? 'task_observed' : 'user_asserted'}, ${automatic ? 'task-' : null} || id,
+      CURRENT_TIMESTAMP + ${kind === 'expired' ? '-1 day' : '1 day'}::interval
+    FROM (SELECT ${ownerId} || '-limit-' || n AS id FROM generate_series(1, ${count}) n) AS fixtures`.execute(database.db);
+}
+
+it.each(['superseded', 'revoked', 'expired', 'automatic'] as const)('saves structured memory alongside a full quota of %s rows', async kind => {
+  await seedOwnerItems(ownerLimit, kind);
+  const scope = runScope();
+  const saved = await apply(statement, scope);
+  expect(saved).toMatchObject({ kind: 'saved', fact: { statement } });
+  expect(await apply(statement, scope)).toEqual(saved);
+  expect(await apply(question)).toMatchObject({ kind: 'recalled', fact: { statement } });
+});
+
+it.each([ownerLimit, ownerLimit + 1])('enforces the live cap for new facts and permits a revision with %s live versions', async count => {
+  const memory = createMemoryControl(database.db);
+  const original = await memory.create(ownerId, { layer: 'semantic', title: 'Residence', content: statement });
+  await seedOwnerItems(count - 1, 'live');
+  await expect(apply(`تذكر أن ${phoneStatement}`)).rejects.toMatchObject({ code: 'MEMORY_LIMIT' });
+
+  const revised = `تذكر أن ${alternative}`;
+  expect(await apply(revised)).toMatchObject({ kind: 'saved', fact: { statement: alternative } });
+  expect(await apply(question)).toMatchObject({ kind: 'recalled', fact: { statement: alternative } });
+  expect((await memory.detail(ownerId, original.id)).versions.map(item => ({ content: item.content, status: item.status })))
+    .toEqual([{ content: alternative, status: 'active' }, { content: statement, status: 'superseded' }]);
+  await expect(apply(`تذكر أن ${phoneStatement}`)).rejects.toMatchObject({ code: 'MEMORY_LIMIT' });
+});
+
+it('checks capacity before replacing an expired fact', async () => {
+  const memory = createMemoryControl(database.db);
+  const original = await memory.create(ownerId, { layer: 'semantic', title: 'Residence', content: statement, expiresAt: new Date(0).toISOString() });
+  await seedOwnerItems(ownerLimit, 'live');
+  await expect(apply(`تذكر أن ${alternative}`)).rejects.toMatchObject({ code: 'MEMORY_LIMIT' });
+  expect((await memory.detail(ownerId, original.id)).versions).toMatchObject([{ content: statement, status: 'expired' }]);
+});
 
 it('reads a legacy note and its standard API correction only with same-account manual evidence', async () => {
   const memory = createMemoryControl(database.db);

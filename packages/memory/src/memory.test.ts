@@ -3,7 +3,7 @@ import { afterAll,beforeAll,describe,expect,it } from 'vitest';
 import { createDatabase,migrate } from '@mohassan/database';
 import { Runtime } from '@mohassan/runtime';
 import { migrateAuth } from '../../../apps/server/src/auth.ts';
-import { createMemoryControl,exampleSkill,memoryMigration,type DeclarativeSkill } from './index.ts';
+import { createMemoryControl,exampleSkill,executeChecklist,memoryMigration,type DeclarativeSkill } from './index.ts';
 
 describe('evidence-backed memory and measured declarative skill lifecycle',()=>{
   let store:Awaited<ReturnType<typeof createDatabase>>,memory:ReturnType<typeof createMemoryControl>;
@@ -88,6 +88,15 @@ describe('evidence-backed memory and measured declarative skill lifecycle',()=>{
     expect((await memory.search(owner,{query:'نطاق عمل فريد',layers:['working'],taskId:second.id})).items).toEqual([]);
     expect((await memory.search(owner,{query:'نطاق عمل فريد',layers:['working'],taskId:first.id})).items.map(item=>item.id)).toContain(scoped.id);
     await expect(memory.create(other,{...manual('إسناد مزور'),evidenceIds:[scoped.provenance[0].id]})).rejects.toMatchObject({code:'MEMORY_EVIDENCE_UNAVAILABLE'});
+  });
+  it('routes Arabic skill matches across spelling variants and ignores formatting-only terms',()=>{
+    const [diagnostic,coding]=exampleSkill.rules;
+    // U+0640 is a joining extender. https://www.unicode.org/charts/PDF/U0600.pdf (retrieved 2026-11-27)
+    const tatweel='\u0640';
+    const manifest={...exampleSkill,rules:[{...diagnostic!,terms:[tatweel.repeat(2)]},coding!]};
+    const variant=coding!.terms[0]!.replace('إ','ا').replace('ص',`ص${tatweel}`);
+    expect(executeChecklist(manifest,variant).category).toBe(coding!.category);
+    expect(executeChecklist(manifest,exampleSkill.rules[2]!.terms[0]!).category).toBe(exampleSkill.fallback.category);
   });
   it('measures declarative skill improvement on heldout fixtures and requires explicit activation',async()=>{
     let skill=await memory.createSkill(owner,{name:'مهارة قوائم فحص مقاسة',description:'اختبار قواعد ثابتة دون كود أو شبكة.',manifest:exampleSkill});

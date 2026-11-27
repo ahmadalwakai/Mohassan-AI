@@ -1,12 +1,15 @@
 import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { DeclarativeSkillSchema,type DeclarativeSkill } from './contracts.ts';
+import { normalizeMemoryText } from './search-normalization.ts';
 
-const normalize=(value:string)=>value.normalize('NFKC').toLowerCase().replace(/[\u064b-\u065f\u0670]/g,'');
 export const manifestHash=(manifest:DeclarativeSkill)=>createHash('sha256').update(JSON.stringify(DeclarativeSkillSchema.parse(manifest))).digest('hex');
 export function executeChecklist(manifest:DeclarativeSkill,input:string){
-  const parsed=DeclarativeSkillSchema.parse(manifest),normalized=normalize(input);
-  const selected=parsed.rules.find(rule=>rule.terms.some(term=>normalized.includes(normalize(term))))??parsed.fallback;
+  const parsed=DeclarativeSkillSchema.parse(manifest),normalized=normalizeMemoryText(input);
+  const selected=parsed.rules.find(rule=>rule.terms.some(term=>{
+    const folded=normalizeMemoryText(term);
+    return folded.length>0&&normalized.includes(folded);
+  }))??parsed.fallback;
   return {category:selected.category,checks:[...new Set(selected.checks)],scope:'proposal_only' as const,executionAllowed:false as const};
 }
 const cases=[

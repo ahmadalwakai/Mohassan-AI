@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { MemoryError, MemoryExactOwnerSchema, MemoryExactPayloadSchema, exactMemoryPayloadHash } from '@mohassan/memory';
+import { MemoryError, MemoryExactOwnerSchema, MemoryExactPayloadSchema, assertLiveUserMemoryCapacity, exactMemoryPayloadHash } from '@mohassan/memory';
 import { sql, type Kysely } from 'kysely';
 import { hasStructuredMemorySecret, parseStructuredMemoryRequest, type StructuredMemoryIntent, type StructuredMemoryTarget } from './structured-memory-parser.js';
 import { structuredMemoryMatcher } from './structured-memory-retrieval.js';
@@ -34,7 +34,6 @@ type CandidateRow = {
 };
 type Candidate = CandidateRow & { fact: Fact };
 const RETENTION_MS = 180 * 86_400_000;
-const MAX_MEMORY_VERSIONS = 2000;
 const integrityFailure = () => new Error('STRUCTURED_MEMORY_READBACK_FAILED');
 
 /** Use before acquiring the run fence, in the same host transaction as publication. */
@@ -159,14 +158,15 @@ async function resolveTarget(tx: Kysely<any>, scope: Scope, requested: Structure
 }
 
 async function lockCandidates(tx: Kysely<any>, ownerId: string, candidates: Candidate[]) {
-  if (!candidates.length) return;
-  const locked = await tx.selectFrom('memory_items').select(['id', 'version', 'content']).where('owner_id', '=', ownerId)
+  if (!candidates.length) return [];
+  const locked = await tx.selectFrom('memory_items').select(['id', 'version', 'content', 'confidence_kind', 'expires_at']).where('owner_id', '=', ownerId)
     .where('id', 'in', candidates.map(row => row.id)).where('status', '=', 'active').orderBy('id', 'asc').forUpdate().execute();
   const byId = new Map(locked.map(row => [row.id, row]));
   if (locked.length !== candidates.length || candidates.some(row => {
     const found = byId.get(row.id);
     return found?.version !== row.version || found?.content !== row.content;
   })) throw integrityFailure();
+  return locked;
 }
 
 function indexedVersions(tx: Kysely<any>, ownerId: string, target: Target) {
@@ -218,9 +218,9 @@ async function forget(tx: Kysely<any>, scope: Scope, target: Target, now: Date, 
 async function save(tx: Kysely<any>, scope: Scope, target: Target, intent: Extract<Intent, { kind: 'statement' | 'correction' }>,
   candidates: Candidate[], now: Date, intentHash: string): Promise<Candidate> {
   const { ownerId, conversationId, onOperation } = scope;
-  await lockCandidates(tx, ownerId, candidates);
-  const count = await tx.selectFrom('memory_items').select(eb => eb.fn.countAll().as('n')).where('owner_id', '=', ownerId).executeTakeFirstOrThrow();
-  if (Number(count.n) >= MAX_MEMORY_VERSIONS) throw new MemoryError('MEMORY_LIMIT', 'بلغت الذاكرة حد ألفي إصدار محفوظ.', 409);
+  const locked = await lockCandidates(tx, ownerId, candidates);
+  const replacesLiveUserVersion = locked.some(row => row.confidence_kind === 'user_asserted' && new Date(row.expires_at) > now);
+  if (!replacesLiveUserVersion) await assertLiveUserMemoryCapacity(tx, ownerId, now);
   const previous = candidates[0], id = randomUUID(), evidenceId = randomUUID();
   const rootId = previous?.root_id ?? id, version = (previous?.version ?? 0) + 1;
   const payloadHash = exactMemoryPayloadHash(intent.statement), sourceKey = `structured:${intentHash}`;
