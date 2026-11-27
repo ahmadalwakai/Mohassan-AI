@@ -12,6 +12,7 @@ import { openKnowledgeBase } from '../packages/knowledge-base/src/index.ts';
 const run = promisify(execFile);
 const command = fileURLToPath(new URL('../scripts/knowledge-base/build.ts', import.meta.url));
 const fixture = fileURLToPath(new URL('./fixtures/knowledge-base/wikidata-20261116-projected.json', import.meta.url));
+// The fixture's Wikidata source range and statements were reconfirmed on 2026-11-27.
 const source = 'https://dumps.wikimedia.org/wikidatawiki/entities/20261116/wikidata-20261116-all.json.gz';
 
 function sha256(bytes: Buffer): string {

@@ -14,6 +14,9 @@ bytes, SHA-256 `1e0c025841512bac892f4b44120bb5a7eede16981acbd9595c8ed0d3be4f04ea
 The gzip prefix was decompressed through the first 240 newline-terminated
 records. The projected fixture is 275,156 bytes and its SHA-256 is
 `4156507f1477a3c33df2ac642cdca067f8845a358b0d2f255a53b4623e7d4ff4`.
+The source range was retrieved again on 2026-11-27. Its hash, all 240 entity
+IDs, and the retained P1082 and P2046 statements and revisions were checked
+against the projection.
 The Wikidata structured data is published under CC0 1.0.
 [Source dump](https://dumps.wikimedia.org/wikidatawiki/entities/20261116/wikidata-20261116-all.json.gz)
 · [Wikidata licensing](https://www.wikidata.org/wiki/Wikidata:Licensing)

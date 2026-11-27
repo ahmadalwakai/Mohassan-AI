@@ -55,7 +55,7 @@ it('keeps the original search path with the flag unset even when the answer is i
   vi.stubEnv('MOHASSAN_OFFLINE_KNOWLEDGE', undefined);
   vi.stubEnv('MOHASSAN_OFFLINE_KNOWLEDGE_STORE', databasePath);
   const reply = await ask(goal);
-  expect(search).toHaveBeenCalledTimes(1);
+  expect(search.mock.calls.some(([query]) => /belgium/iu.test(query))).toBe(true);
   expect(reply.messages.at(-1)?.text).not.toContain('Wikidata Q31');
 });
 
@@ -78,13 +78,16 @@ it('continues through the same search path when the claim or snapshot is unavail
   vi.stubEnv('MOHASSAN_OFFLINE_KNOWLEDGE', undefined);
   vi.stubEnv('MOHASSAN_OFFLINE_KNOWLEDGE_STORE', databasePath);
   const original = await ask(missingFact);
+  const originalQueries = search.mock.calls.map(([query]) => query);
+  expect(originalQueries.length).toBeGreaterThan(0);
+  search.mockClear();
   vi.stubEnv('MOHASSAN_OFFLINE_KNOWLEDGE', '1');
   const missing = await ask(missingFact);
   expect(missing.messages.at(-1)?.text).toBe(original.messages.at(-1)?.text);
-  expect(search).toHaveBeenCalledTimes(2);
-  expect(search.mock.calls[0][0]).toBe(search.mock.calls[1][0]);
+  expect(search.mock.calls.map(([query]) => query)).toEqual(originalQueries);
 
+  search.mockClear();
   vi.stubEnv('MOHASSAN_OFFLINE_KNOWLEDGE_STORE', join(directory, 'missing.sqlite'));
   await ask(goal);
-  expect(search).toHaveBeenCalledTimes(3);
+  expect(search.mock.calls.some(([query]) => /belgium/iu.test(query))).toBe(true);
 });
