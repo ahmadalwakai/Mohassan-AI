@@ -73,6 +73,7 @@ import { armProgressPause, createProgressRecovery, restoreProgressRecovery, resu
 import { rebindBrowserAction, reserveBrowserRecovery, transientBrowserFailure, type BrowserRecoveryEntry } from './assistant/browser-recovery.js';
 import { bootstrapRequestContext, parseRequestContextState, requestActionText, resolveRequestContext } from './assistant/request-context.js';
 import { bindResponsePolicyChannel, chatResponsePolicyInput, readResponsePolicyHistory, shapeCompletedChatReply } from './assistant/response-policy-runtime.js';
+import { observeVerifiedComputation } from './assistant/verified-answer-realizer.js';
 import { createChatSupervisor, observeChatCapture, observeChatLocalAnswer, observeChatTool, resumeChatSupervisor, reviewChatAnswer } from './assistant/chat-supervision.js';
 import { createComputationMemoryReceipt, restoreComputationMemoryReceipt } from './assistant/computation-memory-receipt.js';
 import { migrateConversationShares } from './conversation-share-migration.js';
@@ -2951,10 +2952,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           if (blocked) { await blocked; return; }
           await addStep(id, runId, computation.lang === 'ar' ? 'حساب محلي' : 'Local calculation');
           state.trail.push({ step: ++state.steps, action: 'calculate', result: clean(computation.evidence.map(item => item.quote).join('\n') || computation.text).slice(0, 1100), changed: false });
-          observeChatLocalAnswer(state.supervision!, { source: 'computation', ...computation, startedAt: localStartedAt });
+          const rendered = observeVerifiedComputation(state.supervision!, computation, vault.scrub(id, computation.text), id, localStartedAt);
           // A later turn may ask for a calculation on this result («Add 12 to your previous result»).
           state.computed = computedRecord(computation);
-          await finish(id, runId, state, vault.scrub(id, computation.text), computation.status);
+          await finish(id, runId, state, rendered, computation.status);
           return;
         }
         if (computation?.status === 'partial' && computation.primaryText) {
