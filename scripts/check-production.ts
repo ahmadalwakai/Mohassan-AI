@@ -12,6 +12,10 @@ export function runProductionGate(npmCli: string | undefined): number {
   const checks = [
     { name: 'Typecheck', executable: process.execPath, args: [npmCli, 'run', 'typecheck'] },
     { name: 'Vitest', executable: process.execPath, args: [npmCli, 'test'] },
+    {
+      name: 'Scratch benchmark', executable: process.execPath,
+      args: [npmCli, 'test', '--', 'packages/scratch-classifiers/src/index.test.ts', '--mode', 'scratch-benchmark'],
+    },
     { name: 'pytest', executable: 'python', args: ['-B', '-m', 'pytest', '-q', '-p', 'no:cacheprovider', 'scripts'] },
   ];
   const startedAt = performance.now();

@@ -25,7 +25,7 @@ python3 -m unittest discover -s packages/scratch-classifiers -p test_prepare_dat
 npm test -- packages/scratch-classifiers/src tests/assistant-scratch-decisions.test.ts
 ```
 
-Run the wall-clock benchmark separately, with other CPU-heavy jobs stopped. The regular test run skips the timing check because shared host scheduling affects p95.
+`npm run test:gate` runs the wall-clock benchmark in a separate process after the full Vitest suite and enforces the 2 ms p95 budget. Regular `npm test` skips the timing check because shared host scheduling affects p95. Run the benchmark file on its own with other CPU-heavy jobs stopped.
 
 ```sh
 npm test -- packages/scratch-classifiers/src/index.test.ts --mode scratch-benchmark
