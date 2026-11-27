@@ -13,10 +13,11 @@ const AR_CONTEXT_CONFIRMATIONS = ['نعم', 'لا', 'اي', 'ايوه', 'تما�
 const EN_CONTEXT_CONFIRMATIONS = ['yes', 'no', 'ok', 'okay', 'sure', 'fine', 'agreed'];
 const AR_APPROVAL = [...AR_CONTEXT_CONFIRMATIONS, 'ايوا', 'اجل', 'اوافق', 'اكيد', 'ماشي'];
 const EN_APPROVAL = [...EN_CONTEXT_CONFIRMATIONS, 'yeah', 'yep', 'nope'];
+const NEGATIVE_APPROVAL = new Set(['لا', 'no', 'nope']);
 
 export const acknowledgementForms: Readonly<Record<Language, readonly string[]>> = {
   ar: [
-    ...AR_APPROVAL,
+    ...AR_APPROVAL.filter(form => !NEGATIVE_APPROVAL.has(form)),
     // Existing hands spellings and Egyptian forms in Atlas of Arabic Dialects.
     // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/apps/server/src/assistant/hands.ts#L362
     // https://www.atlasallhajaat.com/country_word/EG/1164
@@ -33,7 +34,7 @@ export const acknowledgementForms: Readonly<Record<Language, readonly string[]>>
     'ممتاز', 'رائع', 'جميل', 'حلو',
   ],
   en: [
-    ...EN_APPROVAL,
+    ...EN_APPROVAL.filter(form => !NEGATIVE_APPROVAL.has(form)),
     // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/apps/server/src/assistant/hands.ts#L362
     // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/apps/server/src/assistant/conversation-state.ts#L260
     'good', 'great', 'nice', 'cool', 'perfect', 'awesome',
@@ -55,10 +56,14 @@ export const acknowledgementThanksForms: Readonly<Record<Language, readonly stri
 
 const fold = (text: string) => text.normalize('NFKC').replace(/[\u0640\u064b-\u065f\u0670]/gu, '')
   .replace(/[أإآٱ]/gu, 'ا').replace(/ى/gu, 'ي').replace(/ة/gu, 'ه').replace(/\s+/gu, ' ').toLowerCase();
-const whole = (text: string) => fold(text).replace(/^[\s،,.!؟?:؛;]+|[\s،,.!؟?:؛;]+$/gu, '');
+const trimPunctuation = (text: string) => text.replace(/^[\s،,.!؟?:؛;]+|[\s،,.!؟?:؛;]+$/gu, '');
+const whole = (text: string) => trimPunctuation(fold(text));
+const QUESTION_END = /[؟?][\s،,.!؟?:؛;]*$/u;
 
 export function matchAcknowledgement(text: string): Acknowledgement | null {
-  const candidate = whole(text);
+  const folded = fold(text);
+  if (QUESTION_END.test(folded)) return null;
+  const candidate = trimPunctuation(folded);
   const language = /\p{Script=Arabic}/u.test(candidate) ? 'ar' : 'en';
   const forms = acknowledgementForms[language];
   if (forms.includes(candidate)) return { language, thanks: false };
@@ -66,9 +71,13 @@ export function matchAcknowledgement(text: string): Acknowledgement | null {
     if (candidate === thanks) return { language, thanks: true };
     if (!candidate.endsWith(thanks)) continue;
     const before = candidate.slice(0, -thanks.length);
-    if (/[،,\s]$/u.test(before) && forms.includes(before.replace(/[،,\s]+$/u, ''))) {
-      return { language, thanks: true };
-    }
+    if (!/[،,\s]$/u.test(before)) continue;
+    const lead = before.replace(/[،,\s]+$/u, '');
+    if (forms.includes(lead)) return { language, thanks: true };
+    // A polite refusal gets the plain reply. Arabic follows the attested شكرا construction.
+    // https://dictionary.cambridge.org/grammar/british-grammar/thank-you
+    // https://pure.manchester.ac.uk/ws/portalfiles/portal/57431091/FULL_TEXT.PDF#page=186
+    if (NEGATIVE_APPROVAL.has(lead) && (language === 'en' || /^شكرا(?: |$)/u.test(thanks))) return { language, thanks: false };
   }
   return null;
 }
@@ -98,7 +107,7 @@ export function stripAcknowledgementLead(text: string): string {
   let rest = text;
   for (const delimiter of text.matchAll(/[،,؛;:]|[.!](?=\s)/gu)) {
     const lead = text.slice(0, delimiter.index);
-    if (!isBareAcknowledgement(lead) || /^(?:لا|no|nope)(?=$|[،,\s])/u.test(whole(lead))) break;
+    if (!isBareAcknowledgement(lead) || NEGATIVE_APPROVAL.has(whole(lead).split(/[،,\s]/u, 1)[0])) break;
     const tail = text.slice(delimiter.index + 1).trimStart();
     if (tail) rest = tail;
   }
@@ -122,6 +131,7 @@ export function startsCardApproval(text: string): boolean {
 }
 
 export function isCardConfirmation(text: string): boolean {
-  const candidate = whole(text);
-  return !(candidate === 'ايه' && /[؟?]$/u.test(text.trim())) && CONFIRMATION.test(candidate);
+  const folded = fold(text);
+  const candidate = trimPunctuation(folded);
+  return !(candidate === 'ايه' && QUESTION_END.test(folded)) && CONFIRMATION.test(candidate);
 }

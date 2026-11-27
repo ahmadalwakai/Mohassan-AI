@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { isBareAcknowledgement, isContextConfirmation, stripAcknowledgementLead } from './acknowledgements.js';
+import { topicPropertyPhrase } from './conversation-properties.js';
 import { returnedTo } from './return-to.js';
 import { explicitKnowledgeDocumentRequest } from './knowledge-document-request.js';
 import { parseQuestionRewriteRequest } from './question-rewrite-request.js';
@@ -353,14 +354,13 @@ function publicQuery(topic: string | null, slots: readonly RequestContextSlot[],
 
 function replaceTopic(fragment: string, previous: string, acknowledgementLead: boolean): string | null {
   const own = trimPunctuation(fragment.replace(CORRECTION, '').replace(/\s+instead$/iu, ''));
-  if (!own || POINTER.test(fold(own))) return null;
+  const normalized = fold(own);
+  if (!own || POINTER.test(normalized)) return null;
+  const entitySubstitution = acknowledgementLead && !startsFactualQuestion(normalized)
+    && /^[\p{L}\p{M}]+(?:[ '’-]+[\p{L}\p{M}]+){0,3}$/u.test(own);
   // An explicit category is already a full new topic: الهلال must not survive النصر.
-  if (PROPERTY.test(fold(own))) return own;
-  // Keep the capital property on a short entity substitution after an acknowledgement.
-  // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/apps/server/src/assistant/conversation-state.ts#L129 (retrieved 2026-11-27)
-  const category = PROPERTY.exec(previous)?.[1] ?? (acknowledgementLead && !startsFactualQuestion(own)
-    && /^[\p{L}\p{M}]+(?:[ '’-]+[\p{L}\p{M}]+){0,3}$/u.test(own)
-    ? /^(?:عاصم[ةه]|capital of)(?=\s)/iu.exec(previous)?.[0] : undefined);
+  if (PROPERTY.test(normalized) || entitySubstitution && topicPropertyPhrase(normalized)) return own;
+  const category = (entitySubstitution ? topicPropertyPhrase(fold(previous)) : undefined) ?? PROPERTY.exec(previous)?.[1];
   return category ? `${category} ${own}` : own;
 }
 

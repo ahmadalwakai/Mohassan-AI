@@ -53,17 +53,11 @@ function standaloneManners(text: string) {
 
 export function standaloneMannersRoute(input: RequestRoutingInput): RequestRoutingDecision | null {
   if (input.pendingQuestion !== undefined || !standaloneManners(input.text)) return null;
-  return standaloneSocialRoute(input);
-}
-
-export function standaloneAcknowledgementRoute(input: RequestRoutingInput): RequestRoutingDecision | null {
-  if (input.pendingQuestion !== undefined) return null;
-  const reply = evaluateAcknowledgement(input.text);
-  return reply ? standaloneSocialRoute(input, reply) : null;
-}
-
-function standaloneSocialRoute(input: RequestRoutingInput, localReply?: LocalReply): RequestRoutingDecision | null {
   const normal = resolveRequestContext(input.text, input.context, { turnId: input.turnId });
+  return standaloneSocialRoute(input, normal);
+}
+
+function standaloneSocialRoute(input: RequestRoutingInput, normal: ReturnType<typeof resolveRequestContext>, localReply?: LocalReply): RequestRoutingDecision | null {
   if (normal.resolved === null) return null;
   const ambiguities = normal.ambiguities.filter(reason => reason === 'invalid_previous_state' || reason === 'unsafe_previous_context');
   const prior = ambiguities.length ? null : parseRequestContextState(input.context);
@@ -76,6 +70,14 @@ function standaloneSocialRoute(input: RequestRoutingInput, localReply?: LocalRep
     resolution: { ...normal, kind: 'new', intent: 'chat', scope: 'unknown', query: null, topic: null,
       sourceAssessment, slots: [], ambiguities, provenance: [],
       pendingQuestionId: null, nextState: prior } };
+}
+
+export function standaloneAcknowledgementRoute(input: RequestRoutingInput): RequestRoutingDecision | null {
+  if (input.pendingQuestion !== undefined) return null;
+  const reply = evaluateAcknowledgement(input.text);
+  if (!reply) return null;
+  const normal = resolveRequestContext(input.text, input.context, { turnId: input.turnId });
+  return standaloneSocialRoute(input, normal, reply);
 }
 
 type Input = z.infer<typeof ChatSendSchema>;

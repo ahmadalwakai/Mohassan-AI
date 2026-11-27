@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import type { AgentBrowser, SearchProvider } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
 import { describeDesktopCommand, parseDesktopCommand, type DesktopCommand, type DesktopOutcome } from '@mohassan/desktop';
-import { acknowledgementForms, acknowledgementThanksForms } from '../apps/server/src/assistant/acknowledgements.js';
+import { acknowledgementForms, acknowledgementThanksForms, isBareAcknowledgement } from '../apps/server/src/assistant/acknowledgements.js';
 import { emptyConversationState, understandTurn, withPending } from '../apps/server/src/assistant/conversation-state.js';
 import { notWebReason } from '../apps/server/src/assistant/hands.js';
 import { decideRequestRoute } from '../apps/server/src/assistant/routing-decision.js';
@@ -11,11 +11,13 @@ import { createCommandChatControl } from '../apps/server/src/command-chat.js';
 
 const owner = 'isolated-acknowledgement-owner';
 const mannersFlag = 'MOHASSAN_SMALL_TALK_MANNERS';
+const conversationFlag = 'MOHASSAN_CONVERSATION_SHADOW';
 
 // The questions, acknowledgement regressions and Spain follow-ups are from the task report.
-// Capital facts are translated from the EU country profiles, retrieved 2026-11-27.
+// Capital, population and currency facts are translated from the EU country profiles, retrieved 2026-11-27.
 // https://european-union.europa.eu/principles-countries-history/eu-countries/france_en
 // https://european-union.europa.eu/principles-countries-history/eu-countries/spain_en
+// https://european-union.europa.eu/principles-countries-history/eu-countries/denmark_en
 const cases = {
   ar: {
     question: 'ما عاصمة فرنسا؟', followUp: 'تمام، وإسبانيا؟', capital: 'باريس', nextCapital: 'مدريد',
@@ -31,11 +33,40 @@ const cases = {
   },
 } as const;
 
+const propertyFollowUps = [
+  {
+    question: 'كم عدد سكان فرنسا؟', followUp: 'تمام، والدنمارك؟', country: /الدنمارك/u, oldCountry: cases.ar.oldCountry,
+    attribute: /عدد سكان/u, firstAnswer: '69,112,309', nextAnswer: '6,025,603',
+  },
+  {
+    question: 'What is the population of France?', followUp: 'got it, and Denmark?', country: /\bDenmark\b/iu, oldCountry: cases.en.oldCountry,
+    attribute: /\bpopulation\b/iu, firstAnswer: '69,112,309', nextAnswer: '6,025,603',
+  },
+  {
+    question: 'ما عملة فرنسا؟', followUp: 'تمام، والدنمارك؟', country: /الدنمارك/u, oldCountry: cases.ar.oldCountry,
+    attribute: /عمل[ةه]/u, firstAnswer: 'اليورو', nextAnswer: 'DKK',
+  },
+  {
+    question: 'What is the currency of France?', followUp: 'got it, and Denmark?', country: /\bDenmark\b/iu, oldCountry: cases.en.oldCountry,
+    attribute: /\bcurrency\b/iu, firstAnswer: 'euro', nextAnswer: 'DKK',
+  },
+] as const;
+const propertyCases = propertyFollowUps.flatMap(scenario => [
+  { ...scenario, mode: 'default routing', conversationMode: undefined },
+  { ...scenario, mode: 'active V2 routing', conversationMode: 'decide' },
+]);
+
 const sources = [
-  { title: 'France', text: 'Paris is the capital of France. France is an EU member state.', match: cases.en.oldCountry, lang: 'en' },
+  { title: 'France', text: 'Paris is the capital of France. France is an EU member state.\nThe population of France is 69,112,309.\nThe currency of France is the euro (€).',
+    match: cases.en.oldCountry, lang: 'en' },
   { title: 'Spain', text: 'Madrid is the capital of Spain. Spain is an EU member state.', match: cases.en.country, lang: 'en' },
-  { title: 'فرنسا', text: 'باريس هي عاصمة فرنسا. فرنسا دولة عضو في الاتحاد الأوروبي.', match: cases.ar.oldCountry, lang: 'ar' },
+  { title: 'Denmark', text: 'The population of Denmark is 6,025,603.\nThe currency of Denmark is the Danish krone (DKK).',
+    match: /\bDenmark\b/iu, lang: 'en' },
+  { title: 'فرنسا', text: 'باريس هي عاصمة فرنسا. فرنسا دولة عضو في الاتحاد الأوروبي.\nيبلغ عدد سكان فرنسا 69,112,309 نسمة.\nعملة فرنسا هي اليورو (€).',
+    match: cases.ar.oldCountry, lang: 'ar' },
   { title: 'إسبانيا', text: 'مدريد هي عاصمة إسبانيا. إسبانيا دولة عضو في الاتحاد الأوروبي.', match: cases.ar.country, lang: 'ar' },
+  { title: 'الدنمارك', text: 'يبلغ عدد سكان الدنمارك 6,025,603 نسمة.\nعملة الدنمارك هي الكرونة الدنماركية (DKK).',
+    match: /الدنمارك/u, lang: 'ar' },
 ].map(source => ({ ...source, url: `https://${source.lang}.wikipedia.org/wiki/${encodeURIComponent(source.title)}` }));
 
 const search = vi.fn<SearchProvider['search']>(async query => sources.filter(source => source.match.test(query))
@@ -177,6 +208,65 @@ describe.each([{ mode: 'off', value: undefined }, { mode: 'on', value: '1' }])('
       expect(modelFetch).not.toHaveBeenCalled();
     });
   }
+
+  // Cambridge English Grammar Today and an original Iraqi Arabic elicitation (PDF p. 186), retrieved 2026-11-27.
+  // https://dictionary.cambridge.org/grammar/british-grammar/thank-you
+  // https://pure.manchester.ac.uk/ws/portalfiles/portal/57431091/FULL_TEXT.PDF#page=186
+  // The plain reply copy uses the same expressions as a bare acknowledgement.
+  // https://dictionary.cambridge.org/dictionary/english/all-right
+  // https://www.atlasallhajaat.com/public/word/1164
+  it.each([
+    { text: 'no thanks', previous: cases.en.question, reply: 'All right.' },
+    { text: 'No, thanks.', previous: cases.en.question, reply: 'All right.' },
+    { text: 'لا شكرا', previous: cases.ar.question, reply: 'تمام.' },
+    { text: 'لا، شكرًا', previous: cases.ar.question, reply: 'تمام.' },
+  ])('acknowledges the decline "$text" with a plain local reply', async ({ text, previous, reply }) => {
+    vi.stubEnv(mannersFlag, value);
+    const first = await start(previous);
+    vi.clearAllMocks();
+    const next = await send(first.id, text);
+    expect(next).toMatchObject({ reply, status: 'idle', question: null, error: null });
+    expect(next.messages).toHaveLength(first.messages.length + 2);
+    expect(await latestRun(next.id)).toMatchObject({ steps: 0, state: { routing: { handler: 'local_conversation' } } });
+    expectNoExternalWork();
+  });
+
+  // Negative and question-marked regressions come from the review of this change.
+  it.each(['لا', 'no', 'nope', 'نعم؟', 'أي؟', 'ok?', 'طيب؟', 'زين؟'])('keeps "%s" outside the local acknowledgement route', async text => {
+    vi.stubEnv(mannersFlag, value);
+    const scenario = /\p{Script=Arabic}/u.test(text) ? cases.ar : cases.en;
+    const previous = understandTurn(emptyConversationState(), scenario.question, 'first').next;
+    expect(isBareAcknowledgement(text)).toBe(false);
+    expect(decideRequestRoute({ text, context: previous.base, previousTurns: 1,
+      capabilities: { search: true, browser: true, chatModel: true } }).handler).not.toBe('local_conversation');
+
+    const first = await start(scenario.question);
+    expect(first.reply).toContain(scenario.capital);
+    const next = await send(first.id, text);
+    expect(next.messages.findLast(message => message.role === 'user')?.text).toBe(text);
+    expect(next.reply).not.toMatch(/^(?:All right\.|تمام\.)$/u);
+    expect((await latestRun(next.id)).state.routing.handler).not.toBe('local_conversation');
+  });
+
+  it.each(propertyCases)('retains the earlier property after "$question" with $mode', async scenario => {
+    vi.stubEnv(mannersFlag, value);
+    vi.stubEnv(conversationFlag, scenario.conversationMode);
+    const first = await start(scenario.question);
+    expect(first.reply).toContain(scenario.firstAnswer);
+    vi.clearAllMocks();
+    const next = await send(first.id, scenario.followUp);
+    expect(next).toMatchObject({ status: 'idle', question: null, error: null });
+    expect(next.reply).toContain(scenario.nextAnswer);
+    const queries = search.mock.calls.map(([query]) => query);
+    expect(queries).not.toHaveLength(0);
+    for (const query of queries) {
+      expect(query).toMatch(scenario.attribute);
+      expect(query).toMatch(scenario.country);
+      expect(query).not.toMatch(scenario.oldCountry);
+    }
+    expect(await latestRun(next.id)).toMatchObject({ state: { requestResolution: { kind: 'follow_up' } } });
+    expect(modelFetch).not.toHaveBeenCalled();
+  });
 
   it.each([
     { kind: 'approval', decision: 'confirmation' },
