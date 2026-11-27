@@ -39,6 +39,7 @@ const AssistantApp = dynamic(() => import("./assistant-app").then(module => modu
 const MembersPanel = dynamic(() => import("./members").then(module => module.MembersPanel));
 const MemberTools = dynamic(() => import("./members").then(module => module.MemberTools));
 const InviteScreen = dynamic(() => import("./members").then(module => module.InviteScreen));
+const PasswordResetScreen = dynamic(() => import("./members").then(module => module.PasswordResetScreen));
 
 type View = "chat" | "desktop" | "overview" | "tasks" | "browser" | "memory" | "skills" | "windows" | "ads" | "studio" | "sites" | "coding" | "executor" | "models" | "capabilities" | "integrations" | "members" | "roadmap" | "metrics";
 type Session = { user: { id: string; name: string; email: string } };
@@ -329,6 +330,15 @@ export function Workspace() {
   const [inviteToken, setInviteToken] = useState<string | null>(null);
   useEffect(() => { const match = /^#invite=([A-Za-z0-9_-]{43})$/.exec(location.hash); if (match) setInviteToken(match[1]!); }, []);
   const closeInvite = useCallback(() => { setInviteToken(null); history.replaceState(null, "", location.pathname); }, []);
+  const [resetToken, setResetToken] = useState<string | null>(null);
+  useEffect(() => {
+    const prefix = "#reset=";
+    const readReset = () => setResetToken(location.hash.startsWith(prefix) ? location.hash.slice(prefix.length) : null);
+    readReset();
+    window.addEventListener("hashchange", readReset);
+    return () => window.removeEventListener("hashchange", readReset);
+  }, []);
+  const closeReset = () => { setResetToken(null); history.replaceState(history.state, "", location.pathname + location.search); };
   useEffect(() => {
     if (boot !== "ready" || !session) { setAccess(null); return; }
     let active = true;
@@ -398,6 +408,8 @@ export function Workspace() {
     catch (caught) { setError(errorMessage(caught)); }
   }
 
+  if (resetToken !== null) return <PasswordResetScreen key={resetToken} token={resetToken} onCancel={closeReset}
+    onDone={() => { closeReset(); location.reload(); }} />;
   if (inviteToken && boot !== "loading") return <InviteScreen token={inviteToken} onCancel={() => { closeInvite(); if (!session) setBoot("signin"); }} onDone={(value) => { closeInvite(); setAccess(null); setSession(value); setBoot("ready"); }} />;
   if (boot === "loading") return <div className="boot-screen"><Brand compact /><Spinner size="lg" /><p>نجهّز مساحة عملك…</p></div>;
   if (boot === "error") return <div className="boot-screen"><Brand compact /><span className="empty-icon"><Unplug size={28} /></span><h1>الخدمة غير متاحة الآن</h1><p role="alert">{error}</p><Button className="primary-button" onClick={() => { void retryBoot(); }}><RefreshCw size={16} />إعادة المحاولة</Button></div>;

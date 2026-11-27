@@ -10,6 +10,7 @@ const data = '/api/member-data';
 export const MEMBER_DATA_ROUTES = [
   `GET ${data}/export`, `GET ${data}/sessions`, `DELETE ${data}/sessions`,
   `GET ${data}/deletion`, `POST ${data}/deletion`, `DELETE ${data}/deletion`,
+  `POST ${data}/password`,
 ] as const;
 
 const empty = z.object({}).strict();
@@ -71,6 +72,7 @@ export async function registerMemberDataRoutes(app: FastifyInstance, options: {
     await requireOwner(request);
     empty.parse(request.query);
     empty.parse(request.body ?? {});
-    return endMemberSessions(db, MemberAccountIdSchema.parse(request.params.userId));
+    const { id: actorId } = await owner(request);
+    return endMemberSessions(db, actorId, MemberAccountIdSchema.parse(request.params.userId));
   });
 }

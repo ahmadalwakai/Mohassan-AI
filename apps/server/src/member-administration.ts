@@ -1,9 +1,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import type { Kysely, Transaction } from 'kysely';
+import type { Transaction } from 'kysely';
 import type { registerMemberRoutes } from './members.js';
 import { withMemberAuditActor } from './member-audit.js';
-import { discardUnusedSignupSession } from './member-sessions.js';
 
 export { MEMBER_DATA_ROUTES } from './member-data-routes.js';
 export { readLimitedMemberAccess } from './member-data-request.js';
@@ -55,13 +54,4 @@ export function registerAuditedMemberRoutes(app: FastifyInstance, options: Membe
     },
     role: async request => scope.getStore()?.request === request ? 'owner' : options.role(request),
   });
-}
-
-/** Invite acceptance signs in separately, so remove Better Auth's unused signup session. */
-export async function signUpInvitedMember(
-  db: Kysely<any>, auth: MemberRouteOptions['auth'], body: { name: string; email: string; password: string },
-) {
-  const result = await auth.api.signUpEmail({ body });
-  await discardUnusedSignupSession(db, result.user.id, result.token);
-  return result;
 }

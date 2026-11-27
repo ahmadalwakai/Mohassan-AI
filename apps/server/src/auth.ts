@@ -1,12 +1,20 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { betterAuth } from 'better-auth';
-import { sql, type Kysely } from 'kysely';
+import { sql, type Kysely, type Transaction } from 'kysely';
+import { serializeMemberEmailSignIn } from './member-email-sign-in.js';
 import { discardUnusedSignupSession } from './member-sessions.js';
 
-type SessionCreationCheck = (userId: string) => Promise<void>;
+type SessionCreationCheck = (db: Kysely<any>, userId: string) => Promise<void>;
 const sessionCreationChecks = new WeakMap<object, SessionCreationCheck>();
+const authDatabaseTransactions = new WeakMap<object, AsyncLocalStorage<Transaction<any>>>();
 
 export function setAuthSessionCreationCheck(auth: ReturnType<typeof createAuth>, check: SessionCreationCheck) {
   sessionCreationChecks.set(auth, check);
+}
+
+/** Run Better Auth and workspace writes on the same database transaction. */
+export function withAuthDatabaseTransaction<T>(auth: ReturnType<typeof createAuth>, tx: Transaction<any>, run: () => Promise<T>) {
+  return authDatabaseTransactions.get(auth)!.run(tx, run);
 }
 
 export async function migrateAuth(database: Kysely<any>) {
@@ -66,19 +74,31 @@ export function createAuth(db: Kysely<any>, options: {secret: string; webOrigin:
     alias.hostname = alias.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
     trustedOrigins.push(alias.origin);
   }
+  const databaseTransaction = new AsyncLocalStorage<Transaction<any>>();
+  const authDatabase = new Proxy(db, {
+    get(base, property) {
+      const source = databaseTransaction.getStore() ?? base;
+      const value = Reflect.get(source, property, source);
+      return typeof value === 'function' ? value.bind(source) : value;
+    },
+  });
   const auth = betterAuth({
     appName: 'Mohassan AI',
     secret: options.secret,
     baseURL: options.webOrigin,
-    database: {db, type: 'postgres'},
+    // The Kysely adapter can use our transaction without opening a nested one.
+    // https://registry.npmjs.org/@better-auth/kysely-adapter/-/kysely-adapter-1.7.17.tgz (2026-11-27)
+    database: {db: authDatabase, type: 'postgres', transaction: false},
+    plugins: [serializeMemberEmailSignIn(db, databaseTransaction)],
     trustedOrigins,
     emailAndPassword: {enabled: true, minPasswordLength: 12, maxPasswordLength: 128},
-    databaseHooks: {session: {create: {before: async session => { await sessionCreationChecks.get(auth)?.(session.userId); }}}},
+    databaseHooks: {session: {create: {before: async session => { await sessionCreationChecks.get(auth)?.(authDatabase, session.userId); }}}},
     session: {expiresIn: 60 * 60 * 24 * 7, updateAge: 60 * 60, cookieCache: {enabled: false}},
     rateLimit: {enabled: true, storage: 'database', window: 60, max: 30,customRules:{'/get-session':{window:60,max:120}}},
     advanced: {useSecureCookies: options.production},
     logger: {disabled: true},
   });
+  authDatabaseTransactions.set(auth, databaseTransaction);
   return auth;
 }
 

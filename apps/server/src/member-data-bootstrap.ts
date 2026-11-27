@@ -7,9 +7,12 @@ import { setAuthSessionCreationCheck, type createAuth } from './auth.js';
 import type { registerMemberRoutes, WorkspaceRole } from './members.js';
 import { registerAuditedMemberRoutes } from './member-administration.js';
 import { migrateMemberDataRights } from './member-data-migration.js';
+import { migrateMemberAccountRecovery } from './member-account-recovery-migration.js';
 import { memberAuthResponseBody } from './auth-http-response.js';
 import { suspendedMemberDataAccess } from './member-data-request.js';
 import { registerMemberDataRoutes } from './member-data-routes.js';
+import { registerMemberPasswordChange } from './member-password-change.js';
+import { registerMemberPasswordResetRoutes } from './member-password-reset.js';
 import { assertDeletionCanSignIn, memberDeletionAccess, registerMemberDeletionRoutes, startMemberDeletionPurge } from './member-deletion.js';
 import { memberAuthClientIp } from './member-sessions.js';
 import { memberAgentBrowserClass } from './member-profile-storage.js';
@@ -66,7 +69,8 @@ function registerMemberAuthHttp(app: FastifyInstance, auth: ReturnType<typeof cr
 export async function registerMemberDataRights(app: FastifyInstance, options: BootstrapOptions) {
   const { db, auth, config } = options;
   await migrateMemberDataRights(db);
-  setAuthSessionCreationCheck(auth, userId => assertDeletionCanSignIn(db, userId));
+  await migrateMemberAccountRecovery(db);
+  setAuthSessionCreationCheck(auth, assertDeletionCanSignIn);
   registerMemberAuthHttp(app, auth, config);
 
   const documentsDir = config.documentsDir ?? resolve('.data/documents');
@@ -87,6 +91,8 @@ export async function registerMemberDataRights(app: FastifyInstance, options: Bo
     imagesAvailable: () => false, sitesAvailable: () => true,
   }, options.registerMemberRoutes);
   await registerMemberDataRoutes(app, { db, owner: sessionOwner, role: options.role, documentsDir });
+  registerMemberPasswordChange(app, { db, auth, owner: options.owner, production: config.production });
+  registerMemberPasswordResetRoutes(app, options);
   registerMemberDeletionRoutes(app, { db, auth, owner: sessionOwner, role: options.role });
   startMemberDeletionPurge(app, db, { documentsDir, purgeBrowserProfiles: (id, accounts) => browser.purgeAccount(id, accounts) });
   return browser;

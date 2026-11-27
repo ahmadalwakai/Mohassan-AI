@@ -2,8 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Button, Spinner } from "@chakra-ui/react";
+import { MemberPasswordResetLinkSchema, MemberPasswordResetTokenSchema, type MemberPasswordResetLink } from "@mohassan/contracts";
 import { ArrowRight, Check, Copy, LogOut, MessageCircle, UserPlus } from "lucide-react";
 import dynamic from "next/dynamic";
+import { AccountPasswordForm, accountFailure } from "./account-password-form";
+import { AccountTime, ConfirmAccountAction, accountRequest } from "./member-data-rights";
 import { OwnerMemberHistory } from "./member-audit";
 import styles from "./members.module.css";
 import { ConversationShareSettings } from "./conversation-share-settings";
@@ -133,6 +136,64 @@ export function InviteScreen({ token, onDone, onCancel }: { token: string; onDon
   </div></section></main>;
 }
 
+export function PasswordResetScreen({ token, onDone, onCancel }: { token: string; onDone: () => void; onCancel: () => void }) {
+  const [inspection, setInspection] = useState<"loading" | "ready" | { error: string }>("loading");
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (!MemberPasswordResetTokenSchema.safeParse(token).success) {
+      setInspection({ error: "رابط إعادة تعيين كلمة المرور غير صالح." });
+      return;
+    }
+    const controller = new AbortController();
+    accountRequest("/api/members/password-reset/inspect", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }), signal: controller.signal,
+    }).then(
+      () => { if (!controller.signal.aborted) setInspection("ready"); },
+      caught => { if (!controller.signal.aborted) setInspection({ error: accountFailure(caught) }); },
+    );
+    return () => controller.abort();
+  }, [token]);
+
+  return <main className="auth-shell"><section className="auth-form-panel"><div className={`auth-form-wrap ${styles.reset}`}>
+    <h2>إعادة تعيين كلمة المرور</h2>
+    {inspection === "loading" ? <p role="status"><Spinner size="sm" /> جارٍ التحقق من الرابط…</p> : null}
+    {typeof inspection === "object" ? <p className="inline-error" role="alert">{inspection.error}</p> : null}
+    {inspection === "ready" && !saved ? <AccountPasswordForm submitLabel="تعيين كلمة المرور" onCancel={onCancel} onSave={async ({ newPassword }) => {
+      await accountRequest("/api/members/password-reset/accept", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, newPassword }),
+      });
+      setSaved(true);
+    }} /> : null}
+    {saved ? <>
+      <p role="status">عُيّنت كلمة المرور الجديدة وأُنهيت جميع جلسات الحساب.</p>
+      <Button className="primary-button" onClick={onDone}>متابعة</Button>
+    </> : inspection !== "ready" ? <Button className={styles.secondary} onClick={onCancel}>رجوع</Button> : null}
+  </div></section></main>;
+}
+
+function PasswordResetLink({ link, email }: { link: MemberPasswordResetLink; email: string }) {
+  const [copyStatus, setCopyStatus] = useState<"copied" | "failed" | null>(null);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(link.resetLink);
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("failed");
+    }
+  }
+
+  return <div className={styles.link}>
+    <p role="status">أُنشئ رابط إعادة التعيين. أرسله إلى <bdi dir="ltr">{email}</bdi>. يُستخدم مرة واحدة وينتهي في <AccountTime value={link.expiresAt} />.</p>
+    <div className={styles.copy}>
+      <code dir="ltr">{link.resetLink}</code>
+      <Button className={styles.secondary} onClick={() => { void copy(); }}>{copyStatus === "copied" ? <Check size={15} /> : <Copy size={15} />}{copyStatus === "copied" ? "نُسخ" : "نسخ الرابط"}</Button>
+    </div>
+    {copyStatus === "failed" ? <p className="inline-error" role="alert">تعذر النسخ. حدّد الرابط وانسخه يدويًا.</p> : null}
+  </div>;
+}
+
 /** The owner's list of invited people. */
 export function MembersPanel({ offline }: { offline: boolean }) {
   const [data, setData] = useState<{ members: Member[]; invites: Invite[]; dailyRuns: number } | null>(null);
@@ -140,6 +201,8 @@ export function MembersPanel({ offline }: { offline: boolean }) {
   const [busy, setBusy] = useState(false);
   const [link, setLink] = useState<{ email: string; url: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [resetMember, setResetMember] = useState<Member | null>(null);
+  const [resetLink, setResetLink] = useState<{ email: string; link: MemberPasswordResetLink } | null>(null);
   const load = useCallback(async () => {
     try { setData(await api("/api/members")); setError(""); } catch (caught) { setError(message(caught)); }
   }, []);
@@ -179,10 +242,22 @@ export function MembersPanel({ offline }: { offline: boolean }) {
     </section>
     {error ? <p className="inline-error" role="alert">{error}</p> : null}
     <section className="panel"><div className="panel-heading"><div><h2>الأعضاء</h2><p>{data ? `حد كل عضو ${data.dailyRuns} طلبًا في 24 ساعة.` : "…"}</p></div></div>
-      {!data ? <div className={styles.empty}><Spinner size="sm" /></div> : data.members.length ? <ul className={styles.list}>{data.members.map(member => <li key={member.id}>
+      {!data ? <div className={styles.empty}><Spinner size="sm" /></div> : data.members.length ? <ul className={styles.list}>{data.members.map(member => <li key={member.id} className={styles.memberRow}>
         <div><strong>{member.name}</strong><small dir="ltr">{member.email}</small><small>انضم {day(member.joinedAt)} · {member.runsToday} طلبًا اليوم{member.disabled ? " · موقوف" : ""}</small></div>
-        <Button className={styles.secondary} disabled={busy || offline} onClick={() => { void act(() => api(`/api/members/${encodeURIComponent(member.id)}/access`, { enabled: member.disabled })); }}>{member.disabled ? "إعادة التفعيل" : "إيقاف"}</Button>
+        <div className={styles.actions}>
+          <Button className={styles.secondary} disabled={busy || offline} onClick={() => setResetMember(member)}>إصدار رابط إعادة تعيين كلمة المرور</Button>
+          <Button className={styles.secondary} disabled={busy || offline} onClick={() => { void act(() => api(`/api/members/${encodeURIComponent(member.id)}/access`, { enabled: member.disabled })); }}>{member.disabled ? "إعادة التفعيل" : "إيقاف"}</Button>
+        </div>
       </li>)}</ul> : <p className={styles.empty}>لا يوجد أعضاء بعد.</p>}
+      {resetLink ? <PasswordResetLink key={resetLink.link.resetLink} link={resetLink.link} email={resetLink.email} /> : null}
+      {resetMember ? <ConfirmAccountAction title="إصدار رابط إعادة تعيين كلمة المرور"
+        instruction={`سيُلغى أي رابط سابق لحساب ${resetMember.name} عند إصدار الرابط الجديد.`}
+        label="إصدار الرابط" close={() => setResetMember(null)} run={async () => {
+          const result = MemberPasswordResetLinkSchema.safeParse(await api(`/api/members/${encodeURIComponent(resetMember.id)}/password-reset`, {}));
+          if (!result.success) throw new Error("تعذر عرض رابط إعادة تعيين كلمة المرور.");
+          const link = { ...result.data, resetLink: new URL(result.data.resetLink, location.origin).href };
+          setResetLink({ email: resetMember.email, link });
+        }} /> : null}
     </section>
     {data?.invites.length ? <section className="panel"><div className="panel-heading"><div><h2>دعوات لم تُستخدم</h2></div></div>
       <ul className={styles.list}>{data.invites.map(invite => <li key={invite.id}>

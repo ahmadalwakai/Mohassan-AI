@@ -4,6 +4,7 @@ import { createDatabase, migrate, sql } from '@mohassan/database';
 import { createAuth, migrateAuth } from '../apps/server/src/auth.js';
 import { migrateMembers, registerMemberRoutes } from '../apps/server/src/members.js';
 import { migrateMemberDataRights } from '../apps/server/src/member-data-migration.js';
+import { migrateMemberAccountRecovery } from '../apps/server/src/member-account-recovery-migration.js';
 import { listMemberAudit, recordMemberAudit, withMemberAuditActor } from '../apps/server/src/member-audit.js';
 import { endMemberSessions, endOtherAccountSessions, listAccountSessions, memberAuthClientIp, sessionIpPrefix } from '../apps/server/src/member-sessions.js';
 import { registerAuditedMemberRoutes } from '../apps/server/src/member-administration.js';
@@ -30,6 +31,7 @@ describe('member sessions and administration audit', () => {
     await migrate(db());
     await migrateMemberDataRights(db());
     await migrateMemberDataRights(db());
+    await migrateMemberAccountRecovery(db());
     for (const id of [ownerId, otherOwnerId, memberId, otherMemberId]) {
       await db().insertInto('user').values({ id, name: id, email: `${id}@example.test` }).execute();
     }
@@ -80,9 +82,9 @@ describe('member sessions and administration audit', () => {
     expect((await listAccountSessions(db(), memberId, 'member-active-1')).map(row => row.id)).toEqual(['member-active-1']);
     expect((await listAccountSessions(db(), otherMemberId, 'another-member-active')).map(row => row.id)).toEqual(['another-member-active']);
 
-    await expect(endMemberSessions(db(), ownerId)).rejects.toMatchObject({ statusCode: 404 });
-    await expect(endMemberSessions(db(), otherOwnerId)).rejects.toMatchObject({ statusCode: 404 });
-    await expect(endMemberSessions(db(), memberId)).resolves.toEqual({ ended: 1 });
+    await expect(endMemberSessions(db(), ownerId, ownerId)).rejects.toMatchObject({ statusCode: 404 });
+    await expect(endMemberSessions(db(), ownerId, otherOwnerId)).rejects.toMatchObject({ statusCode: 404 });
+    await expect(endMemberSessions(db(), ownerId, memberId)).resolves.toEqual({ ended: 1 });
     expect(await listAccountSessions(db(), memberId, 'member-active-1')).toEqual([]);
     expect((await listAccountSessions(db(), ownerId, 'owner-active')).map(row => row.id)).toEqual(['owner-active']);
     expect((await listAccountSessions(db(), otherMemberId, 'another-member-active')).map(row => row.id)).toEqual(['another-member-active']);
@@ -138,6 +140,7 @@ describe('member sessions and administration audit', () => {
       [otherOwnerId, 'replacement-invite', 'invite_created'],
       [otherOwnerId, 'original-invite', 'invite_revoked'],
       [ownerId, 'original-invite', 'invite_created'],
+      [ownerId, memberId, 'member_sessions_ended'],
     ]);
     expect(entries.every(entry => Object.keys(entry).sort().join(',') === 'action,actorId,id,occurredAt,targetId')).toBe(true);
     await expect(sql`UPDATE workspace_member_audit SET target_id = 'changed'`.execute(db())).rejects.toThrow('Member audit is append only');

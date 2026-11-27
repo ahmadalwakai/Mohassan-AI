@@ -8,7 +8,9 @@ import { NOTIFICATION_MEMBER_ROUTES } from './notifications-routes.js';
 import { REMINDER_MEMBER_ROUTES } from './reminders/route-keys.js';
 import { MONITOR_MEMBER_ROUTES } from './monitors/route-keys.js';
 import { conversationShareMemberRoutes, conversationSharePublicRoute } from './conversation-share-paths.js';
-import { MEMBER_DATA_ROUTES, readLimitedMemberAccess, signUpInvitedMember } from './member-administration.js';
+import { MEMBER_DATA_ROUTES, readLimitedMemberAccess } from './member-administration.js';
+import { acceptMemberInvite } from './member-invite-acceptance.js';
+import { MEMBER_PASSWORD_RESET_PUBLIC_ROUTES } from './member-password-reset.js';
 
 /**
  * Members are people the owner invites. They use cloud services only (chat,
@@ -22,6 +24,7 @@ export type WorkspaceRole = 'owner' | 'member';
 
 /** Reached without a session. Each handler does its own checks. */
 export const PUBLIC_ROUTES: ReadonlySet<string> = new Set([
+  ...MEMBER_PASSWORD_RESET_PUBLIC_ROUTES,
   conversationSharePublicRoute,
   'GET /health',
   'GET /api/setup', 'POST /api/setup',
@@ -208,23 +211,7 @@ export async function registerMemberRoutes(app: FastifyInstance, options: Member
   app.post('/api/invites/accept', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request) => {
     const input = AcceptInput.parse(request.body);
     const invite = await openInvite(input.token);
-    // Claim first so two tabs cannot both create an account from one link.
-    const claimed = await db.updateTable('workspace_invites').set({ claimed_at: new Date() }).where('id', '=', invite.id).where('claimed_at', 'is', null).where('revoked_at', 'is', null).executeTakeFirst();
-    if (!Number(claimed.numUpdatedRows)) throw failure(409, 'INVITE_IN_USE', 'تُستخدم هذه الدعوة الآن.');
-    let userId: string;
-    try {
-      const result = await signUpInvitedMember(db, auth, { name: input.name, email: invite.email, password: input.password });
-      userId = result.user.id;
-    } catch (error) {
-      await db.updateTable('workspace_invites').set({ claimed_at: null }).where('id', '=', invite.id).where('consumed_by', 'is', null).execute();
-      const status = (error as { statusCode?: number; status?: string }).statusCode;
-      if (status === 422 || (error as { status?: string }).status === 'UNPROCESSABLE_ENTITY') throw failure(409, 'MEMBER_EXISTS', 'يوجد حساب بهذا البريد بالفعل.');
-      throw error;
-    }
-    await db.transaction().execute(async (tx) => {
-      await tx.updateTable('workspace_invites').set({ consumed_by: userId }).where('id', '=', invite.id).execute();
-      await tx.insertInto('workspace_members').values({ user_id: userId, role: 'member', invite_id: invite.id }).execute();
-    });
+    await acceptMemberInvite(db, auth, invite, input);
     return { ok: true, email: invite.email };
   });
 }
