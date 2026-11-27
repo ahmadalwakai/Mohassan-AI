@@ -16,6 +16,9 @@ import { refusalReply } from './refusal/replies.js';
 import { refusalPolicyEnabled } from './refusal/settings.js';
 import type { RefusalDecision } from './refusal/types.js';
 import { explicitFactualEvidence, formatFactualPassage, readFactualPassage } from './factual-evidence.js';
+import { countryInfoboxPopulation, populationYear } from './population-estimate.js';
+import { renderSearchReplyFields, type SearchReplyFields } from './search-reply-fields.js';
+import { matchesReasonAnswer } from './reason-evidence.js';
 
 export { returnedTo };
 export { siteName };
@@ -35,7 +38,7 @@ export interface HandsReply { lang?: 'ar' | 'en'; sentences?: number; fields?: R
 export type HandsStep =
   | { kind: 'open'; url: string; name: string }
   /** `ask`: the owner asked a question, so the run opens the top results and quotes the sentences that answer it. */
-  | { kind: 'search'; query: string; site: { url: string; name: string } | null; here?: boolean; ask?: boolean; reply?: HandsReply }
+  | { kind: 'search'; query: string; site: { url: string; name: string } | null; here?: boolean; ask?: boolean; exactQuery?: boolean; reply?: HandsReply }
   | { kind: 'click'; target: string; ordinal: number | null }
   | { kind: 'type'; text: string; field: string }
   | { kind: 'read'; more: boolean }
@@ -85,7 +88,7 @@ export interface HandsPlan {
    *  `second`: for a figure, another page's sentence on the same question, and whether its figure agrees (plan §7.4).
    *  `official`: the product's own release page (releases.ts), so no second source is asked of it; `quote` is that page's
    *  own entry, shown under the answer line. */
-  found?: { url: string; title: string; lines: string[]; readAt?: string; second?: { url: string; title: string; line: string; agrees: boolean }; official?: boolean; quote?: string };
+  found?: { url: string; title: string; lines: string[]; fields?: SearchReplyFields; readAt?: string; second?: { url: string; title: string; line: string; agrees: boolean }; official?: boolean; quote?: string };
   /** The language of the owner's request; replies that are not quotes follow it, not the query's script («ابحث عن Python docs» is Arabic). */
   lang?: 'ar' | 'en';
   /** Pages the pre-send judge refused as this question's source: the search is read again past them (the chat's correction step). */
@@ -295,9 +298,10 @@ export function parseHands(request: string, learnedNews = false): HandsStep[] | 
     if (steps) {
       const directive = framing.directive;
       if (directive) for (const step of steps) if (step.kind === 'search') {
-        step.reply = { ...(directive.lang ? { lang: directive.lang } : {}), ...(directive.sentences ? { sentences: directive.sentences } : {}), ...(directive.fields?.length ? { fields: directive.fields } : {}) };
-        // Naming a page's title and link asks for a page that was read and found about the subject, not a bare list.
-        if (directive.fields?.some(field => field === 'title' || field === 'link')) step.ask = true;
+        const { lang, sentences, fields } = directive;
+        step.reply = { ...(lang ? { lang } : {}), ...(sentences ? { sentences } : {}), ...(fields?.length ? { fields } : {}) };
+        if (steps.length === 1 && !step.site && !step.here && (fields?.length || sentences)) step.exactQuery = true;
+        if (fields?.length || sentences) step.ask = true;
       }
       return steps;
     }
@@ -584,62 +588,8 @@ const ATTRIBUTE_WORDS = new Set(['سكان', 'يعيش', 'يعيشون', 'شخص
  */
 export const ASPECT_QUESTION = /(?:^|\s)(?:فوائد|أضرار|اضرار|أعراض|اعراض|أسباب|اسباب|علاج|مخاطر|أنواع|انواع|مراحل|علامات)(?=\s|$)|\b(?:benefits|symptoms|causes|treatment|risks|types|signs) of\b/iu;
 export const aspectSubject = (question: string): string[] => ASPECT_QUESTION.test(question) ? topicWords(wikiTerms(question)) : [];
-/**
- * A sentence answers a reason question only in one of two shapes, both measured on live pages on 2026-11-23
- * (artifacts/agent-gaps-2026-11-22/after-cycle-fixes/why-probe-after-2.json), where a causal word anywhere in the line still
- * let through «… known as the albicelestes due to the sky blue…» for "Why is the sky blue?" and a line about the Moon's
- * orbit for «ليه القمر بيتغير شكله؟»:
- *   the cause follows what is asked about, in one clause: «تبدو السماء زرقاء بسبب…», "The sky appears blue because…";
- *   or the noun of a cause comes right before it: «إن سبب ظهور السماء بألوان…», «سبب انقراض الديناصورات», "the reason the sky is blue".
- * What is asked about is the question's own words apart from its subject («زرقاء», «تهاجر», "blue"); a question that is
- * only its subject («ما أسباب الحرب العالمية الأولى؟») is matched by the subject. Folded text.
- */
-const AFTER_CAUSE = /بسبب|(?:^|\s)(?:و|ف)?لان(?:ه|ها|هم|هما|نا|ك)(?=[\s،.]|$)|(?:^|\s)(?:و|ف)?لان\s+ال|نتيجه\s+(?:ل|عن)|وذلك\s+ل|(?:يعود|تعود|يرجع|ترجع|يعزي|تعزي)\s+(?:(?:ذلك|هذا|السبب)\s+)?الي|(?:^|\s)نسبه\s+(?:الي|ل)|\bbecause\b|\bdue to\b|\bcaused by\b|\bas a result of\b|\bresult(?:s|ing|ed)? from\b|\bowing to\b/u;
-const CAUSE_NOUN = /(?:^|\s)(?:و|ف)?(?:ال)?(?:سبب|اسباب)(?=\s)|\bthe (?:main |primary |chief |real )?(?:reason|cause)s?\b/gu;
-const REASON_FILLER = new Set(['ليه', 'بهذا', 'هذا', 'هذه', 'قبل', 'بعد', 'ان', 'جدا', 'كثيرا', 'دائما', 'so', 'very', 'always', 'often', 'much', 'reason', 'reasons', 'cause', 'causes', 'caused']);
-/**
- * What is asked, narrowed to one place, season or case before the cause: «… وتسقط به الأمطار في فصل الشتاء … بسبب هبوب
- * الرياح الغربية» gives the cause of winter rain in one climate, not why rain falls. It was shown as the answer to «اشرح
- * لماذا تسقط الأمطار» in the live check of 2026-11-23. A question that names such a case itself is not narrowed by it.
- */
-const RESTRICTED_CASE = /(?:^|\s)(?:في|خلال)\s+(?:فصل|موسم|فصول|الشتاء|الصيف|الربيع|الخريف|المناطق|منطقه|مناطق|غرب|شرق|شمال|جنوب|بعض|هذه|تلك|اغلب|معظم)(?=\s|$)|(?:^|\s)(?:به|بها|فيه|فيها)(?=\s|$)|\b(?:in|during)\s+(?:winter|summer|spring|autumn|(?:the\s+)?(?:tropics|monsoon|north|south|east|west)|some|these|those|this\s+region|that\s+region|parts\s+of|most\s+of)\b|\b(?:within|across|throughout)\s+\S/u;
-/**
- * Where a word of the question is found in a sentence word. Arabic words carry their clitics («وتسقط», «بالأمطار»), so the
- * stem may sit inside the word. An English word starts with it («falls», «falling»): inside a word, «rainfall» held both
- * «rain» and «fall», and «Within Asia, rainfall is favored … due to the monsoon» was shown for «Explain why rain falls»
- * (live check of 2026-11-23).
- */
-const holds = (word: string, stem: string) => /\p{Script=Arabic}/u.test(stem) ? word.includes(stem) : word.replace(/^[^\p{L}\p{N}]+/u, '').startsWith(stem);
-export function reasonAnswers(question: string, line: string): boolean {
-  const narrowedQuestion = RESTRICTED_CASE.test(fold(question));
-  const subject = topicWords(reasonSubject(question));
-  const stem = (word: string) => word.length > 4 ? word.slice(0, 4) : word;
-  const asked = topicWords(question).filter(word => !subject.includes(word) && !REASON_FILLER.has(word)).map(stem);
-  const wanted = asked.length ? asked : subject.map(stem);
-  if (!wanted.length) return false;
-  const near = [...new Set([...subject.map(stem), ...asked])];
-  const text = fold(line);
-  // The sentence names the subject, or opens with what is asked of it («وسُميت بهذا الاسم نسبةً إلى…», the page's subject
-  // understood). «حافة الفول سُميت بهذا الاسم نسبةً إلى زهرة عطرية», read on the Cairo page, is about another name.
-  const names = !subject.length || subject.some(word => text.includes(stem(word)));
-  for (const clause of text.split(/[،,؛;]|\.(?!\d)/u)) {
-    const cause = AFTER_CAUSE.exec(clause);
-    if (cause && !narrowedQuestion && RESTRICTED_CASE.test(clause.slice(0, cause.index))) continue;
-    if (cause) {
-      // What is asked and the subject stand together before the cause («انقرضت الديناصورات نتيجةً لـ…», "the sky is blue due
-      // to…"): «الديناصورات ساهمت في تسريع وتيرة انقراض الحيوانات الأخرى بسبب…» is about other animals' extinction.
-      const before = clause.slice(0, cause.index).trim().split(/\s+/);
-      const at = (stems: readonly string[]) => before.flatMap((word, index) => stems.some(item => holds(word, item)) ? [index] : []);
-      const stated = at(wanted), subjects = at(subject.map(stem));
-      const opens = before.slice(0, 2).some(first => asked.some(word => holds(first, word)));
-      if (stated.length && (!asked.length || (subjects.length ? stated.some(i => subjects.some(j => Math.abs(i - j) <= 3)) : names || opens))) return true;
-    }
-    for (const noun of clause.matchAll(CAUSE_NOUN)) {
-      const after = clause.slice(noun.index + noun[0].length).trim().split(/\s+/).slice(0, 6).join(' ');
-      if (near.some(word => after.includes(word))) return true;
-    }
-  }
-  return false;
+export function reasonAnswers(question: string, line: string, allowImpliedSubject = true): boolean {
+  return matchesReasonAnswer(fold(question), fold(line), topicWords(question), topicWords(reasonSubject(question)), allowImpliedSubject);
 }
 /** Words written with «ال» that name nothing: a relative pronoun or a time word is never the subject of a question. */
 const DEFINITE_FILLER = new Set(['الذي', 'التي', 'الذين', 'اللذان', 'اللتان', 'اللي', 'الان', 'الآن', 'اليوم', 'الا', 'الي', 'الى']);
@@ -898,6 +848,7 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
   // Andrew Cairncross suggested … Shakespeare wrote the Ur-Hamlet» led the answer (live 2026-11-22 23:53).
   // A reason question prefers the sentence that states a cause («… بسبب تبعثر ضوء الشمس»).
   const reasonAsk = isReasonQuestion(question);
+  const impliedReasonSubject = reasonAsk && isOwnArticle(page.title, topicWords(reasonSubject(question)));
   const makerAsk = questionLanguage(question) === 'en' && /^(?:who|whom)\s/iu.test(question.trim()) && topicWords(question).some(word => MAKER_WORDS.has(word));
   // An event verb of the question («ولد», «توفي», «نشر») counts only as a whole word, with «و/ف» before it and «ت/وا» after:
   // as part of a word, «ولد» matched «ولديهم» and «المولد», and «أين ولد ألبرت أينشتاين» led with a sentence about his letter
@@ -991,9 +942,10 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
     const hasNumber = hasAnswerNumber(line);
     const folded = fold(line);
     // A short, complete sentence can state a fact when it names both the page's subject and the requested property.
+    const reasonEvidence = reasonAsk && reasonAnswers(question, lead ? line : wholeWords(line, 300), impliedReasonSubject);
     const shortStatement = count >= 3 && count < 5 && /[.!]$/u.test(line) && titled.length > 0
       && titled.length < words.length && words.every(word => has(folded, word));
-    if (count < (hasNumber || shortStatement ? 3 : 5) || line.length > (lead ? LEAD_MAX_CHARS : 400) || seen.has(line) || (wantsNumber && !hasNumber)) continue;
+    if (count < (hasNumber || shortStatement || reasonEvidence ? 3 : 5) || line.length > (lead ? LEAD_MAX_CHARS : 400) || seen.has(line) || (wantsNumber && !hasNumber)) continue;
     // A sentence that asks («ما تاريخ الذكاء الاصطناعي؟») is a heading or a contents entry, never an answer.
     if (/[؟?]\s*$/u.test(line)) continue;
     // Lines about the page, not the subject: hatnotes, bylines, headers (plan §7.4; 0-baseline §8.3 sent these as answers).
@@ -1010,7 +962,7 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
     // A date sentence names its subject: on «الجزائر», «بنى عاصمته القلعة عام 1007 م … واستقل بالحكم» is about a dynasty.
     const implied = kind !== 'date' || titled.some(word => has(folded, word));
     const hits = own && implied ? own + titled.length : words.filter(word => has(folded, word)).length;
-    if (hits < need) continue;
+    if (!reasonEvidence && hits < need) continue;
     seen.add(line);
     // A number in the sentence is often the answer itself: a price, a time, a score. A run past 40 words
     // is usually table cells glued to a sentence (an infobox), so it ranks below a plain sentence.
@@ -1023,7 +975,7 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
     const answerForm = titled.length > 0 && own > 0 && words.some(word => !titled.includes(word)
       && new RegExp(`(?:^|\\s)[وف]?(?:ال)?${word}(?:\\p{L}{0,2}(?:ها|هم)|\\p{L}{1,2}ه)(?=[\\s،,:]|$)`, 'u').test(folded));
     scored.push({ line, score: hits + (numberAnswer && /\d/u.test(line) ? 1 : 0) - (glued ? 1 : 0) + (phrase && folded.includes(phrase) ? 2 : 0) + (answerForm ? 3 : 0) + (pairedDefinition || definition?.test(folded) || wordMeans?.test(folded) ? 3 : 0) + (aboutSubject?.test(folded) ? 1 : 0)
-      + (peopleAsk && POPULATION_NOUN.test(folded) ? 2 : 0) + (opensWithSubject?.test(folded) ? 2 : 0) + (makerAsk && MAKER_STATEMENT.test(folded) ? 2 : 0) + (reasonAsk && reasonAnswers(question, line) ? 3 : 0), at, year, glued, lead });
+      + (peopleAsk && POPULATION_NOUN.test(folded) ? 2 : 0) + (opensWithSubject?.test(folded) ? 2 : 0) + (makerAsk && MAKER_STATEMENT.test(folded) ? 2 : 0) + (reasonEvidence ? 3 : 0), at, year, glued, lead });
   }
   // «كم تستغرق …» is answered by a number: sentences without one only look related.
   if (numberAnswer && !scored.some(item => hasAnswerNumber(item.line))) return [];
@@ -1441,7 +1393,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
   const ownPage = (page: { url: string; title: string }, entity: readonly string[]) => ownUrls.has(withoutHash(page.url)) || isOwnArticle(page.title, entity);
   type SearchResult = { title: string; url: string };
   type SearchBatch = { results: SearchResult[]; retrySubject?: () => Promise<SearchResult[]> };
-  const engine = async (query: string, ask = false): Promise<SearchBatch | { failed: string } | 'unavailable'> => {
+  const engine = async (query: string, ask = false, exactOnly = false): Promise<SearchBatch | { failed: string } | 'unavailable'> => {
     const publicQuery = query.normalize('NFKC').replace(/\p{Cf}/gu, '');
     const decoded = publicSearchScan(publicQuery);
     if (publicSearchText(publicQuery) !== publicQuery || publicSearchText(decoded) !== decoded || (decoded.match(/https?:\/\/\S+/gi) ?? []).some(url => safeResumeUrl(url) === null)) {
@@ -1474,6 +1426,10 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         .sort((a, b) => Number(a.wiki) - Number(b.wiki) || a.at - b.at)
         .map(({ title, url }) => ({ title, url }));
     };
+    if (exactOnly) {
+      const results = await lookup(query);
+      return results.length ? { results } : providerFailure ? { failed: providerFailure } : 'unavailable';
+    }
     // A question about a subject's attribute («كم عدد سكان مصر») is answered from the subject's own article first. The shared
     // ranking keeps only pages whose title and snippet repeat every question word, which dropped «مصر» for «القصير (مصر)» and
     // «عرب» (artifacts/plan-2026-11-22/two-sources-2026-11-22T06-00-31.json).
@@ -1567,7 +1523,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         // «What is the latest version of Node.js?» is read from the product's own release page first (releases.ts): the
         // search only finds old forum threads for it. When that page cannot be read or no longer states a version, the
         // general search runs as before.
-        const release = !template && !box && step.ask && io.read ? releaseQuestion(step.query) : null;
+        const release = !template && !box && step.ask && !step.exactQuery && io.read ? releaseQuestion(step.query) : null;
         if (release) {
           await io.step(readingLabel([release.page]));
           const read = await io.read!(release.page).catch((): HandsRead => ({ kind: 'unreadable' }));
@@ -1582,7 +1538,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         }
         if (!template && !box) {
           // The shared engine over HTTP: a results list and no browser page.
-          const found = await engine(step.query, step.ask);
+          const found = await engine(step.query, step.ask, step.exactQuery);
           if (found === 'unavailable') return { kind: 'done', status: 'blocked', text: noSearchSource(step.query, plan.lang) };
           if ('failed' in found) return { kind: 'done', status: 'blocked', text: searchFailed(step.query, found.failed, plan.lang) };
           searched = found.results;
@@ -1647,7 +1603,8 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             tried.add(withoutHash(item.url));
             const read = reads[index];
             if (read?.kind === 'disallowed') continue;
-            const explicit = read?.kind === 'page' && !isLiveWebQuestion(step.query) && !isDisambiguationPage(read.page)
+            const fieldRequest = step.exactQuery ? step.reply?.fields : undefined;
+            const explicit = !fieldRequest?.length && read?.kind === 'page' && !isLiveWebQuestion(step.query) && !isDisambiguationPage(read.page)
               ? explicitFactualEvidence(read.page, step.query) : undefined;
             if (explicit?.kind === 'unanswered') continue;
             if (explicit?.kind === 'answer' && read?.kind === 'page') {
@@ -1668,6 +1625,15 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
               opened = shown;
             }
             if (isDisambiguationPage(opened)) continue;
+            if (fieldRequest?.length) {
+              // These fields describe the selected page itself, independently of its answer passages.
+              const title = tidy(opened.title) || hostOf(opened.url);
+              const fields: SearchReplyFields = { title: plainTitle(title), link: opened.url };
+              if (fieldRequest.includes('heading')) fields.heading = pageHeading(opened);
+              if (fieldRequest.includes('first_sentence')) fields.first_sentence = firstSentence(opened.text, plainTitle(title)) ?? undefined;
+              plan.found = { url: opened.url, title, lines: fields.first_sentence ? [fields.first_sentence] : [], fields, readAt: opened.observedAt };
+              break;
+            }
             const passage = read?.kind === 'page' && read.page === opened ? readPassage
               : !isLiveWebQuestion(step.query) ? readFactualPassage(opened, step.query) : undefined;
             const extract = passage ? formatFactualPassage(passage) : undefined;
@@ -1680,13 +1646,14 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             // A figure is taken only from a page about the subject: a village's or a people's page carries someone else's
             // numbers beside the country's name. A capital or a definition may come from any page whose sentence names the
             // subject («Tokyo is the capital of Japan»), and a live price from any price page.
-            const reasonWords = topicWords(reasonSubject(step.query));
-            const entity = reasonWords.length ? [] : entityWords(step.query);
+            const reasoned = isReasonQuestion(step.query);
+            const reasonWords = reasoned ? topicWords(reasonSubject(step.query)) : [];
+            const entity = reasoned ? [] : entityWords(step.query);
             const byOwnName = ownUrls.has(withoutHash(opened.url));
             if (WANTS_NUMBER.test(step.query) && !isLiveWebQuestion(step.query) && !byOwnName && !aboutSubject(opened.title, topic, entity)) continue;
             // An aspect («فوائد الشاي الأخضر») is read only from a page about its subject, not from one that mentions it.
-            // A reason («لماذا السماء زرقاء؟») is read the same way, from a page about the thing asked about.
-            const aspect = reasonWords.length ? reasonWords : entity.length ? [] : aspectSubject(step.query);
+            // A reason can also be stated directly on a page about its cause.
+            const aspect = reasoned || entity.length ? [] : aspectSubject(step.query);
             if (aspect.length && !byOwnName && !isOwnArticle(opened.title, aspect) && titleScore(opened.title, aspect) < aspect.length) continue;
             // The answer line is the best-scored sentence that passes the checks; the others stay as details. When none passes,
             // the next page is tried. (Earlier the details were kept even when the first line failed, so an unchecked sentence
@@ -1698,19 +1665,24 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             // A reason sits further down its page too: the sentence that states the cause is rarely among the first three that share the question's words.
             const ranked = relevantLines(opened, step.query, people || reasonWords.length ? 6 : 3, true);
             // A reason is quoted only from a sentence that states the cause of what was asked (reasonAnswers), not from any sentence with a causal word in it.
-            const reasoned = isReasonQuestion(step.query);
-            const passing = ranked.flatMap((line, at) => checkAnswerLine(step.query, line).ok && namesEntity(line, entity, ownPage(opened, entity)) && (!reasoned || reasonAnswers(step.query, line)) ? [at] : []);
+            const impliedSubject = reasoned && ownPage(opened, reasonWords);
+            const passing = ranked.flatMap((line, at) => checkAnswerLine(step.query, line).ok && namesEntity(line, entity, ownPage(opened, entity)) && (!reasoned || reasonAnswers(step.query, line, impliedSubject)) ? [at] : []);
             // A population is today's count or nothing. When the page states only a forecast («ستكون … 42 مليون نسمة في 2050»,
             // the answer to «كم عدد سكان أستراليا؟» in the 13:50 audit of 2026-11-22) or an old census, the next page is tried.
-            const answerAt = people ? passing.find(at => !pastFigure(ranked[at]!) && !projectedFigure(ranked[at]!)) ?? -1 : passing[0] ?? -1;
-            const lines = answerAt < 0 ? [] : [ranked[answerAt]!, ...ranked.filter((_, at) => at !== answerAt)].slice(0, 3);
+            const currentPopulation = (line: string) => !pastFigure(line) && !projectedFigure(line);
+            const estimate = people && !/\p{Nd}/u.test(step.query) && isOwnArticle(opened.title, entity)
+              ? countryInfoboxPopulation(opened, THIS_YEAR) : undefined;
+            const answerAt = people ? passing.find(at => currentPopulation(ranked[at]!)
+              && (!estimate || populationYear(ranked[at]!) > estimate.year)) ?? -1 : passing[0] ?? -1;
+            const lines = answerAt >= 0 ? [ranked[answerAt]!, ...ranked.filter((_, at) => at !== answerAt)].slice(0, 3)
+              : estimate && checkAnswerLine(step.query, estimate.line).ok ? [estimate.line] : [];
             // A page whose title names none of the question's words answers only with a sentence that carries nearly all of them:
             // «The trio visit Misumi again, this time…» from the film «The Third Murder» shares only «visit» and «time» with «What is
             // the best time to visit Japan?» (live 2026-11-22 06:13 and 07:44). Measured on the 208 sourced answers of the eight full
             // runs of 2026-11-22 and the live judge log: it rejects 4, all wrong pages (that film three times, «CrossCountry» for a
             // train ticket), and none of the right ones («طوكيو» for «ما عاصمة اليابان» carries both of its words). The title is
             // the page's own or the search's for it: some sites give every page a generic title.
-            if (lines.length && topic.length >= 2 && titleScore(opened.title, topic) === 0 && titleScore(item.title, topic) === 0
+            if (lines.length && !reasoned && topic.length >= 2 && titleScore(opened.title, topic) === 0 && titleScore(item.title, topic) === 0
               && topicCoverage(lines[0]!, topic) < Math.max(2, topic.length - 1)) continue;
             if (lines.length) {
               if (extract && passage && lines[0] !== passage.quote) lines.unshift(extract);
@@ -1723,8 +1695,9 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
                   if (other === index || otherRead?.kind !== 'page' || !readableOverHttp(otherRead.page.text) || isDisambiguationPage(otherRead.page)) continue;
                   const ownArticle = ownPage(otherRead.page, entity);
                   if (!ownArticle && topic.length && titleScore(otherRead.page.title, topic) < topic.length) continue;
-                  const [line] = relevantLines(otherRead.page, step.query, 1, true)
-                    .filter(candidate => checkAnswerLine(step.query, candidate).ok && namesEntity(candidate, entity, ownArticle));
+                  const line = relevantLines(otherRead.page, step.query, estimate ? 6 : 1, true)
+                    .find(candidate => checkAnswerLine(step.query, candidate).ok && namesEntity(candidate, entity, ownArticle)
+                      && (!estimate || currentPopulation(candidate)));
                   if (line) { plan.found.second = { url: otherRead.page.url, title: tidy(otherRead.page.title) || hostOf(otherRead.page.url), line, agrees: sameFigure(lines[0], line) }; break; }
                 }
               }
@@ -1867,7 +1840,9 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
     if (io.complete) {
       const ranked = step.kind === 'ask_page' && page ? evaluatePageReasoning(page, step.question, plan.lang ?? 'ar') : null;
       const answer = !ranked && step.kind === 'ask_page' && page ? plannedPageAnswer(plan, page, step) : null;
-      const missing = step.kind === 'search' && (step.ask ? !plan.found?.lines.length
+      const fields = step.kind === 'search' && step.exactQuery ? step.reply?.fields : undefined;
+      const missing = step.kind === 'search' && (step.ask
+        ? fields?.length ? fields.some(field => !plan.found?.fields?.[field]) : !plan.found?.lines.length
         : !plan.results?.length && (!page || !resultLinks(page, 1, step.query).length))
         || answer !== null && (!answer.parts.length || answer.missing.length > 0);
       await io.complete(index, missing || ranked?.status === 'blocked' ? 'partial' : 'completed');
@@ -1880,6 +1855,16 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
 const HEADING_ASK = /(?:^|\s)(?:ب|و)?(?:ال)?(?:عنوان|عناوين)(?=\s|$)|\b(?:main heading|heading|headline|title|h1)\b/iu;
 /** «the first sentence», «the opening paragraph», «أول جملة», «الجملة الأولى» (folded). */
 const FIRST_SENTENCE_ASK = /\b(?:first|opening|1st) (?:sentence|line|paragraph)\b|(?:^|\s)(?:ب|و)?اول (?:جمله|سطر|فقره)(?=\s|$)|(?:^|\s)(?:ب|و)?(?:ال)?(?:جمله|فقره) (?:ال)?اولي(?=\s|$)/iu;
+/** Match a heading only where the page's own text shows its title. */
+function pageHeading(page: AgentPage): string | undefined {
+  const plain = plainTitle(page.title);
+  const title = fold(plain);
+  const heading = title ? page.text.split('\n').map(tidy).find(line => line.length <= 120 && fold(line) === title) : undefined;
+  if (heading || plain.length < 3) return heading;
+  const at = page.text.toLowerCase().indexOf(plain.toLowerCase());
+  if (at >= 0 && at <= 300) return page.text.slice(at, at + plain.length);
+}
+
 /**
  * The first sentence of the page's own text after its heading: the browser joins a page into one line, so the sentence is
  * found by its end mark. Navigation runs and lines of fewer than four words are not sentences.
@@ -1931,18 +1916,9 @@ export function pageAnswer(page: AgentPage, question: string, lang: 'ar' | 'en')
   const asked = fold(question);
   const ar = lang === 'ar';
   const text = page.text;
-  const lines = text.split('\n').map(line => tidy(line)).filter(Boolean);
   const parts: PageAnswerPart[] = [], missing: string[] = [];
   if (HEADING_ASK.test(asked)) {
-    // The main heading is the page's title where the page's own text shows it: a line of its own, or the opening words of the
-    // text when the browser joined the page into one line. A title the text never shows is not quoted.
-    const plain = plainTitle(page.title);
-    const title = fold(plain);
-    let heading = title ? lines.find(line => line.length <= 120 && fold(line) === title) : undefined;
-    if (!heading && plain.length >= 3) {
-      const at = text.toLowerCase().indexOf(plain.toLowerCase());
-      if (at >= 0 && at <= 300) heading = text.slice(at, at + plain.length);
-    }
+    const heading = pageHeading(page);
     if (heading) parts.push({ label: ar ? 'العنوان الرئيسي:' : 'Main heading:', quotes: [heading] });
     else missing.push(ar ? 'العنوان الرئيسي' : 'the main heading');
   }
@@ -2009,8 +1985,11 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
       const named = reply?.fields?.some(field => field === 'title' || field === 'link')
         ? `**${en ? 'Page title:' : 'عنوان الصفحة:'}** ${plainTitle(plan.found.title)}\n**${en ? 'Source link:' : 'رابط المصدر:'}** ${plan.found.url}\n\n` : '';
       // A reply asked in a language the page is not written in: the page's own sentences, and that said plainly.
-      const quotedArabic = /\p{Script=Arabic}/u.test(shownLines.join(' '));
-      const otherLanguage = reply?.lang && (reply.lang === 'ar') !== quotedArabic;
+      const fields = reply?.fields?.length && plan.found.fields
+        ? renderSearchReplyFields(reply.fields, plan.found.fields, reply.lang ?? (en ? 'en' : 'ar')) : undefined;
+      const quotedText = fields ? fields.quoted : shownLines.join(' ');
+      const quotedArabic = /\p{Script=Arabic}/u.test(quotedText);
+      const otherLanguage = reply?.lang && quotedText && (reply.lang === 'ar') !== quotedArabic;
       const asked = reply?.lang === 'ar' ? en ? 'Arabic' : 'العربية' : en ? 'English' : 'الإنجليزية';
       const written = quotedArabic ? en ? 'Arabic' : 'العربية' : en ? 'English' : 'الإنجليزية';
       const languageNote = otherLanguage ? `\n\n${en
@@ -2023,6 +2002,8 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
       const officialNote = notOfficial ? `\n\n${en
         ? 'This is not the organisation’s own page: the search sources available to me (Wikipedia and documented APIs, with no general web index) returned no page from its own site. Send the official page’s link and I will read it.'
         : 'هذه ليست صفحة الجهة نفسها: مصادر البحث المتاحة لي (ويكيبيديا والواجهات الموثقة، بلا فهرس عام للويب) لم تُرجع صفحة من موقعها. أرسل رابط الصفحة الرسمية وأقرأها لك.'}` : '';
+      if (fields) return { status: fields.incomplete || otherLanguage || notOfficial ? 'partial' : 'completed',
+        text: `${fields.text}${languageNote}${officialNote}` };
       const [first, ...lines] = shownLines;
       // A detail is a whole sentence: a run cut at both ends («… ست ولايات ومقاطعتين…») or a heading that reads as a sentence
       // («الذكاء الاصطناعي القائم على المعرفة.») is left out (6 of 44 details on the 107 real requests of 2026-11-23).

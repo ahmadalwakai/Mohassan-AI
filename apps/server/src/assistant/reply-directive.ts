@@ -63,12 +63,12 @@ const LANG_EN = String.raw`(arabic|english)`;
 const COUNT_EN: Record<string, number> = { a: 1, an: 1, one: 1, single: 1, 'a single': 1, 'one single': 1, two: 2, three: 3, '1': 1, '2': 2, '3': 3 };
 const ADJ_EN = String.raw`(?:short|brief|simple|concise|clear|plain|single)`;
 /** «reply with the result in one short Arabic sentence», «answer in two sentences in English», «in one sentence». */
-const SENTENCES_EN = new RegExp(String.raw`^(?:please\s+)?(?:(?:reply|respond|answer|explain(?:\s+it)?|write(?:\s+it)?|give(?:\s+me)?(?:\s+the\s+(?:answer|result))?|state(?:\s+it)?|summari[sz]e(?:\s+it)?|put(?:\s+it)?|keep(?:\s+it)?|say(?:\s+it)?|tell\s+me)\s+)?(?:with\s+(?:the\s+)?(?:result|answer|value|number|total)\s+)?(?:in|as|using|within)\s+(a single|one single|a|an|one|two|three|1|2|3)\s+(?:${ADJ_EN}\s+){0,2}(?:${LANG_EN}\s+)?(?:${ADJ_EN}\s+){0,2}(sentences?|lines?|paragraphs?)(?:\s+(?:in|using)\s+${LANG_EN})?(?:\s+only)?$`, 'iu');
+const SENTENCES_EN = new RegExp(String.raw`^(?:please\s+)?(?:(?:(?:reply|respond|answer|explain(?:\s+it)?|write(?:\s+it)?|(?:give(?:\s+me)?|return)(?:\s+the\s+(?:answer|result))?|state(?:\s+it)?|summari[sz]e(?:\s+it)?|put(?:\s+it)?|keep(?:\s+it)?|say(?:\s+it)?|tell\s+me)\s+)?(?:with\s+(?:the\s+)?(?:result|answer|value|number|total)\s+)?(?:in|as|using|within)|return(?:\s+(?:only|just))?)\s+(a single|one single|a|an|one|two|three|1|2|3)\s+(?:${ADJ_EN}\s+){0,2}(?:${LANG_EN}\s+)?(?:${ADJ_EN}\s+){0,2}(sentences?|lines?|paragraphs?)(?:\s+(?:in|using)\s+${LANG_EN})?(?:\s+only)?$`, 'iu');
 /** «in Arabic», «reply in English only», «answer using Arabic». */
 const LANGUAGE_EN = new RegExp(String.raw`^(?:please\s+)?(?:(?:reply|respond|answer|write(?:\s+it)?|say(?:\s+it)?|give(?:\s+me)?(?:\s+the\s+(?:answer|result))?|explain(?:\s+it)?)\s+)?(?:with\s+(?:the\s+)?(?:result|answer)\s+)?(?:only\s+)?(?:in|using)\s+${LANG_EN}(?:\s+only)?$`, 'iu');
 const BRIEF_EN = /^(?:please\s+)?(?:(?:reply|respond|answer|keep\s+it|be)\s+)?(?:briefly|concisely|short|brief)$/iu;
 /** «Return the page title and source link», «give me the link», «with the source link», «include the title and URL». */
-const FIELD_VERB_EN = /^(?:please\s+)?(?:(?:return|give|show|tell|send|provide|include|report|list|share|quote|cite)(?:\s+me)?|with|and)\s+/iu;
+const FIELD_VERB_EN = /^(?:please\s+)?(?:(?:return|give|show|tell|send|provide|include|report|list|share|quote|cite)(?:\s+me)?|with|and)\s+(?:(?:only|just)\s+)?/iu;
 const FIELD_NOUN_EN: [RegExp, ReplyField][] = [
   [/^(?:main\s+)?(?:heading|headline|h1)$/iu, 'heading'], [/^(?:page\s+)?(?:title|name)$/iu, 'title'],
   [/^(?:source\s+)?(?:link|url|address|source)$/iu, 'link'], [/^first\s+(?:sentence|line|paragraph)$/iu, 'first_sentence'],
@@ -100,7 +100,7 @@ function englishDirective(clause: string): Omit<ReplyDirective, 'text'> | null {
   if (BRIEF_EN.test(text)) return { brief: true };
   const verb = FIELD_VERB_EN.exec(text);
   if (verb) {
-    const nouns = text.slice(verb[0].length).replace(/\b(?:the|its|their|a|an)\b/giu, ' ').split(/\s*(?:,|&|\band\b|\bplus\b)\s*/iu).map(part => part.replace(/\s+/gu, ' ').trim()).filter(Boolean);
+    const nouns = text.slice(verb[0].length).replace(/\s+only$/iu, '').replace(/\b(?:the|its|their|a|an)\b/giu, ' ').split(/\s*(?:,|&|\band\b|\bplus\b)\s*/iu).map(part => part.replace(/\s+/gu, ' ').trim()).filter(Boolean);
     const fields = nouns.map(noun => FIELD_NOUN_EN.find(([pattern]) => pattern.test(noun))?.[1]);
     if (nouns.length && fields.every(Boolean)) return { fields: [...new Set(fields as ReplyField[])] };
   }
@@ -163,7 +163,7 @@ function directiveOf(tail: string): ReplyDirective | null {
 }
 
 /** Where a closing directive may start: a sentence end, a comma, «and», «و» before a directive verb, or «in …». */
-const SPLIT_POINTS = /(?<!\d)\.(?=\s)|[!?؟;؛](?=\s)|[,،](?=\s)|\s(?=and\s)|\s(?=و(?:اجب|رد|اكتب|اعطني|اعطيني|اذكر|قدم|ارسل|اعرض|انقل|باختصار|بايجاز))|\s(?=(?:in|using)\s+(?:a|an|one|two|three|single|[123]|arabic|english)\b)|\s(?=(?:في\s+|ب)?(?:جمله|جملتين|جملتان|سطر|سطرين)(?:\s|$))|\s(?=(?:بالعربيه|بالعربي|بالانجليزيه|بالانجليزي|باللغه|باختصار|بايجاز)(?:\s|$))/giu;
+const SPLIT_POINTS = /[.!?؟;؛](?=\s)|[,،](?=\s)|\s(?=and\s)|\s(?=و(?:اجب|رد|اكتب|اعطني|اعطيني|اذكر|قدم|ارسل|اعرض|انقل|باختصار|بايجاز))|\s(?=(?:in|using)\s+(?:a|an|one|two|three|single|[123]|arabic|english)\b)|\s(?=(?:في\s+|ب)?(?:جمله|جملتين|جملتان|سطر|سطرين)(?:\s|$))|\s(?=(?:بالعربيه|بالعربي|بالانجليزيه|بالانجليزي|باللغه|باختصار|بايجاز)(?:\s|$))/giu;
 
 /**
  * The request, its label and its closing directive. The earliest split whose whole remainder is directives wins, so

@@ -195,7 +195,7 @@ describe('the live functional test of 2026-11-23, through the real chat controll
   it('H: the search is for the subject only, and the reply names the read page’s title and link', async () => {
     const { reply, status } = await ask('Search the web for the official IANA documentation about example domains. Return the page title and source link.');
     expect(queries[0]).toBe('the official IANA documentation about example domains');
-    expect(reply).toMatch(/^\*\*Page title:\*\* Example Domains\n\*\*Source link:\*\* https:\/\/www\.iana\.org\/help\/example-domains\n/u);
+    expect(reply).toBe('**Page title:** Example Domains\n**Source link:** https://www.iana.org/help/example-domains');
     expect(reads).toContain('https://www.iana.org/help/example-domains');
     expect(status).toBe('completed');
   });

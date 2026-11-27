@@ -64,6 +64,8 @@ export interface JudgeShadow {
   observe(input: JudgeShadowInput): JudgeVerdict | null;
   /** Resolves once every line queued so far is on disk (for tests and shutdown). */
   flush(): Promise<void>;
+  /** Stop queueing new entries and wait for pending writes. */
+  close?(): Promise<void>;
 }
 
 const MAX_TEXT = 2000;
@@ -89,7 +91,9 @@ export function createJudgeShadow(options: { logFile: string; now?: () => Date }
   const append = createJudgeLogWriter(options.logFile);
   let queue: Promise<void> = Promise.resolve();
   let warned = false;
+  let closed = false;
   const write = (line: JudgeShadowLine) => {
+    if (closed) return;
     queue = queue.then(() => append(`${JSON.stringify(line)}\n`, line.at.slice(0, 10))).catch(() => {
       // A shadow log must never reach the chat. The first failed write is named once in the server log: the judge still
       // decides without its log, and a folder the service cannot write should not stay unnoticed.
@@ -119,5 +123,9 @@ export function createJudgeShadow(options: { logFile: string; now?: () => Date }
       }
     },
     flush: () => queue,
+    close() {
+      closed = true;
+      return queue;
+    },
   };
 }

@@ -174,7 +174,7 @@ describe('an instruction to explain is a question about the world', () => {
 describe('browser and search commands with a reply instruction', () => {
   it('searches what follows «search the web for», and the named fields ask for a page that was read', () => {
     expect(parseHands('Search the web for the official IANA documentation about example domains. Return the page title and source link.')).toEqual([
-      { kind: 'search', query: 'the official IANA documentation about example domains', site: null, ask: true, reply: { fields: ['title', 'link'] } },
+      { kind: 'search', query: 'the official IANA documentation about example domains', site: null, ask: true, exactQuery: true, reply: { fields: ['title', 'link'] } },
     ]);
     expect(parseHands('search the internet for solar eclipse dates')).toEqual([{ kind: 'search', query: 'solar eclipse dates', site: null }]);
     expect(parseHands('ابحث في الإنترنت عن مواعيد الكسوف')).toEqual([{ kind: 'search', query: 'مواعيد الكسوف', site: null }]);

@@ -26,7 +26,7 @@ import {
   SEARCH_REPEATED, SEARCH_UNUSABLE, asksToRemember, needsReview, noteAttempt, reviewRequest, searchKey, sensitiveAction, siteOf, situation, skillContextBudget, stepLabel, systemPrompt, type BrainState, type Decision, type ModelTier, type WorkTool,
 } from './assistant/brain.js';
 import { ADS_DRAFT_NOTE, ADS_SKILL_SLUG } from './assistant/ads-check.js';
-import { isLiveWebQuestion, PROVIDER_SPACING_MS, answerSubject, isBareAddress, isFollowUp, normalizeHandsPlan, notWebReason, parseHands, plainTitle, refersBack, runHands, siteQuestion, siteToOpen, tidy, topicWords, unnamedSite, webQuestion, type HandsIO, type HandsOutcome, type HandsPlan, type HandsRead, type HandsStep } from './assistant/hands.js';
+import { isLiveWebQuestion, PROVIDER_SPACING_MS, isBareAddress, isFollowUp, normalizeHandsPlan, notWebReason, parseHands, plainTitle, refersBack, runHands, siteQuestion, siteToOpen, tidy, topicWords, unnamedSite, webQuestion, type HandsIO, type HandsOutcome, type HandsPlan, type HandsRead, type HandsStep } from './assistant/hands.js';
 import { liveLabel } from './assistant/activity.js';
 import { routeLiveDataChat } from './live-data/chat.js';
 import type { DesktopCommand, DesktopOutcome, ParsedDesktopCommand } from '@mohassan/desktop';
@@ -36,6 +36,7 @@ import type { ShadowRouter } from './assistant/router.js';
 import type { ConversationShadow } from './assistant/conversation-state-shadow.js';
 import { enterConversationTurn, useLegacyConversationLookup } from './assistant/conversation-state-chat.js';
 import { publicConversationFollowup } from './assistant/public-conversation-followup.js';
+import { sourcedFollowup } from './assistant/founder-followup.js';
 import type { JudgeShadow } from './assistant/judge-shadow.js';
 import { judge as judgeAnswer } from './assistant/judge.js';
 import { observeImageRelations, observeModelRelations, ruleBaseline } from './assistant/model-relations-shadow.js';
@@ -3068,8 +3069,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           ? (await db.selectFrom('chat_runs').select('state').where('conversation_id', '=', id).where('owner_id', '=', ownerId).where('id', '!=', runId)
             .orderBy('created_at', 'desc').limit(1).executeTakeFirst())?.state?.handsFound : null;
         const namedBefore = foundBefore && typeof foundBefore.title === 'string'
-          ? answerSubject({ title: foundBefore.title, lines: Array.isArray(foundBefore.lines) ? foundBefore.lines.filter((line: unknown): line is string => typeof line === 'string') : [] }) : '';
-        const entityAsk = namedBefore ? webQuestion(actionRequest, [namedBefore]) : null;
+          ? { title: foundBefore.title, lines: Array.isArray(foundBefore.lines) ? foundBefore.lines.filter((line: unknown): line is string => typeof line === 'string') : [] } : null;
+        const entityAsk = namedBefore ? sourcedFollowup(actionRequest, namedBefore) : null;
         // «ارجع إلى أينشتاين: أين ولد؟» asks about the subject by the fuller name an earlier answer was read under («ألبرت
         // أينشتاين»): searched as the one word, it was answered from his father's page (long-final turn 11, 2026-11-23).
         const returning = freshRequest && !steps && !conversationAsk && !entityAsk ? returnParts(clean(request)) : null;
@@ -4632,6 +4633,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     closing = true;
     for (const {controller} of controllers.values()) controller.abort(new Error('CHAT_SHUTDOWN'));
     await Promise.allSettled([...workers.values()]);
+    await (config.judgeShadow?.close?.() ?? config.judgeShadow?.flush());
     const abandoned:{ownerId:string;state:unknown}[]=[];
     await db.transaction().execute(async tx=>{
       const rows=await tx.selectFrom('chat_conversations as c').innerJoin('chat_runs as r','r.id','c.active_run_id').select(['c.id','r.id as run_id','r.owner_id','r.state']).where('r.worker_id','=',instanceId).where('c.status','in',['running',...WAITING_STATUSES]).forUpdate('c').execute();

@@ -100,6 +100,12 @@ describe('public conversation follow-up query refinement', () => {
     expect(publicConversationFollowup(inputFor([earlier], request))).toBeNull();
   });
 
+  // Prior question and follow-up from PR #13, retrieved 2026-11-27.
+  // https://github.com/ahmadalwakai/Mohassan-AI/pull/13/files
+  it('leaves a superlative property follow-up to the sourced subject resolver', () => {
+    expect(publicConversationFollowup(inputFor(['ما هو أطول نهر في العالم؟'], 'وكم طوله؟'))).toBeNull();
+  });
+
   it.each([
     { earlier: 'من ذاكرتي، ما مدينتي المفضلة؟', request: 'وما عدد سكانها؟' },
     { earlier: 'What is my saved city?', request: 'And its population?' },

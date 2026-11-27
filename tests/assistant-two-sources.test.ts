@@ -206,3 +206,43 @@ describe('two sources for a figure', () => {
     expect(text(single)).toContain('\n\nلم أتحقق من هذا الرقم في مصدر ثانٍ.');
   });
 });
+
+describe('current population estimates read from a country infobox', () => {
+  const question = 'كم عدد سكان أستراليا؟';
+  // Page text from Arabic Wikipedia, retrieved 2026-11-27:
+  // https://ar.wikipedia.org/w/index.php?title=%D8%A3%D8%B3%D8%AA%D8%B1%D8%A7%D9%84%D9%8A%D8%A7&oldid=77628811
+  const estimate = { year: 2025, count: '27,707,100' };
+  const estimateRow = `توقع ( ${estimate.year} ) ${estimate.count}`;
+  const projection = 'ويخطط أن في 2050 ستكون أستراليا عدد سكانها 42 مليون نسمة.';
+  const country = pageOf('https://ar.wikipedia.org/wiki/أستراليا', 'أستراليا - ويكيبيديا', [
+    'من ويكيبيديا، الموسوعة الحرة أستراليا الأرض والسكان تسمية السكان أستراليون',
+    `${estimateRow} [ 10 ] نسمة`,
+    'تعديل مصدري - تعديل أستراليا دولة ذات سيادة تضم البر الرئيسي للقارة الأسترالية وجزيرة تسمانية.',
+    'يعدّ التعداد السكاني لأستراليا حوالي 24,899,100 مليون نسمة.',
+    projection,
+  ].join(' '));
+
+  it('corroborates the estimate against a current second-source count and leaves out the projected figure', async () => {
+    const second = pageOf('https://statistics.example/australia', 'عدد سكان أستراليا - statistics.example',
+      `${projection} في عام ${estimate.year} بلغ عدد سكان أستراليا ${estimate.count} نسمة بحسب التقدير الوطني.`);
+    const outcome = await runHands({ steps: webQuestion(question)!, next: 0, lang: 'ar' },
+      io(by(country, second), [{ title: country.title, url: country.url }, { title: second.title, url: second.url }]));
+
+    expect(outcome).toMatchObject({ kind: 'done', status: 'completed' });
+    expect(text(outcome).split('\n')[0]).toBe(`${estimateRow} نسمة`);
+    expect(text(outcome)).toContain(`**مصدر ثانٍ يؤكد:** [statistics.example — ${second.title}](${second.url})`);
+    expect(text(outcome)).not.toContain('42 مليون');
+  });
+
+  it('prefers a newer dated statement on the same page over the older infobox estimate', async () => {
+    // Population headline from the Australian Bureau of Statistics, retrieved 2026-11-27:
+    // https://www.abs.gov.au/statistics/people/population/national-state-and-territory-population/latest-release
+    const recent = 'يبلغ عدد سكان أستراليا 27,921,150 نسمة بحسب تقديرات 2026.';
+    const updated = { ...country, text: `${country.text} ${recent}` };
+    const outcome = await runHands({ steps: webQuestion(question)!, next: 0, lang: 'ar' },
+      io(by(updated), [{ title: updated.title, url: updated.url }]));
+
+    expect(outcome).toMatchObject({ kind: 'done', status: 'completed' });
+    expect(text(outcome).split('\n')[0]).toBe(recent);
+  });
+});

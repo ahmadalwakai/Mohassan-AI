@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { returnedTo } from './return-to.js';
 import { explicitKnowledgeDocumentRequest } from './knowledge-document-request.js';
 import { parseQuestionRewriteRequest } from './question-rewrite-request.js';
-import { assessRequestScope, parseRequestScopeAssessment, requestOperationText, RequestScopeAssessmentSchema, reviewPublicProjection, parseUserRequestConstraints, maskRequestLiteralData, isEntireLiteralRequest, type UserRequestConstraints, type RequestScopeAssessment } from './request-scope.js';
+import { assessRequestScope, lookupRequestBody, parseRequestScopeAssessment, requestOperationText, RequestScopeAssessmentSchema, reviewPublicProjection, parseUserRequestConstraints, maskRequestLiteralData, isEntireLiteralRequest, type UserRequestConstraints, type RequestScopeAssessment } from './request-scope.js';
 import { factualNumberText, questionCoreferenceText, startsFactualQuestion } from './public-question-syntax.js';
 import { noHistory } from './response-policy-signals.js';
 
@@ -374,8 +374,9 @@ function resolveRequestContextBase(request: string, previousValue?: unknown, opt
   }
   const revision = (previous?.revision ?? 0) + 1;
   const sourceTurnId = sourceFor(options, revision);
-  const intent = classify(original);
-  const scope = scopeFor(intent, original);
+  const lookupBody = lookupRequestBody(original);
+  const intent = classify(lookupBody);
+  const scope = scopeFor(intent, lookupBody);
   const result: RequestResolution = {
     version: REQUEST_CONTEXT_VERSION, kind: 'new', original: original.slice(0, MAX_CONTEXT_REQUEST),
     resolved: original, query: null, intent, scope, topic: null, slots: [], ambiguities,
@@ -397,12 +398,12 @@ function resolveRequestContextBase(request: string, previousValue?: unknown, opt
     ];
     return result;
   }
-  const correction = correctiveView(original, previous);
+  const correction = correctiveView(lookupBody, previous);
   if (correction.unbound || correction.correction && !correction.text) {
     result.kind = 'ambiguous'; result.scope = 'unknown'; ambiguities.push('unclear_replacement'); return result;
   }
   const found = explicitSlots(correction.text, intent === 'ads' || previous?.intent === 'ads');
-  const follow = correction.correction || FOLLOW_LEAD.test(original) || CORRECTION.test(fold(original)) || pointsBack(original)
+  const follow = correction.correction || FOLLOW_LEAD.test(original) || CORRECTION.test(fold(original)) || pointsBack(lookupBody)
     || /^(?:بكرة|غدا|غدًا|tomorrow|tonight)(?:[؟?!.])?$/iu.test(original);
   const bareAnswer = intent !== 'compute' && !startsNewAction(requestActionText(original)) && !BROWSER.test(fold(original)) && !WRITING.test(fold(original)) && !REMINDER.test(fold(original))
     && !MEMORY.test(fold(original)) && !CODING.test(fold(original)) && !/^(?:ابحث|search|look up|ما |ماذا |كم |كيف |هل |what |when |where |how )/iu.test(fold(original));
@@ -485,7 +486,7 @@ function resolveRequestContextBase(request: string, previousValue?: unknown, opt
         relation: slot.sourceTurnId === sourceTurnId ? previous.slots.some(old => old.kind === slot.kind) ? 'replaced' as const : 'current' as const : 'inherited' as const })),
     ];
   } else {
-    result.topic = topicFrom(original, found, intent);
+    result.topic = topicFrom(lookupBody, found, intent);
     result.slots = mergeSlots(found, null, sourceTurnId);
     result.provenance = [
       ...(result.topic ? [{ field: 'topic' as const, sourceTurnId, relation: 'current' as const }] : []),
@@ -502,7 +503,7 @@ function resolveRequestContextBase(request: string, previousValue?: unknown, opt
     return result;
   }
   result.query = result.kind === 'new' && result.scope === 'public' && ['web_search', 'news'].includes(result.intent)
-    ? original : publicQuery(result.topic, result.slots, result.intent, result.scope);
+    ? lookupBody : publicQuery(result.topic, result.slots, result.intent, result.scope);
   result.nextState = {
     version: REQUEST_CONTEXT_VERSION, revision, intent: result.intent, scope: result.scope,
     topic: result.topic, topicSourceTurnId: result.topic ? result.provenance.find(item => item.field === 'topic')?.sourceTurnId ?? sourceTurnId : null,
