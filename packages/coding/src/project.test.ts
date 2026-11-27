@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { git } from "./git.ts";
+import { PROJECT_INSTRUCTIONS_PATH } from "./instructions.ts";
 import { createDemoProject, createRepairDemoProject, inspectProject } from "./project.ts";
 
 const directories: string[] = [];
@@ -69,6 +70,33 @@ describe("project tool detection", () => {
     expect(project.testFiles).toEqual(["test/example.spec.cjs"]);
     expect(project.typecheck).toEqual({});
     expect(project.eslintConfig).toBe("package.json");
+    expect(project.instructions).toBeUndefined();
+  });
+
+  it("protects the tracked instructions and paths matching their globs", async () => {
+    const project = await fixture({
+      [PROJECT_INSTRUCTIONS_PATH]: "## لا تعدّل\n- src/generated/**/*.ts\n- docs/*.md\n\n## ملاحظات\nحافظ على واجهة الاستخدام.\n",
+      "docs/reference.md": "# API reference\n",
+      "src/app.ts": "export {};\n",
+      "src/generated/nested/types.ts": "export {};\n",
+      "src/generated/script.js": "export {};\n",
+      "test/example.test.mjs": "export {};\n",
+    });
+    expect(project.instructions).toEqual({ protectedGlobs: ["src/generated/**/*.ts", "docs/*.md"], notes: "حافظ على واجهة الاستخدام.", warnings: [] });
+    expect(project.protectedPaths).toEqual([PROJECT_INSTRUCTIONS_PATH, "docs/reference.md", "src/generated/nested/types.ts", "test/example.test.mjs"]);
+    expect(project.candidateEditablePaths).toEqual(["src/app.ts", "src/generated/script.js"]);
+    expect(project.files.map((file) => file.path)).toContain("src/generated/nested/types.ts");
+  });
+
+  it("keeps an empty tracked instructions file protected", async () => {
+    const project = await fixture({
+      [PROJECT_INSTRUCTIONS_PATH]: "",
+      "src/app.ts": "export {};\n",
+      "test/example.test.mjs": "export {};\n",
+    });
+    expect(project.instructions).toEqual({ protectedGlobs: [], notes: "", warnings: [] });
+    expect(project.protectedPaths).toEqual([PROJECT_INSTRUCTIONS_PATH, "test/example.test.mjs"]);
+    expect(project.candidateEditablePaths).toEqual(["src/app.ts"]);
   });
 
   it.each([

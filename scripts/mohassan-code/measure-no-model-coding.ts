@@ -10,29 +10,31 @@
  * - `logic` (2026-11-27): six logic changes that must be blocked without approval, and two project read controls.
  * - `show-change` (2026-11-27): show a previously approved and verified repair in Arabic and English, report no
  *   task for a second registered project, and compare two control replies verbatim across checkouts.
+ * - `instructions` (2026-11-27): read saved project instructions in Arabic and English, report an absent file,
+ *   surface notes in the check reply and approval card, and compare two controls.
  *
  * Each request runs in a fresh conversation; an approval card is approved once. The demo project is registered, no chat
  * model is configured, and the database is embedded and in memory. Records the first and final replies, the run status
  * and the time per request.
  *
- * Usage: npx tsx scripts/mohassan-code/measure-no-model-coding.ts [checkout] [out.json] [--set=slice1|slice2|before-after|logic|show-change] [--real-sandbox]
+ * Usage: npx tsx scripts/mohassan-code/measure-no-model-coding.ts [checkout] [out.json] [--set=slice1|slice2|before-after|logic|show-change|instructions] [--real-sandbox]
  * `checkout` (default: the current directory) is the repository to measure, so one copy of this file measures a base
  * checkout too. That checkout needs its own installed node_modules. `--real-sandbox` uses the Windows AppContainer
  * sandbox instead of the stub (Windows only; its first isolation probe takes about half a minute).
  */
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { PASSING_OUTPUT, REAL_OUTPUT } from '../../tests/fixtures/coding-test-output.js';
 import { REPAIR_DEMO_FAILURE_OUTPUT, REPAIR_DEMO_SUCCESS_OUTPUT } from '../../tests/fixtures/coding-repair-demo-output.js';
 
-interface Case { id: string; goal: string; expect?: string[]; approval?: boolean; control?: boolean; blocked?: boolean }
+interface Case { id: string; goal: string; expect?: string[]; approval?: boolean; expectApproval?: string[]; control?: boolean; blocked?: boolean }
 const beforeAfter = ['قبل التعديل: نجح 0 من 2، وفشل 2.', 'بعد التعديل: نجح 2 من 2، وفشل 0.', 'adds positive values', 'test/sum.test.mjs:5', 'ReferenceError', 'src/sum.ts:2'];
 const LOGIC_AR = ['مشروع تجربة الجمع', 'تغيير المنطق يحتاج إلى نموذج لا يعمل الآن', 'تشغيل الفحوص وشرح نتائجها', 'البحث', 'الاستيراد', 'الإصلاحات المثبتة', 'بعد موافقتك'];
 const LOGIC_EN = ['مشروع تجربة الجمع', 'A logic change needs a model, which is not running now', 'run the checks and explain the results', 'search', 'imports', 'proven fixes', 'with your approval'];
 const REPAIR_DIFF = ['mohassan/', 'src/sum.ts', '-  return leftHandValue + rightHandVaule;', '+  return leftHandValue + rightHandValue;', 'git merge'];
-const SETS: Record<'slice1' | 'slice2' | 'before-after' | 'logic' | 'show-change', Case[]> = {
+const SETS: Record<'slice1' | 'slice2' | 'before-after' | 'logic' | 'show-change' | 'instructions', Case[]> = {
   slice1: [
     'أصلح الكود في مشروع تجربة الجمع',
     'أصلح مشروع تجربة الجمع',
@@ -84,12 +86,30 @@ const SETS: Record<'slice1' | 'slice2' | 'before-after' | 'logic' | 'show-change
     { id: 'K1', goal: 'ابحث عن ملف اسمه README', control: true },
     { id: 'K2', goal: 'صحح هذا النص: انا ذهبت الي المدرسه', control: true },
   ],
+  instructions: [
+    { id: 'B1', goal: 'ما تعليمات مشروع Sum Instructions؟', expect: ['Keep arithmetic readable.', 'test/**'] },
+    { id: 'B2', goal: 'show the instructions of Sum Instructions', expect: ['Keep arithmetic readable.', 'test/**'] },
+    { id: 'B3', goal: 'ما تعليمات مشروع تجربة الجمع؟', expect: ['لا يوجد ملف تعليمات'] },
+    { id: 'B4', goal: 'Run the tests in Sum Instructions', expect: ['adds positive values', 'src/sum.ts:2', 'Keep arithmetic readable.'] },
+    { id: 'B5', goal: 'أصلح الكود في مشروع Sum Instructions', approval: true, expectApproval: ['Keep arithmetic readable.'], expect: ['طبّقت أدوات الإصلاح المؤكد'] },
+    { id: 'BK1', goal: 'ابحث عن ملف اسمه README', control: true },
+    { id: 'BK2', goal: 'صحح هذا النص: انا ذهبت الي المدرسه', control: true },
+  ],
 };
+
+// Recorded Windows AppContainer demo output from tests/assistant-no-model-code-read.test.ts.
+const recordedFailure = [
+  '', '✖ adds positive values (0.6578ms)', '✖ adds negative values (0.1019ms)', 'ℹ tests 2', 'ℹ suites 0', 'ℹ pass 0', 'ℹ fail 2', 'ℹ cancelled 0',
+  'ℹ skipped 0', 'ℹ todo 0', 'ℹ duration_ms 54.9709', '', '✖ failing tests:', '', 'test at test\\sum.test.mjs:5:1', '✖ adds positive values (0.6578ms)',
+  '  ReferenceError: rightHandVaule is not defined', '      at sum (file:///C:/Users/runner/AppData/Local/Temp/mohassan-sandbox-c1C0rp/work/src/sum.ts:2:26)', '',
+  'test at test\\sum.test.mjs:6:1', '✖ adds negative values (0.1019ms)', '  ReferenceError: rightHandVaule is not defined',
+  '      at sum (file:///C:/Users/runner/AppData/Local/Temp/mohassan-sandbox-c1C0rp/work/src/sum.ts:2:26)', '',
+].join('\n');
 
 const flags = process.argv.slice(2).filter(value => value.startsWith('--'));
 const [checkoutArgument, out] = process.argv.slice(2).filter(value => !value.startsWith('--'));
 const set = flags.find(value => value.startsWith('--set='))?.slice('--set='.length) ?? 'slice1';
-if (set !== 'slice1' && set !== 'slice2' && set !== 'before-after' && set !== 'logic' && set !== 'show-change') throw new Error(`unknown set ${set}`);
+if (set !== 'slice1' && set !== 'slice2' && set !== 'before-after' && set !== 'logic' && set !== 'show-change' && set !== 'instructions') throw new Error(`unknown set ${set}`);
 const realSandbox = flags.includes('--real-sandbox');
 const checkout = resolve(checkoutArgument ?? process.cwd());
 const { createApplication } = await import(pathToFileURL(join(checkout, 'apps/server/src/app.ts')).href);
@@ -105,7 +125,8 @@ const stub = {
     return {
       exitCode: misspelled ? 1 : 0,
       stdout: set === 'before-after' ? (misspelled ? REAL_OUTPUT : PASSING_OUTPUT)
-        : set === 'show-change' ? (misspelled ? REPAIR_DEMO_FAILURE_OUTPUT : REPAIR_DEMO_SUCCESS_OUTPUT) : 'measurement stub',
+        : set === 'show-change' ? (misspelled ? REPAIR_DEMO_FAILURE_OUTPUT : REPAIR_DEMO_SUCCESS_OUTPUT)
+        : set === 'instructions' && misspelled ? recordedFailure : 'measurement stub',
       stderr: '', timedOut: false, durationMs: 1, provider: 'unit-fixture',
       network: 'denied', isolation: 'appcontainer', isolationVerified: true, snapshotHash: snapshotHash(request.files),
     };
@@ -160,6 +181,16 @@ try {
     const untouched = await createRepairDemoProject(join(directory, 'untouched'));
     await application.coding.register(ownerId, { name: 'مشروع بلا تعديلات', path: untouched.path, allowedPaths: untouched.allowedPaths });
   }
+  if (set === 'instructions') {
+    const { git } = await import(pathToFileURL(join(checkout, 'packages/coding/src/git.ts')).href);
+    const project = await createRepairDemoProject(join(directory, 'instructions-fixture'));
+    await mkdir(join(project.path, '.mohassan'));
+    await writeFile(join(project.path, '.mohassan/instructions.md'), '## Do not edit\n- test/**\n\n## Notes\nKeep arithmetic readable.\n');
+    await git(project.path, ['add', '--', '.mohassan/instructions.md']);
+    await git(project.path, ['commit', '-m', 'Save fixture instructions'], { deterministicDate: true });
+    const registered = await api('POST', '/api/coding/projects', { name: 'Sum Instructions', path: project.path, allowedPaths: project.allowedPaths });
+    if (registered.statusCode !== 200) throw new Error(`Instructions fixture registration failed: ${registered.statusCode}`);
+  }
   const replyLimit = set === 'show-change' ? undefined : 1200;
   const rows: Record<string, unknown>[] = [];
   for (const item of SETS[set]) {
@@ -168,6 +199,7 @@ try {
     const row: Record<string, unknown> = { id: item.id, goal: item.goal, first: first.status, firstRun: first.run?.verdict?.status ?? first.run?.phase ?? null, firstText: first.messages?.at(-1)?.text?.slice(0, replyLimit) ?? null };
     let finalText = row.firstText as string | null;
     if (first.status === 'waiting_approval' && first.approval) {
+      if (item.expectApproval) row.approvalDetail = first.approval.detail;
       await api('POST', `/api/chat/conversations/${first.id}/approve`, { approvalId: first.approval.id, approved: true });
       const done = await settled(first.id);
       row.final = done.status;
@@ -178,7 +210,9 @@ try {
     row.ms = Date.now() - started;
     if (item.expect) row.met = (item.approval === undefined || (item.approval
       ? first.status === 'waiting_approval' : first.status !== 'waiting_approval' && !first.approval))
-      && (!item.blocked || first.run?.verdict?.status === 'blocked') && item.expect.every(text => (finalText ?? '').includes(text));
+      && (!item.blocked || first.run?.verdict?.status === 'blocked')
+      && (item.expectApproval ?? []).every(text => (first.approval?.detail ?? '').includes(text))
+      && item.expect.every(text => (finalText ?? '').includes(text));
     if (item.control) row.control = true;
     rows.push(row);
   }

@@ -1,4 +1,5 @@
-import { lstat, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -7,6 +8,7 @@ import { CodingEngine, createRepairDemoProject, explainCheckRun, generateDetermi
 import { createApplication } from '../apps/server/src/app.js';
 import { answerNoModelCodeRead, recognizeCodeRead } from '../apps/server/src/assistant/no-model-coding.js';
 import { REAL_OUTPUT } from './fixtures/coding-test-output.js';
+import { git } from '../packages/coding/src/git.js';
 
 const NAME = 'مشروع تجربة الجمع';
 const demo = { id: 'p-demo', name: NAME };
@@ -99,6 +101,23 @@ describe('answering a read without a model', () => {
     expect(answer?.text).toContain('1. "adds positive values" at `test/sum.test.mjs:5`');
   });
 
+  it('keeps the verified check result when its commit-specific instructions are unavailable', async () => {
+    const answer = await answerNoModelCodeRead('Run the tests in Shop API', { ...work, codeInstructions: async (ownerId, projectId, baseCommit) => {
+      expect([ownerId, projectId, baseCommit]).toEqual(['owner', shop.id, checked.baseCommit]);
+      throw new BrowserError('PROJECT_HEAD_CHANGED', 'The project changed after checking.', 409);
+    } }, 'owner', signal, progress);
+    expect(answer?.text).toContain('"adds positive values"');
+    expect(answer?.text).not.toContain('Project notes');
+    expect(answer?.step).toMatchObject({ capability: 'code.check', ok: true });
+  });
+
+  it('leaves quoted, compound and unknown-project instructions requests on their usual paths', async () => {
+    const withInstructions = { ...work, codeInstructions: async () => { throw new Error('Unexpected instructions read'); } };
+    for (const request of ['"show the instructions of Shop API"', 'show the instructions of Shop API and write a reply', 'show the instructions of Shop API Admin']) {
+      expect(await answerNoModelCodeRead(request, withInstructions, 'owner', signal, progress), request).toBeNull();
+    }
+  });
+
   it('searches and reads imports of the named project only', async () => {
     calls.length = 0;
     const found = await answerNoModelCodeRead('ابحث في مشروع تجربة الجمع عن rightHandVaule', work, 'owner', signal, progress);
@@ -172,7 +191,10 @@ describe('the engine\'s read-only check', () => {
 describe('owner chat for a registered coding project when no model exists', () => {
   let application: Awaited<ReturnType<typeof createApplication>>;
   let directory = '', cookie = '', ownerId = '';
-  let sandboxRuns = 0, webSearches = 0;
+  let instructionsProject: Awaited<ReturnType<typeof createRepairDemoProject>>, sandboxRuns = 0, webSearches = 0;
+  const instructionsName = 'مشروع الجمع الموثّق';
+  const notes = ['أبقِ واجهة الجمع ثابتة.', 'راجع حالات الأعداد السالبة.'];
+  const protectedGlob = 'test/**/*.mjs';
   const secret = 'no-model-code-read-fixture-internal-secret', origin = 'http://127.0.0.1:3000';
   const headers = { 'x-mohassan-internal': secret, origin };
   const api = (method: 'GET' | 'POST', url: string, payload?: unknown) => application.app.inject({ method, url, headers: { ...headers, cookie }, ...(payload === undefined ? {} : { payload: payload as object }) });
@@ -208,6 +230,13 @@ describe('owner chat for a registered coding project when no model exists', () =
     cookie = (Array.isArray(login.headers['set-cookie']) ? login.headers['set-cookie'] : [login.headers['set-cookie']]).filter(Boolean).map(value => String(value).split(';')[0]).join('; ');
     ownerId = (await application.database.db.selectFrom('user').select('id').executeTakeFirstOrThrow()).id as string;
     expect((await api('POST', '/api/coding/projects/demo', {})).statusCode).toBe(200);
+    instructionsProject = await createRepairDemoProject(join(directory, 'with-instructions'));
+    await mkdir(join(instructionsProject.path, '.mohassan'));
+    await writeFile(join(instructionsProject.path, '.mohassan', 'instructions.md'), `## Do not edit\n- ${protectedGlob}\n\n## Notes\n${notes.join('\n')}\n`);
+    await git(instructionsProject.path, ['add', '--', '.mohassan/instructions.md']);
+    await git(instructionsProject.path, ['commit', '-m', 'Track the instructions fixture']);
+    expect((await api('POST', '/api/coding/projects', { name: instructionsName, path: instructionsProject.path,
+      allowedPaths: instructionsProject.allowedPaths })).statusCode).toBe(200);
   });
   afterAll(async () => {
     await application?.app.close();
@@ -218,7 +247,7 @@ describe('owner chat for a registered coding project when no model exists', () =
   });
 
   it('runs the checks without approval, explains them, records the step and its receipt, and changes nothing', async () => {
-    const project = (await application.coding.workspace(ownerId)).projects[0]!;
+    const project = (await application.coding.workspace(ownerId)).projects.find(item => item.name === NAME)!;
     const before = await readFile(join(project.path, 'src', 'sum.ts'), 'utf8');
     const runsBefore = sandboxRuns;
     const done = await ask('شغّل اختبارات مشروع تجربة الجمع');
@@ -296,5 +325,50 @@ describe('owner chat for a registered coding project when no model exists', () =
     expect(done.messages.at(-1).text).toContain('لم يتحقق مسار البحث');
     expect(sandboxRuns).toBe(runsBefore);
     expect((await application.runtime.snapshot(ownerId)).tasks).toEqual(tasksBefore);
+  });
+
+  it.each([
+    [`ما تعليمات ${instructionsName}؟`, 'أنماط المسارات المحمية'],
+    [`show the instructions of ${instructionsName}`, 'Protected path globs'],
+  ])('shows saved notes and globs without running code for %s', async (request, globLabel) => {
+    const before = sandboxRuns;
+    const result = await ask(request);
+    expect(result).toMatchObject({ status: 'idle', approval: null, configured: false });
+    const reply = result.messages.at(-1).text as string;
+    for (const value of [globLabel, protectedGlob, ...notes]) expect(reply).toContain(value);
+    expect(result.run.plan.steps).toEqual([expect.objectContaining({ capability: 'code.read', state: 'verified', risk: 'read' })]);
+    expect(sandboxRuns).toBe(before);
+  });
+
+  it('says the registered project has no instructions file', async () => {
+    const result = await ask(`ما تعليمات ${NAME}؟`);
+    expect(result.messages.at(-1).text).toContain('لا يوجد ملف تعليمات');
+    expect(result.run.plan.steps).toEqual([expect.objectContaining({ capability: 'code.read', state: 'verified' })]);
+  });
+
+  it('adds a single notes line to the check reply and to the approval detail', async () => {
+    const check = await ask(`Run the tests in ${instructionsName}`);
+    expect(check.messages.at(-1).text.split('\n')).toContain(`Project notes — ${notes.join(' ')}`);
+    expect(check.messages.at(-1).text).toContain('adds positive values');
+    const before = sandboxRuns;
+    const waiting = await ask(`أصلح الكود في ${instructionsName}`);
+    expect(waiting.status).toBe('waiting_approval');
+    expect(waiting.approval.detail.split('\n')).toContain(`ملاحظات المشروع — ${notes.join(' ')}`);
+    expect(waiting.approval.detail).toContain('لا يُنفَّذ أي تغيير في المنطق');
+    expect(sandboxRuns).toBe(before);
+    expect((await api('POST', `/api/chat/conversations/${waiting.id}/approve`, { approvalId: waiting.approval.id, approved: false })).statusCode).toBe(200);
+    await settled(waiting.id);
+  });
+
+  it('excludes members even when their project inventory contains the requested name', async () => {
+    const memberId = randomUUID(), { db } = application.database;
+    await db.insertInto('user').values({ id: memberId, name: 'Code read member fixture', email: 'code-read-member@example.test' }).execute();
+    await db.insertInto('workspace_members').values({ user_id: memberId, role: 'member' }).execute();
+    await application.coding.register(memberId, { name: instructionsName, path: instructionsProject.path, allowedPaths: instructionsProject.allowedPaths });
+    const { id } = await application.chat.create(memberId, { goal: `ما تعليمات ${instructionsName}؟` });
+    await application.chat.settled(id);
+    const result = await application.chat.detail(memberId, id);
+    expect(result.messages.at(-1)?.text ?? '').not.toContain(notes[0]);
+    expect(result.run?.plan?.steps?.map(step => step.capability) ?? []).not.toContain('code.read');
   });
 });

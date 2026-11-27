@@ -1,9 +1,10 @@
 import { beforeAll,afterAll,describe,it,expect } from 'vitest';
-import { mkdtemp,realpath,rm } from 'node:fs/promises';
+import { mkdir,mkdtemp,realpath,rm,writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join,relative,isAbsolute } from 'node:path';
 import { createApplication } from '../apps/server/src/app.js';
-import { snapshotHash } from '@mohassan/coding';
+import { createRepairDemoProject,snapshotHash } from '@mohassan/coding';
+import { git } from '../packages/coding/src/git.ts';
 describe('coding API scope and project registration',()=>{
   let application:Awaited<ReturnType<typeof createApplication>>,directory='',cookie='';const secret='coding-api-fixture-internal-secret-0001',origin='http://127.0.0.1:3000';const headers={'x-mohassan-internal':secret,origin};let project:any;
   beforeAll(async()=>{
@@ -32,6 +33,19 @@ describe('coding API scope and project registration',()=>{
   it('rejects registering paths outside the configured roots and protected edit files',async()=>{
     const outside=await application.app.inject({method:'POST',url:'/api/coding/projects',headers:{...headers,cookie},payload:{name:'خارج النطاق',path:tmpdir(),allowedPaths:['src/sum.ts']}});expect(outside.statusCode).toBe(400);
     const protectedFile=await application.app.inject({method:'POST',url:'/api/coding/projects',headers:{...headers,cookie},payload:{name:'اختبارات محمية',path:project.path,allowedPaths:['test/sum.test.mjs']}});expect(protectedFile.statusCode).toBe(400);
+  });
+  it('rejects an allowed path protected by committed project instructions',async()=>{
+    const fixture=await createRepairDemoProject(join(directory,'instructions'));
+    await mkdir(join(fixture.path,'.mohassan'));
+    await writeFile(join(fixture.path,'.mohassan/instructions.md'),'## Do not edit\n- src/*.ts\n');
+    await git(fixture.path,['add','--','.mohassan/instructions.md']);
+    await git(fixture.path,['commit','-m','Protect TypeScript files']);
+    const response=await application.app.inject({
+      method:'POST',url:'/api/coding/projects',headers:{...headers,cookie},
+      payload:{name:'تعليمات المشروع',path:fixture.path,allowedPaths:fixture.allowedPaths},
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({error:{code:'INVALID_EDIT_SCOPE',message:'اختر ملفات تنفيذ موجودة؛ الاختبارات والإعدادات محمية.'}});
   });
   it('requires a project and approval then serves reviewable changes through the task API',async()=>{
     const request={title:'إصلاح الجمع',goal:'أصلح الجمع دون تعديل الاختبارات المحمية.',capabilityId:'coding.change',autonomy:'scoped'};

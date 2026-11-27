@@ -2265,7 +2265,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         if (noModelCode.direct) ledgerSafe(state, runId, ledger => { ledger.path = 'direct'; });
         await finish(id, runId, state, vault.scrub(id, noModelCode.text), noModelCode.status, undefined, undefined, noModelCode.direct); return;
       }
-      if (noModelCode?.kind === 'approval') { state.pendingTask = noModelCode.task; await pause(id, runId, state, 'waiting_approval', { approval: JSON.stringify({ id: randomUUID(), prompt: clean(noModelCode.prompt).slice(0, 1000), detail: noModelCode.detail }) }, noModelCode.prompt); return; }
+      if (noModelCode?.kind === 'approval') { state.pendingTask = noModelCode.task; await pause(id, runId, state, 'waiting_approval', { approval: JSON.stringify({ id: randomUUID(), prompt: clean(noModelCode.prompt).slice(0, 1000), detail: vault.scrub(id, noModelCode.detail).slice(0, 1000) }) }, noModelCode.prompt); return; }
       if (noteVerificationIntent) {
         const unavailable = () => /\p{Script=Arabic}/u.test(request)
           ? 'لم أتمكن من التحقق من حالة محاولة حفظ هذه الملاحظة الآن.'

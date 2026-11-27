@@ -4,6 +4,7 @@ import type { CheckFailure, CodingCheckResult, ImportsLookup, ProjectSearchResul
 import { addEvidence, appendStep, planStep, settleStep, startStep, tryEnterPhase, type RunLedger } from './agent-run.js';
 import type { BrainState } from './brain.js';
 import { codeLogicReply, recognizeCodeLogicRequest } from './code-logic-request.js';
+import { answerProjectInstructions, projectNotesLine, recognizeInstructionsRequest } from './code-instructions.js';
 import type { RequestRoutingDecision } from './routing-decision.js';
 import type { AssistantTools } from './tools.js';
 import { codingOutcomeReportText } from './coding-outcome-report.js';
@@ -86,11 +87,12 @@ export async function prepareNoModelCoding(request: string, routing: Pick<Reques
   // Outside the coding route only a request that names a registered project is this path's.
   if (!routed && !(target.kind === 'project' && target.named)) return null;
   if (target.kind !== 'project') return { kind: 'reply', text: codingTargetReply(target, languageOf(request)), status: 'blocked' };
+  const lang = languageOf(request), notes = await projectNotesLine(work.codeInstructions, ownerId, target.project.id, lang);
   const key = createHash('sha256').update(`code_change|${target.project.id}|${request}`).digest('hex').slice(0, 32);
   const task = await work.code(ownerId, { id: target.project.id, goal: request }, `chat-task:${runId}:${key}`, runId);
   // The owner approves knowing what can happen: the no-model tools ignore a logic goal (packages/coding/src/deterministic.ts).
   return { kind: 'approval', task: { id: task.id, label: task.label, tool: 'code_change' }, prompt: task.prompt,
-    detail: `${task.detail}\n${PROVEN_ONLY[languageOf(request)]}` };
+    detail: `${task.detail}\n${PROVEN_ONLY[lang]}${notes}` };
 }
 
 const PROVEN_ONLY: Record<Lang, string> = {
@@ -357,10 +359,12 @@ const READ_FAILURES: Record<string, Record<Lang, string>> = {
 /** A read the owner asked of a named registered project, answered from the committed files or one sandbox run; null when not this path's. */
 export async function answerNoModelCodeRead(request: string, work: AssistantTools['work'], ownerId: string, signal: AbortSignal,
     progress: (label: string) => Promise<void>): Promise<CodeReadAnswer | null> {
-  if (!work?.inventory || !READ_CUE.test(foldProjectText(request))) return null;
-  const target = chooseCodingProject(request, await work.inventory(ownerId));
+  const folded = foldProjectText(request), instructionsRequest = recognizeInstructionsRequest(request, folded);
+  if (!work?.inventory || (instructionsRequest ? !work.codeInstructions : !READ_CUE.test(folded))) return null;
+  const target = chooseCodingProject(instructionsRequest?.name ?? request, await work.inventory(ownerId));
   if (target.kind !== 'project' || !target.named) return null;
   const { name, id: projectId } = target.project;
+  if (instructionsRequest) return answerProjectInstructions(instructionsRequest, target.project, foldProjectText(name), work.codeInstructions, ownerId, signal, progress);
   const intent = recognizeCodeRead(request, name);
   if (!intent || (intent.kind !== 'check' && (!work.codeSearch || !work.codeImports))) return null;
   const lang = requestLanguage(request, name), ar = lang === 'ar';
@@ -374,8 +378,9 @@ export async function answerNoModelCodeRead(request: string, work: AssistantTool
     if (check && !work.codeCheck) throw new BrowserError('SANDBOX_UNAVAILABLE', READ_FAILURES.SANDBOX_UNAVAILABLE!.ar, 503);
     await progress(label);
     if (check) {
-      const answer = checkAnswer(await work.codeCheck!(ownerId, projectId, signal), name, lang);
-      return { text: answer.text, status: answer.status, step: step(answer.ok, answer.evidence), trail: { action, result: answer.evidence } };
+      const result = await work.codeCheck!(ownerId, projectId, signal), answer = checkAnswer(result, name, lang);
+      const notes = await projectNotesLine(work.codeInstructions, ownerId, projectId, lang, result.baseCommit);
+      return { text: answer.text + notes, status: answer.status, step: step(answer.ok, answer.evidence), trail: { action, result: answer.evidence } };
     }
     if (intent.kind === 'search') {
       const answer = searchAnswer(await work.codeSearch!(ownerId, projectId, intent.query), name, lang);
