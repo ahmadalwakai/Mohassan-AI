@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto';
+import Fastify from 'fastify';
 import sharp from 'sharp';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { AgentBrowser } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
 import { memoryMigration } from '@mohassan/memory';
 import type { ImageReading } from '@mohassan/vision';
 import { migrateAuth } from '../apps/server/src/auth.js';
+import { registerBrowserFileRoutes } from '../apps/server/src/browser-files.js';
+import { sweepExpiredChatImages } from '../apps/server/src/chat-image-hygiene.js';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
 
 /** A message with images is read by the own reader and answered at once; the bytes never leave the database. */
@@ -25,14 +28,19 @@ describe('chat messages with images', () => {
   let database: Awaited<ReturnType<typeof createDatabase>>;
   let control: Awaited<ReturnType<typeof createCommandChatControl>>;
   let withoutReader: Awaited<ReturnType<typeof createCommandChatControl>>;
+  let beforeImageRead: (() => Promise<void>) | undefined;
   const reads: number[] = [];
   const refuse = async () => { throw new Error('The browser must not run for an image message.'); };
-  const browser = { setCheckpointStore() {}, async bindAccount() {}, async hasPage() { return false; }, async close() {}, act: refuse, observe: refuse, screen: refuse, prepareAction: refuse } as unknown as AgentBrowser;
+  const browser = { setCheckpointStore() {}, async bindAccount() {}, async hasPage() { return false; }, async close() {}, async closeConversation() {}, act: refuse, observe: refuse, screen: refuse, prepareAction: refuse } as unknown as AgentBrowser;
 
   beforeAll(async () => {
     database = await createDatabase({});
     await migrateAuth(database.db); await migrate(database.db); await memoryMigration(database.db);
-    const imageReader = { available: true, modelId: 'f'.repeat(64), async read(bytes: Uint8Array) { reads.push(bytes.byteLength); return reading(['السعر 150 ريال', 'التسليم خلال 3 أيام']); } };
+    const imageReader = { available: true, modelId: 'f'.repeat(64), async read(bytes: Uint8Array) {
+      reads.push(bytes.byteLength);
+      await beforeImageRead?.();
+      return reading(['السعر 150 ريال', 'التسليم خلال 3 أيام']);
+    } };
     control = await createCommandChatControl(database.db, { browser, recordExperiences: false, models: { fast: [], deep: [], vision: '' }, imageReader });
     withoutReader = await createCommandChatControl(database.db, { browser, recordExperiences: false, models: { fast: [], deep: [], vision: '' } });
   });
@@ -92,5 +100,74 @@ describe('chat messages with images', () => {
     await expect(control.create(OWNER, { images: [randomUUID()] })).rejects.toMatchObject({ code: 'CHAT_IMAGE_MISSING' });
     await expect(control.create(OTHER, { images: [upload.id] })).rejects.toMatchObject({ code: 'CHAT_IMAGE_MISSING' });
     await expect(withoutReader.create(OWNER, { images: [upload.id] })).rejects.toMatchObject({ code: 'CHAT_IMAGES_UNAVAILABLE' });
+  });
+
+  it('deletes the stored image when removing its conversation', async () => {
+    const owner = 'image-removal-owner';
+    const upload = await control.uploadImage(owner, { mimeType: 'image/png', data: await png() });
+    const conversation = await control.create(owner, { images: [upload.id] });
+    expect(await control.remove(owner, conversation.id)).toEqual({ ok: true });
+    expect(await database.db.selectFrom('chat_images').select('id').where('owner_id', '=', owner).execute()).toEqual([]);
+    await expect(control.image(owner, upload.id)).rejects.toMatchObject({ code: 'CHAT_IMAGE_NOT_FOUND' });
+  });
+
+  it('retains a reused upload until its last conversation is removed', async () => {
+    const owner = 'image-reuse-owner';
+    const upload = await control.uploadImage(owner, { mimeType: 'image/png', data: await png() });
+    const earlier = await control.create(owner, { images: [upload.id] });
+    const latest = await control.create(owner, { images: [upload.id] });
+    await control.create(owner);
+
+    await control.remove(owner, latest.id);
+    const row = await database.db.selectFrom('chat_images').select('conversation_id').where('id', '=', upload.id).executeTakeFirstOrThrow();
+    expect(row.conversation_id).toBe(earlier.id);
+    await expect(control.image(owner, upload.id)).resolves.toMatchObject({ mimeType: 'image/png' });
+
+    await control.remove(owner, earlier.id);
+    await expect(control.image(owner, upload.id)).rejects.toMatchObject({ code: 'CHAT_IMAGE_NOT_FOUND' });
+  });
+
+  it('rolls back the message when the sweep removes its image during reading', async () => {
+    const owner = 'image-sweep-race-owner';
+    const upload = await control.uploadImage(owner, { mimeType: 'image/png', data: await png() });
+    const conversation = await control.create(owner);
+    beforeImageRead = () => sweepExpiredChatImages(database.db, () => new Date(upload.expiresAt));
+    try {
+      await expect(control.send(owner, conversation.id, { images: [upload.id] })).rejects.toMatchObject({ code: 'CHAT_IMAGE_MISSING' });
+    } finally {
+      beforeImageRead = undefined;
+    }
+    expect((await control.detail(owner, conversation.id)).messages).toEqual([]);
+  });
+
+  it('sweeps expired uploads across owners from the periodic maintenance', async () => {
+    const app = Fastify();
+    const payload = { mimeType: 'image/png', data: await png() };
+    const owners = ['expired-image-owner', 'another-expired-image-owner'];
+    const retainedOwner = 'retained-image-owner';
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    try {
+      const expired = [];
+      for (const owner of owners) expired.push({ owner, ...await control.uploadImage(owner, payload) });
+      const expiresAt = Date.parse(expired[0].expiresAt);
+      vi.setSystemTime((Date.now() + expiresAt) / 2);
+      const pending = await control.uploadImage(retainedOwner, payload);
+      const attached = await control.uploadImage(retainedOwner, payload);
+      await control.create(retainedOwner, { images: [attached.id] });
+      const orphan = await control.uploadImage(retainedOwner, payload);
+      await database.db.updateTable('chat_images').set({ expires_at: null }).where('id', '=', orphan.id).execute();
+      await registerBrowserFileRoutes(app, { db: database.db, browser, owner: async () => ({ id: retainedOwner }) });
+      await app.ready();
+      for (const { owner, id } of expired) await expect(control.image(owner, id)).resolves.toMatchObject({ mimeType: 'image/png' });
+
+      vi.setSystemTime(expiresAt);
+      vi.advanceTimersToNextTimer();
+      await app.close();
+      for (const { owner, id } of expired) await expect(control.image(owner, id)).rejects.toMatchObject({ code: 'CHAT_IMAGE_NOT_FOUND' });
+      for (const { id } of [pending, attached, orphan]) await expect(control.image(retainedOwner, id)).resolves.toMatchObject({ mimeType: 'image/png' });
+    } finally {
+      await app.close();
+      vi.useRealTimers();
+    }
   });
 });

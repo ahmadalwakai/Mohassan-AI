@@ -28,8 +28,7 @@ export const ChatWaitQuerySchema = z.object({
  * step of its latest run and its newest Ads campaign event. Equal strings mean an unchanged view; new messages, steps and
  * events have new ids. Null when the conversation is not this owner's (deleted while it was waited on).
  *
- * The step is looked up through the conversation's own index (chat_events_conversation_idx), not by run id alone, which
- * has no index.
+ * The latest step lookup is restricted to both the conversation and its latest run.
  */
 export async function conversationVersion(db: Kysely<any>, ownerId: string, id: string): Promise<string | null> {
   const row = await db.selectFrom('chat_conversations as c')

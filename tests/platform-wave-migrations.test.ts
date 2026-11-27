@@ -6,6 +6,7 @@ import { InsertQueryNode, PrimitiveValueListNode, ValuesNode, type Kysely } from
 import { sql, type DatabaseHandle, type DatabaseOptions } from '@mohassan/database';
 import { expect, it, vi } from 'vitest';
 import { createApplication } from '../apps/server/src/app.js';
+import { commandChatMigration } from '../apps/server/src/command-chat.js';
 
 const trace = vi.hoisted(() => ({
   inserts: [] as string[],
@@ -58,6 +59,7 @@ const currentIds = [
   '041_long_run_checkpoints', '042_background_results', '043_smart_monitors',
   '044_smart_monitors_v2', '045_smart_monitor_conversation_controls', '046_smart_monitor_visual_budget',
   '047_monitor_alert_feedback', '048_smart_monitor_decisions',
+  '058_chat_run_indexes',
 ];
 const agentIds = ['035_chat_conversation_review', '036_structured_memory'];
 
@@ -75,6 +77,77 @@ const baseIds = [
   '033_chat_request_keys', '033_skill_retention', '034_skill_catalogue', 'memory_exact_writes_v1',
 ];
 
+async function withPlatformApplication<T>(fixtureDir: string, databaseUrl: string | undefined, run: (db: Kysely<any>) => Promise<T>) {
+  const { app, database } = await createApplication({
+    databaseUrl, dataDir: join(fixtureDir, 'database'),
+    authSecret: 'test-platform-migration-auth-fixture',
+    internalSecret: 'test-platform-migration-internal-fixture',
+    setupToken: 'test-platform-migration-fixture',
+    webOrigin: 'http://localhost:3000',
+    production: false, runWorker: false, skillEngineEnabled: true,
+    codingDataDir: join(fixtureDir, 'coding'),
+    documentsDir: join(fixtureDir, 'documents'),
+    browserProfileDir: join(fixtureDir, 'browser'),
+  });
+  try {
+    return await run(database.db);
+  } finally {
+    await app.close();
+  }
+}
+
+async function expectChatForeignKeyIndexes(db: Kysely<any>) {
+  const foreignKeys = await sql<{ table_name: string; foreign_key: string; references_runs: boolean; indexed: boolean }>`
+    SELECT rel.relname AS table_name, fk.conname AS foreign_key,
+      fk.confrelid = 'chat_runs'::regclass AS references_runs,
+      EXISTS (
+        SELECT 1 FROM pg_index i
+        JOIN pg_class idx ON idx.oid = i.indexrelid
+        JOIN pg_am am ON am.oid = idx.relam
+        WHERE i.indrelid = fk.conrelid AND i.indisvalid AND i.indisready
+          AND am.amname IN ('btree', 'hash')
+          AND i.indnkeyatts >= cardinality(fk.conkey)
+          AND (SELECT array_agg(key ORDER BY key) FROM unnest(i.indkey) WITH ORDINALITY AS keys(key, position)
+               WHERE position <= cardinality(fk.conkey))
+            = (SELECT array_agg(key ORDER BY key) FROM unnest(fk.conkey) AS keys(key))
+          AND (i.indpred IS NULL OR (cardinality(fk.conkey) = 1 AND
+            pg_get_expr(i.indpred, i.indrelid) = '(' || pg_get_indexdef(i.indexrelid, 1, true) || ' IS NOT NULL)'))
+      ) AS indexed
+    FROM pg_constraint fk
+    JOIN pg_class rel ON rel.oid = fk.conrelid
+    WHERE fk.contype = 'f' AND rel.relnamespace = current_schema()::regnamespace AND left(rel.relname, 5) = 'chat_'
+  `.execute(db);
+  const unindexed = foreignKeys.rows.filter(row => !row.indexed).map(row => `${row.table_name}.${row.foreign_key}`);
+  expect(unindexed).toEqual([]);
+  const runReferences = foreignKeys.rows.filter(row => row.references_runs);
+  expect(runReferences.length).toBeGreaterThan(0);
+
+  await sql`INSERT INTO chat_conversations (id, owner_id, title) VALUES ('plan-conversation', 'plan-owner', 'Index plans')`.execute(db);
+  await sql`INSERT INTO chat_runs (id, conversation_id, owner_id, status, goal, lease_token, lease_expires_at)
+    SELECT 'plan-run-' || n, 'plan-conversation', 'plan-owner', 'completed', 'Index plans', 'plan-lease', now()
+    FROM generate_series(1, 2000) AS runs(n)`.execute(db);
+  await sql`INSERT INTO chat_messages (id, conversation_id, role, text, run_id)
+    SELECT id, conversation_id, 'assistant', 'Fixture', id FROM chat_runs`.execute(db);
+  await sql`INSERT INTO chat_events (id, conversation_id, run_id, kind, message)
+    SELECT id, conversation_id, id, 'step', 'Fixture' FROM chat_runs`.execute(db);
+  await sql`INSERT INTO chat_effect_receipts (id, run_id, lease_token, method, target_hash, body_hash, status)
+    SELECT id, id, lease_token, 'POST', 'target', 'body', 'responded' FROM chat_runs`.execute(db);
+  await sql`INSERT INTO chat_model_receipts (id, run_id, step, model, status)
+    SELECT id, id, 1, 'fixture', 'succeeded' FROM chat_runs`.execute(db);
+  await sql`INSERT INTO chat_notifications (task_id, user_id, conversation_id, run_id, kind, started_at, happened_at, available_at, delivery)
+    SELECT id, owner_id, conversation_id, id, 'task_completed', now(), now(), now(), 'pending' FROM chat_runs`.execute(db);
+
+  for (const { table_name } of runReferences) {
+    await sql`ANALYZE ${sql.id(table_name)}`.execute(db);
+    const plan = await sql<{ 'QUERY PLAN': string }>`EXPLAIN (COSTS OFF)
+      SELECT * FROM ${sql.id(table_name)} WHERE run_id = ${'plan-run-1000'}
+    `.execute(db);
+    const description = plan.rows.map(row => row['QUERY PLAN']).join('\n');
+    expect(description, table_name).toMatch(/Index (?:Only )?Scan/);
+    expect(description, table_name).toMatch(/Index Cond:.*run_id/);
+  }
+}
+
 it('records platform migrations in startup order, restarts unchanged, and adopts legacy IDs', async () => {
   const fixtureDir = await mkdtemp(join(tmpdir(), 'mohassan-platform-migration-'));
   const databaseName = `platform_test_${randomUUID().replaceAll('-', '')}`;
@@ -85,28 +158,15 @@ it('records platform migrations in startup order, restarts unchanged, and adopts
 
   async function boot(beforeClose?: (db: Kysely<any>) => Promise<void>) {
     trace.inserts.length = 0;
-    const { app, database } = await createApplication({
-      databaseUrl, dataDir: join(fixtureDir, 'database'),
-      authSecret: 'test-platform-migration-auth-fixture',
-      internalSecret: 'test-platform-migration-internal-fixture',
-      setupToken: 'test-platform-migration-fixture',
-      webOrigin: 'http://localhost:3000',
-      production: false, runWorker: false, skillEngineEnabled: true,
-      codingDataDir: join(fixtureDir, 'coding'),
-      documentsDir: join(fixtureDir, 'documents'),
-      browserProfileDir: join(fixtureDir, 'browser'),
-    });
-    try {
-      const appLedger = await database.db.selectFrom('schema_migrations')
+    return withPlatformApplication(fixtureDir, databaseUrl, async db => {
+      const appLedger = await db.selectFrom('schema_migrations')
         .select(['version', 'applied_at']).orderBy('version').execute();
-      const authLedger = await database.db.selectFrom('auth_schema_migrations')
+      const authLedger = await db.selectFrom('auth_schema_migrations')
         .select(['version', 'applied_at']).orderBy('version').execute();
       const platformInserts = trace.inserts.filter(id => currentIds.includes(id));
-      await beforeClose?.(database.db);
+      await beforeClose?.(db);
       return { appLedger, authLedger, platformInserts };
-    } finally {
-      await app.close();
-    }
+    });
   }
 
   try {
@@ -158,4 +218,34 @@ it('records platform migrations in startup order, restarts unchanged, and adopts
       await rm(fixtureDir, { recursive: true, force: true });
     }
   }
-}, 60_000);
+}, 120_000);
+
+it('records the chat index migration with existing indexes and uses them for run lookups', async () => {
+  const fixtureDir = await mkdtemp(join(tmpdir(), 'mohassan-chat-index-migration-'));
+  try {
+    await withPlatformApplication(fixtureDir, undefined, async db => {
+      const version = '058_chat_run_indexes';
+      const existingIndexes = () => sql<{ index_oid: number }>`
+        SELECT i.indexrelid AS index_oid FROM pg_index i
+        JOIN pg_class rel ON rel.oid = i.indrelid
+        WHERE rel.relnamespace = current_schema()::regnamespace AND left(rel.relname, 5) = 'chat_'
+        ORDER BY i.indexrelid
+      `.execute(db);
+      const before = await existingIndexes();
+      await db.deleteFrom('schema_migrations').where('version', '=', version).returning('version').executeTakeFirstOrThrow();
+
+      await commandChatMigration(db);
+
+      const ledger = await db.selectFrom('schema_migrations').select('version').where('version', '=', version).execute();
+      expect(ledger).toEqual([{ version }]);
+      expect((await existingIndexes()).rows).toEqual(before.rows);
+      await expectChatForeignKeyIndexes(db);
+    });
+  } finally {
+    try {
+      await Promise.all([...trace.handles].map(handle => handle.close()));
+    } finally {
+      await rm(fixtureDir, { recursive: true, force: true });
+    }
+  }
+}, 90_000);

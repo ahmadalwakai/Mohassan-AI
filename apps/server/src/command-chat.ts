@@ -1,5 +1,6 @@
 import { cacheChatResponse, commitChatRequest, replayChatResponse, scrubChatRequestResponses, withChatRequest } from './chat-request-ledger.js';
 import { cleanRejectedChatCreate } from './rejected-chat-create.js';
+import { attachConversationImages, removeConversationImages } from './chat-image-hygiene.js';
 import { createHash, randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import type { ImageReading } from '@mohassan/vision';
@@ -76,6 +77,7 @@ import { bindResponsePolicyChannel, chatResponsePolicyInput, readResponsePolicyH
 import { createChatSupervisor, observeChatCapture, observeChatLocalAnswer, observeChatTool, resumeChatSupervisor, reviewChatAnswer } from './assistant/chat-supervision.js';
 import { createComputationMemoryReceipt, restoreComputationMemoryReceipt } from './assistant/computation-memory-receipt.js';
 import { migrateConversationShares } from './conversation-share-migration.js';
+import { migrateChatRunIndexes } from './chat-run-indexes-migration.js';
 import { noteConversationPromptPrivacy } from './conversation-share-privacy.js';
 import { runComputationMemoryFlow } from './assistant/computation-memory-flow.js';
 import { completeComputationMemory } from './assistant/computation-memory-completion.js';
@@ -468,6 +470,7 @@ export async function commandChatMigration(db: Kysely<any>, beforeShares?: (tx: 
     await campaignEventsMigration(tx);
     await beforeShares?.(tx);
     await migrateConversationShares(tx);
+    await migrateChatRunIndexes(tx);
   });
 }
 
@@ -4410,7 +4413,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const now = Date.now();
       await tx.insertInto('chat_messages').values({ id: messageId, conversation_id: id, role: 'user', text: userText, images: JSON.stringify(attached), created_at: new Date(now) }).execute();
       await tx.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role: 'assistant', text: reply.text, created_at: new Date(now + 1) }).execute();
-      await tx.updateTable('chat_images').set({ conversation_id: id, expires_at: null }).where('id', 'in', unique).where('owner_id', '=', ownerId).execute();
+      await attachConversationImages(tx, ownerId, id, unique);
       const title = current.title === 'محادثة جديدة' || current.title === 'قراءة صورة' ? { title: (shown || (reply.language === 'ar' ? 'قراءة صورة' : 'Image reading')).slice(0, 100) } : {};
       await tx.updateTable('chat_conversations').set({ status: 'idle', error: null, progress: null, updated_at: new Date(), ...title }).where('id', '=', id).execute();
       await commitChatRequest(tx, ownerId, id);
@@ -4599,6 +4602,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       await tx.deleteFrom('chat_effect_receipts').where('run_id', 'in', runs).execute();
       await tx.deleteFrom('chat_events').where('conversation_id', '=', id).execute();
       await scrubChatRequestResponses(tx, ownerId, id);
+      await removeConversationImages(tx, ownerId, id);
       await tx.deleteFrom('chat_conversations').where('id', '=', id).execute();
     });
     vault.forget(id);

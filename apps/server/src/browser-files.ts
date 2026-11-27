@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Kysely } from 'kysely';
 import { AgentBrowser, BrowserError, createBrowserFileControl, migrateBrowserFiles } from '@mohassan/browser';
+import { sweepExpiredChatImages } from './chat-image-hygiene.js';
 
 /** Owner HTTP actions only. The model has no file-grant, approval or release tool. */
 export async function registerBrowserFileRoutes(app: FastifyInstance, { db, browser, owner }: { db: Kysely<any>; browser: AgentBrowser; owner: (request: any) => Promise<{ id: string }> }) {
@@ -12,10 +13,17 @@ export async function registerBrowserFileRoutes(app: FastifyInstance, { db, brow
     if (requireIdle && (row.active_run_id || ['running', 'waiting_input', 'waiting_approval', 'waiting_user'].includes(row.status))) throw new BrowserError('BROWSER_FILE_CONVERSATION_BUSY', 'أوقف المهمة أو أكملها قبل نقل ملف.', 409);
     return { accountId: row.browser_account ?? null };
   });
+  const sweep = async () => {
+    try {
+      await control.sweep();
+    } finally {
+      await sweepExpiredChatImages(db).catch(() => console.error(JSON.stringify({ level: 'error', event: 'chat_image_sweep_failed' })));
+    }
+  };
   await control.recover();
-  await control.sweep();
+  await sweep();
   let maintenance: Promise<unknown> | undefined;
-  const timer = setInterval(() => { if (!maintenance) { maintenance = control.sweep().catch(() => {}).finally(() => { maintenance = undefined; }); } }, 60000);
+  const timer = setInterval(() => { if (!maintenance) { maintenance = sweep().catch(() => {}).finally(() => { maintenance = undefined; }); } }, 60000);
   timer.unref();
   type Params = { conversationId: string; id: string };
   const keys = (request: { params: Partial<Params> }) => ({ conversation: z.uuid().parse(request.params.conversationId), id: z.uuid().parse(request.params.id) });
