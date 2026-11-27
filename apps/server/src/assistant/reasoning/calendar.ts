@@ -1,4 +1,5 @@
 import { lookupMonthName, type Calendar } from '../../month-names.js';
+import { calculationBodyBeforeWork } from '../mind/computation-consumption.js';
 import type { Lang } from '../mind/contract.js';
 import { normalizeRequest, stripCourtesyTail } from '../mind/normalize.js';
 import { requestLanguage } from '../reply-directive.js';
@@ -199,7 +200,7 @@ export function reasonNamedGregorianRange(text: string): ReasoningResult | null 
   const range = between.exec(body) ?? fromTo.exec(body);
   if (!range) return null;
   const left = parseDate(range[1]);
-  const right = parseDate(range[2]);
+  const right = parseDate(calculationBodyBeforeWork(range[2]) ?? range[2]);
   if (!left || !right || !(left.named || right.named) || left.calendar === 'hijri' || right.calendar === 'hijri') return null;
   const lang = requestLanguage(text);
   const first = serial(left, 'gregorian');
