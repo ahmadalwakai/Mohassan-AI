@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { ChatConversationSchema, ModelListSchema } from '@mohassan/contracts';
 import { createApplication } from '../apps/server/src/app.js';
 import { getConfig } from '../apps/server/src/config.js';
-import { generateV5ChatReply, isV5ChatReady, V5_CHAT_LABEL } from '../apps/server/src/v5-chat.js';
+import { generateV5ChatReply, isV5ChatReady } from '../apps/server/src/v5-chat.js';
 
 vi.mock('../apps/server/src/v5-chat.js', async (importOriginal) => ({
   ...await importOriginal<typeof import('../apps/server/src/v5-chat.js')>(),
@@ -73,20 +73,22 @@ describe('owner model council over signed-in sessions', () => {
     vi.unstubAllEnvs();
   });
 
-  it('deliberates before publishing the owner reply and stores the discussion with it', async () => {
+  it('stores the discussion with the owner reply and withholds an ungrounded v5 proposal', async () => {
     const conversation = await sendNew(goal, ownerCookie);
     const reply = conversation.messages.at(-1);
-    expect(reply).toMatchObject({ role: 'assistant', experiment: 'v5', text: `${body}\n\n${V5_CHAT_LABEL}` });
-    expect(reply?.council).toMatchObject({ version: 1, chosen: 'chat-v5', changed: true });
+    expect(reply).toMatchObject({ role: 'assistant' });
+    expect(reply?.text).not.toContain(body);
+    expect(reply).not.toHaveProperty('experiment');
+    expect(reply?.council).toMatchObject({
+      version: 1, chosen: 'pipeline', changed: false,
+      discussion: { proposals: expect.arrayContaining([{ member: 'chat-v5', answer: '' }]), decision: { chosen: 'pipeline' } },
+    });
     const answers = reply!.council!.members.filter(member => member.round === 'answer');
     expect(answers.map(member => member.model)).toEqual(expect.arrayContaining(['pipeline', 'chat-v5']));
-    expect(answers.find(member => member.model === 'chat-v5')).toMatchObject({ chosen: true, output: body });
+    expect(answers.find(member => member.model === 'chat-v5')).toMatchObject({ output: body });
     // v5 spoke once, inside the council, with the owner's turn.
     expect(mockGenerate).toHaveBeenCalledOnce();
     expect(mockGenerate.mock.calls[0]?.[1]).toEqual([{ role: 'user', content: goal }]);
-    const share = await application.app.inject({ method: 'POST', url: `/api/chat/conversations/${conversation.id}/share/preview`,
-      headers: headers(ownerCookie), payload: {} });
-    expect(share.statusCode).toBe(409);
   });
 
   it('keeps a local answer and records that the pipeline stood', async () => {
