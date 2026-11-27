@@ -23,13 +23,25 @@ const absenceLabels: Record<Exclude<ModelCouncilMember["outcome"], "ok">, string
   failed: "تعذّرت مشاركته",
   timeout: "انتهت المهلة",
 };
+const checkerLabels = new Map([
+  ["evidence", "فحص الدليل"],
+  ["judge", "الحَكَم"],
+]);
+const voteWeight = new Intl.NumberFormat("ar", { maximumFractionDigits: 2 });
 
 function memberLabels(members: ModelCouncilMember[]) {
   return new Map(members.map(member => [member.model, member.label]));
 }
 
 function MemberName({ id, labels }: { id: string; labels: ReadonlyMap<string, string> }) {
-  return <bdi dir="auto" title={id}>{labels.get(id) ?? (id === "pipeline" ? "المحرك" : id)}</bdi>;
+  return <bdi dir="auto" title={id}>{checkerLabels.get(id) ?? labels.get(id) ?? (id === "pipeline" ? "المحرك" : id)}</bdi>;
+}
+
+function DecisionAnswer({ chosen, labels, modelPrefix }: {
+  chosen: string; labels: ReadonlyMap<string, string>; modelPrefix: string;
+}) {
+  if (chosen === "uncertain") return <strong>لم يُرسل جواب مؤكد</strong>;
+  return <>{chosen === "pipeline" ? "بقي جواب " : modelPrefix}<strong><MemberName id={chosen} labels={labels} /></strong></>;
 }
 
 function participationText(discussion: Discussion, labels: ReadonlyMap<string, string>): string {
@@ -97,14 +109,14 @@ export function CouncilDiscussionPanel({
         <h3>التصويت</h3>
         {votes.length ? <ul role="list">
           {votes.map(({ member, weight, weightSource }, index) => <li key={index} className={styles.entry}>
-            <p><strong><MemberName id={member} labels={labels} /></strong> · الوزن <bdi>{weight}</bdi></p>
+            <p><strong><MemberName id={member} labels={labels} /></strong> · الوزن <bdi>{voteWeight.format(weight)}</bdi></p>
             <p>مصدر الوزن · <bdi dir="auto">{weightSource.trim() || "لا يوجد قياس مسجّل"}</bdi></p>
           </li>)}
         </ul> : <p>لم تُسجّل أوزان للتصويت.</p>}
       </section>
       <section className={styles.decision}>
         <h3>القرار</h3>
-        <p className={styles.answer}>{decision.chosen === "pipeline" ? "بقي جواب " : "أُرسل جواب "}<strong><MemberName id={decision.chosen} labels={labels} /></strong></p>
+        <p className={styles.answer}><DecisionAnswer chosen={decision.chosen} labels={labels} modelPrefix="أُرسل جواب " /></p>
         <p>{decision.reasonAr}</p>
       </section>
       {absent.length > 0 && <section>
@@ -135,8 +147,7 @@ export function CouncilDiscussionDetails({ discussion, members }: DiscussionProp
       data-testid="council-toggle"
     >
       <span className={styles.summary} title={reasonAr}>
-        {participationText(discussion, labels)}؛ {chosen === "pipeline" ? "بقي جواب " : "اختير جواب "}
-        <strong><MemberName id={chosen} labels={labels} /></strong> — {reasonAr}
+        {participationText(discussion, labels)}؛ <DecisionAnswer chosen={chosen} labels={labels} modelPrefix="اختير جواب " /> — {reasonAr}
       </span>
       <ChevronDown size={14} className={open ? councilStyles.flipped : ""} aria-hidden="true" />
     </button>

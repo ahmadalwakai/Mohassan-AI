@@ -65,7 +65,7 @@ describe('a recorded council discussion under an owner reply', () => {
       { checker: engine.model, member: reader.model, verdict: 'unsure' },
     ],
     votes: [
-      { member: reader.model, weight: 3 / 4, weightSource },
+      { member: reader.model, weight: 2 / 7, weightSource },
       { member: router.model, weight: 1 - 1, weightSource: ' ' },
       { member: engine.model, weight: 2 / 4, weightSource },
     ],
@@ -107,8 +107,8 @@ describe('a recorded council discussion under an owner reply', () => {
     expect(html).toContain(`title="${router.model}">${router.label}`);
     for (const verdict of ['يؤيّد', 'يعارض', 'غير متأكد']) expect(html).toContain(verdict);
     expect(html).toContain(checkNote);
-    expect(html).toContain(`<bdi>${discussion.votes[0].weight}</bdi>`);
-    expect(html).toContain(`<bdi>${discussion.votes[1].weight}</bdi>`);
+    expect(html).toContain(`<bdi>${(29 / 100).toLocaleString('ar')}</bdi>`);
+    expect(html).toContain(`<bdi>${(0).toLocaleString('ar')}</bdi>`);
     expect(html).toContain(weightSource);
     expect(html).toContain('لا يوجد قياس مسجّل');
     expect(html).toContain('انتهت المهلة');
@@ -140,6 +140,46 @@ describe('a recorded council discussion under an owner reply', () => {
     expect(html).toContain(reasonAr);
     expect(html).not.toContain(reasonEn);
     expect(html).not.toContain(council.reason);
+  });
+
+  // Reserved decision and checker IDs are emitted by council v2 (retrieved 2026-11-27).
+  // https://github.com/ahmadalwakai/Mohassan-AI/blob/fcee968542583480de063e44b9e35d111adf4119/apps/server/src/assistant/council-deliberation.ts
+  it('shows that no verified answer was sent in both the summary and the decision', () => {
+    const decision = {
+      chosen: 'uncertain',
+      reasonAr: 'لم يحصل أي جواب موثّق على تأييد مرجّح كافٍ لإرساله.',
+      reasonEn: 'No verified answer had enough weighted support to send.',
+    };
+    const unresolved = ModelCouncilSchema.parse({
+      ...full, chosen: decision.chosen, reason: decision.reasonAr,
+      discussion: { ...discussion, decision },
+    });
+    const summary = renderToStaticMarkup(createElement(ModelCouncilDetails, { council: unresolved }));
+    const panel = renderToStaticMarkup(createElement(CouncilPanel, { council: unresolved }));
+    for (const html of [summary, panel]) {
+      expect(html).toContain('لم يُرسل جواب مؤكد');
+      expect(html).toContain(decision.reasonAr);
+      expect(html).not.toMatch(/uncertain|اختير جواب|أُرسل جواب/u);
+    }
+    expect(panel).not.toContain('الجواب المختار');
+  });
+
+  it('names the built-in evidence checker and judge in Arabic', () => {
+    const checked = ModelCouncilSchema.parse({
+      ...full,
+      discussion: {
+        ...discussion, proposals: [discussion.proposals[0]], votes: [discussion.votes[0]],
+        checks: [
+          { checker: 'evidence', member: reader.model, verdict: 'supports' },
+          { checker: 'judge', member: reader.model, verdict: 'contradicts' },
+        ],
+      },
+    });
+    const panel = renderToStaticMarkup(createElement(CouncilPanel, { council: checked }));
+    expect(panel).toContain('title="evidence">فحص الدليل</bdi>');
+    expect(panel).toContain('title="judge">الحَكَم</bdi>');
+    const summary = renderToStaticMarkup(createElement(ModelCouncilDetails, { council: checked }));
+    expect(summary).toContain('ناقش نموذج واحد');
   });
 
   it('keeps the quote visible when an evidence address cannot be opened', () => {
