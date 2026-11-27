@@ -1,0 +1,170 @@
+{
+  "versions": {
+    "node": "24.22.3",
+    "typescript": "5.9.3",
+    "eslint": "9.39.5"
+  },
+  "checks": [
+    {
+      "fixture": "missing-import",
+      "state": "initial",
+      "snapshotHash": "9b090e4e3360c54a327f7d3969f76f104cd0a6818763b8ac72adee87acb1986a",
+      "testFiles": [
+        "test/answer.test.mjs"
+      ],
+      "syntaxFiles": [
+        "src/answer.ts",
+        "src/values.mjs",
+        "test/answer.test.mjs"
+      ],
+      "jsonFiles": [],
+      "typecheckProject": null,
+      "exitCode": 1,
+      "stdout": "\n\n\n✖ returns the expected answer (0.794044ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 92.341824\n\n✖ failing tests:\n\ntest at test/answer.test.mjs:4:1\n✖ returns the expected answer (0.794044ms)\n  ReferenceError: answerValue is not defined\n      at answer (file:///mohassan-suite-capture/missing-import-initial/work/src/answer.ts:1:29)\n      at TestContext.<anonymous> (file:///mohassan-suite-capture/missing-import-initial/work/test/answer.test.mjs:4:56)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.start (node:internal/test_runner/test:1262:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)\n",
+      "stderr": "\n\n\n"
+    },
+    {
+      "fixture": "missing-import",
+      "state": "repaired",
+      "snapshotHash": "e67a1666c4dd5ea56d2ea1989ba3ce579c1319754e9a8c77db2b7e9dbe2701ed",
+      "testFiles": [
+        "test/answer.test.mjs"
+      ],
+      "syntaxFiles": [
+        "src/answer.ts",
+        "src/values.mjs",
+        "test/answer.test.mjs"
+      ],
+      "jsonFiles": [],
+      "typecheckProject": null,
+      "exitCode": 0,
+      "stdout": "\n\n\n✔ returns the expected answer (0.906734ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 51.997361\n",
+      "stderr": "\n\n\n"
+    },
+    {
+      "fixture": "misspelled-identifier",
+      "state": "initial",
+      "snapshotHash": "606cb066167025b24be44dda85cc6b21266bad465b5e4852a0ce5f30af83faf8",
+      "testFiles": [
+        "test/sum.test.mjs"
+      ],
+      "syntaxFiles": [
+        "src/sum.ts",
+        "test/sum.test.mjs"
+      ],
+      "jsonFiles": [],
+      "typecheckProject": null,
+      "exitCode": 1,
+      "stdout": "\n\n✖ adds positive values (0.729187ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 40.759367\n\n✖ failing tests:\n\ntest at test/sum.test.mjs:4:1\n✖ adds positive values (0.729187ms)\n  ReferenceError: rightHandVaule is not defined\n      at sum (file:///mohassan-suite-capture/misspelled-identifier-initial/work/src/sum.ts:2:26)\n      at TestContext.<anonymous> (file:///mohassan-suite-capture/misspelled-identifier-initial/work/test/sum.test.mjs:4:49)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.start (node:internal/test_runner/test:1262:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)\n",
+      "stderr": "\n\n"
+    },
+    {
+      "fixture": "misspelled-identifier",
+      "state": "repaired",
+      "snapshotHash": "a176a491732fc624e2f613006e1b2abedffaa2fa03321bac6de0ebc4d04182da",
+      "testFiles": [
+        "test/sum.test.mjs"
+      ],
+      "syntaxFiles": [
+        "src/sum.ts",
+        "test/sum.test.mjs"
+      ],
+      "jsonFiles": [],
+      "typecheckProject": null,
+      "exitCode": 0,
+      "stdout": "\n\n✔ adds positive values (1.022588ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 87.425158\n",
+      "stderr": "\n\n"
+    },
+    {
+      "fixture": "eslint",
+      "state": "initial",
+      "snapshotHash": "5152e5036c34faf85bb05284d729663a609727fe77d1842b665908bad47af990",
+      "testFiles": [
+        "test/lint.test.mjs"
+      ],
+      "syntaxFiles": [
+        "eslint.config.mjs",
+        "src/lint.mjs",
+        "test/lint.test.mjs"
+      ],
+      "jsonFiles": [],
+      "typecheckProject": null,
+      "exitCode": 0,
+      "stdout": "\n\n\n✔ returns the linted value (0.766903ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 14.595664\n",
+      "stderr": "\n\n\n"
+    },
+    {
+      "fixture": "eslint",
+      "state": "repaired",
+      "snapshotHash": "8f34193734bd13f282ac45d17a96e4b21c65f7233b2840f9c91932c14d9bf046",
+      "testFiles": [
+        "test/lint.test.mjs"
+      ],
+      "syntaxFiles": [
+        "eslint.config.mjs",
+        "src/lint.mjs",
+        "test/lint.test.mjs"
+      ],
+      "jsonFiles": [],
+      "typecheckProject": null,
+      "exitCode": 0,
+      "stdout": "\n\n\n✔ returns the linted value (0.800474ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 12.908455\n",
+      "stderr": "\n\n\n"
+    },
+    {
+      "fixture": "logic",
+      "state": "initial",
+      "snapshotHash": "0eba7d0f660c20839580fb1250eb762f02ba69a5b90005220dc754b31f9a6fac",
+      "testFiles": [
+        "test/discount.test.mjs"
+      ],
+      "syntaxFiles": [
+        "src/discount.mjs",
+        "test/discount.test.mjs"
+      ],
+      "jsonFiles": [],
+      "typecheckProject": null,
+      "exitCode": 1,
+      "stdout": "\n\n✖ subtracts the discount (1.116499ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 11.739407\n\n✖ failing tests:\n\ntest at test/discount.test.mjs:4:1\n✖ subtracts the discount (1.116499ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  12 !== 8\n  \n      at TestContext.<anonymous> (file:///mohassan-suite-capture/logic-initial/work/test/discount.test.mjs:4:45)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.start (node:internal/test_runner/test:1262:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 12,\n    expected: 8,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n",
+      "stderr": "\n\n"
+    },
+    {
+      "fixture": "tsx",
+      "state": "initial",
+      "snapshotHash": "0e459dbe050faf2a84cc974e3c9cda22aeb668f16ef629e89bd331adf5c8ac3b",
+      "testFiles": [
+        "test/label.test.mjs"
+      ],
+      "syntaxFiles": [
+        "src/label.tsx",
+        "src/value.mjs",
+        "test/label.test.mjs"
+      ],
+      "jsonFiles": [],
+      "typecheckProject": "tsconfig.json",
+      "exitCode": 2,
+      "stdout": "\n\n\nsrc/label.tsx(1,14): error TS2322: Type 'string' is not assignable to type 'number'.\n",
+      "stderr": "\n\n\n"
+    }
+  ],
+  "lintFixes": [
+    {
+      "fixture": "eslint",
+      "snapshotHash": "5152e5036c34faf85bb05284d729663a609727fe77d1842b665908bad47af990",
+      "configPath": "eslint.config.mjs",
+      "fixFiles": [
+        "src/lint.mjs"
+      ],
+      "formatting": false,
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "",
+      "fixes": [
+        {
+          "path": "src/lint.mjs",
+          "content": "export function lintValue() {\n  if (true) return 42;\n}\n"
+        }
+      ]
+    }
+  ]
+}
