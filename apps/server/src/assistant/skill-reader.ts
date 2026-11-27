@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import { requestTerms, skillStems } from '../../../../packages/skills/src/stems.js';
+import { readerEvidenceTerms } from '../../../../packages/skills/src/reader-terms.js';
 import { buildFrame } from './mind/frame.js';
 import { matchText } from './mind/normalize.js';
+import { buildReaderRecallIndex, type FindReaderTopic } from './skill-reader-recall.js';
 
 /**
  * Model-free reading of the owner's active instruction skills.
@@ -9,7 +11,7 @@ import { matchText } from './mind/normalize.js';
  * Without a language model the assistant cannot generate expert prose, so a skill is used the
  * way a professional uses a playbook: pick the playbook that fits the request, then answer with
  * its steps, its answer outline and its checks, and name it as the source. Selection reads only
- * the metadata the skills package already verified (name, id, description); the body comes from
+ * the metadata the skills package already verified (name, id and description, including its keywords); the body comes from
  * the same verified gate as the model prompt (active version, matching content hash, current
  * inspection). Skill text is displayed, never executed: it cannot start a tool, grant a
  * permission or change the route of the conversation.
@@ -36,9 +38,8 @@ export interface SkillMatch { skill: SkillReaderCandidate; score: number; terms:
 export interface SkillReadResult { text: string; skill: SkillReaderCandidate; related: SkillReaderCandidate[]; terms: string[]; score: number; lang: 'ar' | 'en' }
 export type SkillReader = (ownerId: string, request: string, options: { mode: SkillReadMode; signal?: AbortSignal }) => Promise<SkillReadResult | null>;
 
-/** A match needs this much evidence: one distinctive word in a skill's name or id, or two in its description. */
+/** A match needs this much evidence from lexical overlap or a distinctive authored topic in an advice request. */
 export const MIN_SKILL_SCORE = 3;
-export const MIN_SKILL_TERMS = 2;
 /** A short request whose words are mostly the skill's own needs less weight: «كيف أذاكر للاختبارات» is about studying even with common words. */
 const COVERED_SCORE = 2;
 const COVERED_SHARE = 0.6;
@@ -80,6 +81,7 @@ export interface SkillReaderIndex {
   frequency(stem: string): number;
   /** Positions of the skills that hold at least one of the stems, in their own order. */
   shortlist(stems: Iterable<string>): number[];
+  recall: FindReaderTopic;
 }
 
 /** Indexes all active skills: no candidate window, so a skill late in the alphabet is found like any other. */
@@ -89,6 +91,7 @@ export function buildSkillReaderIndex(candidates: readonly SkillReaderCandidate[
   entries.forEach((entry, position) => {
     for (const stem of new Set([...entry.title, ...entry.body])) { const list = postings.get(stem); if (list) list.push(position); else postings.set(stem, [position]); }
   });
+  let recall: FindReaderTopic | undefined;
   return {
     size: candidates.length, skills: candidates, entries,
     frequency: stem => postings.get(stem)?.length ?? 0,
@@ -97,6 +100,7 @@ export function buildSkillReaderIndex(candidates: readonly SkillReaderCandidate[
       for (const stem of stems) for (const position of postings.get(stem) ?? []) hit.add(position);
       return [...hit].sort((a, b) => a - b);
     },
+    recall: terms => (recall ??= buildReaderRecallIndex(candidates))(terms),
   };
 }
 
@@ -106,7 +110,7 @@ function scoreSkills(terms: { word: string; variants: string[] }[], items: reado
   for (const entry of items) {
     // A stem counts once: «سؤال … وسؤال» is one subject, yet it scored twice and gave an interview question to clarifying-requests
     // (skills-pilot/tests/heldout-2.json, 2026-11-22).
-    let score = 0; const matched: string[] = []; const used = new Set<string>();
+    let score = 0, strongest = 0; const matched: string[] = []; const used = new Set<string>();
     for (const term of terms) {
       let best = 0, stem = '';
       for (const variant of term.variants) {
@@ -114,10 +118,11 @@ function scoreSkills(terms: { word: string; variants: string[] }[], items: reado
         const weight = entry.title.has(variant) ? 3 : entry.body.has(variant) ? 1.5 : 0;
         if (weight && weight * rarity(variant) > best) { best = weight * rarity(variant); stem = variant; }
       }
-      if (best > 0) { score += best; matched.push(term.word); used.add(stem); }
+      if (best > 0) { score += best; strongest = Math.max(strongest, best); matched.push(term.word); used.add(stem); }
     }
     const covered = matched.length / terms.length >= COVERED_SHARE && score >= COVERED_SCORE;
-    if (matched.length >= MIN_SKILL_TERMS && (score >= MIN_SKILL_SCORE || covered)) matches.push({ skill: entry.skill, score: Math.round(score * 1000) / 1000, terms: matched });
+    // Ordinary overlap still needs corroboration beyond its strongest contribution.
+    if (score > strongest && (score >= MIN_SKILL_SCORE || covered)) matches.push({ skill: entry.skill, score: Math.round(score * 1000) / 1000, terms: matched });
   }
   return matches.sort((a, b) => b.score - a.score || a.skill.slug.localeCompare(b.skill.slug, 'en') || a.skill.id.localeCompare(b.skill.id, 'en'));
 }
@@ -128,25 +133,25 @@ function scoreSkills(terms: { word: string; variants: string[] }[], items: reado
  */
 export function matchSkills(request: string, candidates: readonly SkillReaderCandidate[], index?: SkillReaderIndex): SkillMatch[] {
   if (typeof request !== 'string' || !request.trim()) return [];
+  const terms = requestTerms(request);
+  if (!terms.length) return [];
   if (index) {
     if (!index.size) return [];
-    const terms = requestTerms(request);
-    if (!terms.length) return [];
     const total = Math.log(1 + index.size);
     const rarity = (stem: string) => total > 0 ? Math.log(1 + index.size / Math.max(1, index.frequency(stem) || 1)) / total : 1;
     const positions = index.shortlist(terms.flatMap(term => term.variants));
-    return scoreSkills(terms, positions.map(position => ({ skill: index.skills[position], ...index.entries[position] })), rarity);
+    const matches = scoreSkills(terms, positions.map(position => ({ skill: index.skills[position], ...index.entries[position] })), rarity);
+    return matches.length ? matches : recallSkill(request, recallTerms => index.recall(recallTerms));
   }
   const pool = candidates.slice(0, MAX_CANDIDATES);
   if (!pool.length) return [];
-  const terms = requestTerms(request);
-  if (!terms.length) return [];
   const indexed = pool.map(skill => ({ skill, ...indexOf(skill) }));
   const frequency = new Map<string, number>();
   for (const entry of indexed) for (const stem of new Set([...entry.title, ...entry.body])) frequency.set(stem, (frequency.get(stem) ?? 0) + 1);
   const total = Math.log(1 + pool.length);
   const rarity = (stem: string) => total > 0 ? Math.log(1 + pool.length / Math.max(1, frequency.get(stem) ?? 1)) / total : 1;
-  return scoreSkills(terms, indexed, rarity);
+  const matches = scoreSkills(terms, indexed, rarity);
+  return matches.length ? matches : recallSkill(request, recallTerms => buildReaderRecallIndex(pool)(recallTerms));
 }
 
 // A request that only asks what something is, who, when, where or how much is better answered from sources; a skill is a method.
@@ -181,6 +186,20 @@ const ASKS = String.raw`(?:what|which)(?:\s+[\p{L}'’]+){0,2}\s+(?:should|shall
 /** At the start, it lifts the stored-fact refusal; anywhere, it is a how-to cue like `ADVICE`. */
 const ADVICE_QUESTION = new RegExp(String.raw`^(?:${ASKS})(?![\p{L}\p{N}])`, 'u');
 const ASKS_HOW = new RegExp(String.raw`(?:^|[^\p{L}])(?:${ASKS})(?![\p{L}\p{N}])`, 'u');
+// A single topic needs a request for steps or advice. Generic offers or requests for help add no evidence about what to do.
+const METHOD_CUE = /(?:^|[^\p{L}])(?:كيفيه|طريقه|خطوات|خطوه|نصائح|نصيحه|steps?|tips?)(?:$|[^\p{L}])/u;
+
+/** A distinctive authored topic can cross the score threshold when the request explicitly asks for a method. */
+function recallSkill(request: string, find: FindReaderTopic): SkillMatch[] {
+  const text = matchText(request).trim();
+  if (!ADVICE_QUESTION.test(text) && (FACT_START.test(text) || WH_START.test(text))) return [];
+  if (!METHOD_CUE.test(text) && !DOING.test(text) && !ASKS_HOW.test(text)) return [];
+  const match = find(readerEvidenceTerms(request, MAX_REQUEST_CHARS));
+  if (!match) return [];
+  // The matched topic must cover at least as much of the request as the unrecognized topic words.
+  const score = MIN_SKILL_SCORE * 2 * match.coverage;
+  return score >= MIN_SKILL_SCORE ? [{ skill: match.skill, terms: match.terms, score: Math.round(score * 1000) / 1000 }] : [];
+}
 
 // Timing a recommended action and sizing a future requirement are methods too. Keep the exception at the start of the
 // question: an unrelated how-to later in a stored-fact question must not turn that fact into advice. Bare Arabic timing

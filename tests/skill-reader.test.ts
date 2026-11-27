@@ -4,16 +4,16 @@ import { describe, expect, it } from 'vitest';
 import { inspectSkill } from '@mohassan/skills';
 import { buildSkillSource } from '../packages/skills/src/importer.ts';
 import {
-  composeSkillAnswer, createSkillReader, matchSkills, parseSkillSections, requestTerms, skillInstructionText, skillReadable, skillStems,
+  buildSkillReaderIndex, composeSkillAnswer, createSkillReader, matchSkills, parseSkillSections, requestTerms, skillInstructionText, skillReadable, skillStems,
   type SkillReaderCandidate,
 } from '../apps/server/src/assistant/skill-reader.js';
 
 const SKILLS_DIR = resolve('skills');
 interface Bundle { candidate: SkillReaderCandidate; body: string }
-async function bundles(): Promise<Bundle[]> {
-  const folders = (await readdir(SKILLS_DIR, { withFileTypes: true })).filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
+async function bundles(directory = SKILLS_DIR): Promise<Bundle[]> {
+  const folders = (await readdir(directory, { withFileTypes: true })).filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
   return Promise.all(folders.map(async slug => {
-    const content = await readFile(join(SKILLS_DIR, slug, 'SKILL.md'), 'utf8');
+    const content = await readFile(join(directory, slug, 'SKILL.md'), 'utf8');
     const source = buildSkillSource([{ path: 'SKILL.md', content }], { root: `github:owner/skills@${'a'.repeat(40)}:skills/${slug}`, defaultSlug: slug });
     const { contract } = source;
     return { candidate: { id: `id-${slug}`, slug, name: contract.name, description: contract.description, category: contract.category, version: contract.version, contentHash: 'f'.repeat(64) },
@@ -50,7 +50,7 @@ describe('selecting a skill', () => {
     expect(first!.terms).toEqual(expect.arrayContaining(['مقال', 'سيو']));
     expect(matchSkills('how do I write an instagram post', pool)[0]!.skill.slug).toBe('social-media-posts');
   });
-  it('needs two words of evidence, so a single shared word never selects a skill', () => {
+  it('keeps bare topics, generic wording and unrelated requests silent', () => {
     expect(matchSkills('مقال', pool)).toEqual([]);
     expect(matchSkills('اكتب لي شيئًا', pool)).toEqual([]);
     expect(matchSkills('ما عاصمة اليابان؟', pool)).toEqual([]);
@@ -295,6 +295,43 @@ function measure(pool: readonly SkillReaderCandidate[], positives: readonly [str
   const falsePositives = negatives.flatMap(question => { const top = matchSkills(question, pool)[0]; return top ? [{ question, got: top.skill.slug }] : []; });
   return { correct: positives.length - misses.length, total: positives.length, misses, falsePositives };
 }
+
+describe('recalling an author-supplied topic', () => {
+  // Exercise the existing development request against its checked-in skill.
+  const [request, expected] = DEVELOPMENT.findLast(([, slug]) => slug === 'translation-quality')!;
+
+  it('recalls one distinctive keyword in either catalogue path and loads the verified body', async () => {
+    const library = await bundles();
+    const pool = library.map(entry => entry.candidate);
+    const index = buildSkillReaderIndex(pool);
+    const matches = matchSkills(request, pool);
+    expect(matches.map(match => match.skill.slug)).toEqual([expected]);
+    expect(matchSkills(request, pool, index)).toEqual(matches);
+
+    const reader = createSkillReader({
+      candidates: async () => pool,
+      index: async () => index,
+      instructions: async (_owner, id) => library.find(entry => entry.candidate.id === id)?.body ?? null,
+    });
+    expect((await reader('owner', request, { mode: 'advice' }))?.skill.slug).toBe(expected);
+  });
+
+  it('requires an explicit keyword or title and abstains when another skill uses the same topic', async () => {
+    const library = await bundles();
+    const skill = library.find(entry => entry.candidate.slug === expected)!.candidate;
+    const aliases = skill.description.split('كلمات:')[1]!;
+    const duplicate = library.find(entry => entry.candidate.slug !== expected)!.candidate;
+    expect(matchSkills(request, [{ ...skill, description: aliases }])).toEqual([]);
+    expect(matchSkills(request, [skill, { ...duplicate, description: aliases }])).toEqual([]);
+  });
+
+  it('abstains on the pilot development request for generic project help', async () => {
+    const cases = JSON.parse(await readFile('skills-pilot/tests/cases.json', 'utf8')) as { ambiguous: string[] };
+    const genericHelp = cases.ambiguous.find(text => text.startsWith('help me'))!;
+    const pool = (await bundles(resolve('skills-pilot/skills'))).map(entry => entry.candidate);
+    expect(matchSkills(genericHelp, pool, buildSkillReaderIndex(pool))).toEqual([]);
+  });
+});
 
 describe('routing on real questions', () => {
   it('development set: picks the intended skill and stays silent on unrelated requests', async () => {

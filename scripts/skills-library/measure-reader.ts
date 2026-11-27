@@ -11,6 +11,7 @@
  *   - artifacts/skills-library-2026-11-22: the library's agent questions (dev and sealed), its none-dev set and the real questions;
  *   - skills-pilot/tests: the pilot's cases and its three held-out sets;
  *   - artifacts/skills-library-2026-11-24: the expansion's own development and held-out sets, when present.
+ * `--library skills-pilot/skills` also works without the private library evaluation files.
  * "Added" skills are those outside the original 100 (the skills named by the library's agent questions): only an added skill
  * that takes a request it does not own counts against the expansion.
  *
@@ -32,6 +33,7 @@ const LIBRARY = resolve(arg('--library') ?? join(ROOT, 'skills-library', 'skills
 const OUT = arg('--out');
 const COMPARE = arg('--compare');
 const LIB_EVAL = join(ROOT, 'artifacts', 'skills-library-2026-11-22');
+const PILOT_LIBRARY = join(ROOT, 'skills-pilot', 'skills');
 const PILOT_TESTS = join(ROOT, 'skills-pilot', 'tests');
 const NEW_TESTS = join(ROOT, 'artifacts', 'skills-library-2026-11-24');
 const FROZEN: Record<string, string> = {
@@ -49,7 +51,6 @@ const FROZEN: Record<string, string> = {
 const OWNER = 'measure-reader-owner';
 /** Pilot skills renamed on their way into the library (their old id put a common word in the title): frozen sets keep the old id. */
 const RENAMED: Record<string, string> = { 'request-code-review': 'code-review-prep', 'product-launch-plan': 'product-launch', 'writing-mohassan-skills': 'skill-authoring' };
-const current = (slug: string) => RENAMED[slug] ?? slug;
 /**
  * Requests whose frozen label predates a more specific added skill, read one by one on 2026-11-24 and judged an acceptable
  * choice (the label itself is never edited). Each counts as correct for that skill only.
@@ -133,10 +134,14 @@ async function main() {
   }
 
   const agentText = await readSet(join(LIB_EVAL, 'questions-agent-v1.jsonl'));
-  if (!agentText) throw new Error('the library agent questions are missing');
-  const agent = jsonl(agentText) as { id: string; set: string; skill: string; text: string; ok: string[] }[];
+  if (!agentText && LIBRARY !== PILOT_LIBRARY) throw new Error('the library agent questions are missing');
+  const agent = (agentText ? jsonl(agentText) : []) as { id: string; set: string; skill: string; text: string; ok: string[] }[];
   const base = new Set(agent.map(item => item.skill));
   const present = new Set(skills.map(skill => skill.slug));
+  const current = (slug: string) => {
+    const renamed = RENAMED[slug] ?? slug;
+    return present.has(renamed) || !present.has(slug) ? renamed : slug;
+  };
   const added = new Set([...present].filter(slug => !base.has(slug)));
   const rows: Row[] = [];
 
@@ -191,9 +196,10 @@ async function main() {
   const excludedSets = new Set(process.argv.flatMap((value, at) => value === '--exclude' && process.argv[at + 1] ? [process.argv[at + 1]!] : []));
   if (existsSync(NEW_TESTS)) for (const name of (await readdir(NEW_TESTS)).filter(file => /^cases-.*\.json$/u.test(file)).sort()) {
     const set = `new-${name.replace(/^cases-|\.json$/gu, '')}`;
-    if (!excludedSets.has(set)) caseSets.push([set, join(NEW_TESTS, name)]);
+    caseSets.push([set, join(NEW_TESTS, name)]);
   }
   for (const [set, path] of caseSets) {
+    if (excludedSets.has(set)) continue;
     const text = await readSet(path);
     if (!text) continue;
     const cases = JSON.parse(text) as Cases;

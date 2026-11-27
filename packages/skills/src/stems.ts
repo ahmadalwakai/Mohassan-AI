@@ -4,6 +4,14 @@
  *
  * Folding (as the assistant's matchText): Arabic-Indic digits → ASCII, Arabic marks and tatweel removed, أ/إ/آ/ٱ → ا, ى/ی → ي,
  * ة → ه, lower case. Stemming is light on purpose: one article or prefix and one suffix, never below three letters.
+ * Arabic search folds: https://raw.githubusercontent.com/apache/lucene/main/lucene/analysis/common/src/java/org/apache/lucene/analysis/ar/ArabicNormalizer.java
+ * Arabic light affixes: https://raw.githubusercontent.com/apache/lucene/main/lucene/analysis/common/src/java/org/apache/lucene/analysis/ar/ArabicStemmer.java
+ * (retrieved 2026-11-27).
+ * Wasla: https://github.com/CAMeL-Lab/camel_tools/blob/master/camel_tools/utils/normalize.py (retrieved 2026-11-27).
+ * Persian yeh: https://raw.githubusercontent.com/apache/lucene/main/lucene/analysis/common/src/java/org/apache/lucene/analysis/fa/PersianNormalizer.java
+ * (retrieved 2026-11-27).
+ * Unicode character ranges and NFKC: https://www.unicode.org/Public/18.0.0/charts/nameslist/0600/ and https://www.unicode.org/reports/tr15/
+ * (retrieved 2026-11-27).
  */
 const ARABIC_MARKS = /[ؐ-ؚـً-ٰٟۖ-ۭ]/gu;
 const foldDigits = (text: string) => text.replace(/[٠-٩۰-۹]/gu, digit => String(digit.charCodeAt(0) % 16));
