@@ -1,3 +1,11 @@
+// Dispatch --set=suite to the multi-project runner with the same checkout, output and sandbox flags.
+if (process.argv.slice(2).find(value => value.startsWith('--set=')) === '--set=suite') {
+  await import('./measure-suite.ts');
+  // Flush every result row when the command's stdout is redirected to a file or pipe.
+  await new Promise<void>((done, reject) => process.stdout.write('', error => error ? reject(error) : done()));
+  process.exit(process.exitCode ?? 0);
+}
+
 /**
  * Measures the chat's coding route with no chat model (docs/MOHASSAN-CODE-2026-11-27.md).
  *
