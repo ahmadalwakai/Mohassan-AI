@@ -9,6 +9,7 @@ import type { JudgeShadow } from '../apps/server/src/assistant/judge-shadow.js';
 describe('manners in the chat controller', () => {
   const owner = 'manners-fixture-owner';
   const flag = 'MOHASSAN_SMALL_TALK_MANNERS';
+  const localOnlyFlag = 'MOHASSAN_SMALL_TALK_LOCAL_ONLY';
   const search = vi.fn<SearchProvider['search']>(async () => []);
   const bindAccount = vi.fn(async () => {});
   const act = vi.fn(async () => { throw new Error('Unexpected browser action'); });
@@ -29,6 +30,7 @@ describe('manners in the chat controller', () => {
   afterAll(async () => { await control?.shutdown(); await database?.close(); });
   beforeEach(() => {
     vi.stubEnv(flag, '1');
+    vi.stubEnv(localOnlyFlag, undefined);
     vi.clearAllMocks();
   });
   afterEach(() => {
@@ -81,6 +83,34 @@ describe('manners in the chat controller', () => {
     expect(detail).toMatchObject({ status: 'idle', question: null });
     expect(detail.messages).toHaveLength(2);
     expect(run).toMatchObject({ status: 'completed', steps: 0, state: { routing: { route: 'chat', handler: 'local_conversation' } } });
+    expect(reply).toMatch(expected);
+    expect(bindAccount).not.toHaveBeenCalled();
+    expect(search).not.toHaveBeenCalled();
+    expect(act).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['هل أنت إنسان أم كمبيوتر؟', /موحسن.*الذكاء الاصطناعي/u],
+    ['هل انت شات بوت؟', /موحسن.*الذكاء الاصطناعي/u],
+    ['هل أنت بخير؟', /بخير/u],
+    ['هل إنتَ بخير اليوم؟', /بخير/u],
+    ['كيف حالك يا موحسن؟', /بخير/u],
+    ['سامحني يا موحسن', /لا بأس|لا داعي للاعتذار/u],
+    ['يا موحسن، سامحني', /لا بأس|لا داعي للاعتذار/u],
+    ['شكرًا لك يا موحسن', /العفو/u],
+    ["What's up?", /thanks for asking/iu],
+    // Variation on the indirect identity frame in V2 case human-b18bae71c0e33131385e4f53, retrieved 2026-11-27.
+    // https://github.com/ahmadalwakai/Mohassan-AI/blob/12cedfe592aab40cdd47ee00d05ea86a6d2bae89/tests/fixtures/agent-capability-bench/v2/dev/payload.json
+    ['Please provide us with the knowledge of whether you are a person or are a computer.', /an AI assistant/u],
+  ] as const)('answers %s with the local-only switch without using tools', async (goal, expected) => {
+    vi.stubEnv(flag, '0');
+    vi.stubEnv(localOnlyFlag, '1');
+    const { detail, run, reply } = await ask(goal);
+    expect(detail).toMatchObject({ status: 'idle', question: null });
+    expect(detail.messages).toHaveLength(2);
+    expect(run).toMatchObject({ goal, status: 'completed', steps: 0, state: {
+      routing: { route: 'chat', handler: 'local_conversation' }, trail: [],
+    } });
     expect(reply).toMatch(expected);
     expect(bindAccount).not.toHaveBeenCalled();
     expect(search).not.toHaveBeenCalled();

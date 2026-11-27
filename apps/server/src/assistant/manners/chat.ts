@@ -13,17 +13,25 @@ import type { RequestRoutingInput, RequestRoutingDecision } from '../routing-dec
 import type { RequestScopeAssessment } from '../request-scope.js';
 import { detectManners, type MannersDetection } from './detect.js';
 import { isEverydayManners } from './everyday.js';
+import { fullMannersEnabled, localOnlyMannersEnabled } from './flags.js';
 import { renderMannersClause, renderMannersReply } from './replies.js';
 
-const enabled = () => process.env.MOHASSAN_SMALL_TALK_MANNERS === '1';
+function classifyMannersTurn(text: string) {
+  const full = fullMannersEnabled();
+  const localOnly = localOnlyMannersEnabled();
+  const detection = detectManners(text, full || localOnly);
+  if (!detection) return null;
+  const active = full || detection.request === null && (localOnly || isEverydayManners(detection));
+  return { detection, active };
+}
 
 /** Split the outer turn before the task's provenance, scope and constraints are compiled. */
 export function prepareMannersTurn(text: string, eligible: boolean) {
   if (!eligible || recognizeEverydayClarification(text, false)) return null;
-  const detection = detectManners(text);
-  if (!detection) return null;
+  const turn = classifyMannersTurn(text);
+  if (!turn) return null;
+  const { detection, active } = turn;
   const request = detection.request;
-  const active = enabled() || request === null && isEverydayManners(detection);
   try {
     console.info(JSON.stringify({ event: 'small_talk_manners_shadow', active, act: detection.act,
       language: detection.language, dialect: detection.dialect, mixed: request !== null }));
@@ -43,14 +51,10 @@ export function mannersRequestHash(originalHash: string | undefined, displayed: 
   return createHash('sha256').update(task, 'utf8').digest('hex');
 }
 
-function standaloneManners(text: string) {
-  const detection = detectManners(text);
-  return detection && detection.request === null && (enabled() || isEverydayManners(detection))
-    && !parseUserRequestConstraints(text) ? detection : null;
-}
-
 export function standaloneMannersRoute(input: RequestRoutingInput): RequestRoutingDecision | null {
-  if (input.pendingQuestion !== undefined || !standaloneManners(input.text)) return null;
+  if (input.pendingQuestion !== undefined) return null;
+  const turn = classifyMannersTurn(input.text);
+  if (!turn?.active || turn.detection.request !== null || parseUserRequestConstraints(input.text)) return null;
   const normal = resolveRequestContext(input.text, input.context, { turnId: input.turnId });
   if (normal.resolved === null) return null;
   const ambiguities = normal.ambiguities.filter(reason => reason === 'invalid_previous_state' || reason === 'unsafe_previous_context');

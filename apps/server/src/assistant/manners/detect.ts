@@ -1,9 +1,11 @@
 import type { Lang } from '../mind/contract.js';
 import { matchText } from '../mind/normalize.js';
 import { maskRequestLiteralData } from '../request-constraints.js';
+import { arabicAlternativeSeparator, arabicAssistantAddress } from './arabic.js';
 import { englishAssistantAddress, isEverydayManners, normalizeEnglishThanks } from './everyday.js';
+import { fullMannersEnabled } from './flags.js';
 import { isMannersLanguageDirective, selectMannersLanguage } from './language.js';
-import { speechActRules, type MannersDetail, type MannersDialect, type SpeechAct, type SpeechActRule } from './speech-acts.js';
+import { extendedSpeechActRules, speechActRules, type MannersDetail, type MannersDialect, type SpeechAct, type SpeechActRule } from './speech-acts.js';
 
 export type { MannersDetail, MannersDialect, SpeechAct } from './speech-acts.js';
 
@@ -48,13 +50,15 @@ function normalized(text: string): string {
   return matchText(text).replace(/[‘’]/gu, "'").replace(/\s+/gu, ' ').trim();
 }
 
-function firstSocialSpan(original: string, view: string, from: number): SocialSpan | null {
+function firstSocialSpan(original: string, view: string, from: number, extended: boolean): SocialSpan | null {
   // Keep punctuation in the outer view: a colon may delimit literal input.
-  const tail = view.slice(from).replace(ENGLISH_ALTERNATIVE_SEPARATOR, ' ');
+  const unpunctuated = view.slice(from).replace(ENGLISH_ALTERNATIVE_SEPARATOR, ' ');
+  const tail = extended ? unpunctuated.replace(arabicAlternativeSeparator, ' ') : unpunctuated;
   let best: SocialSpan | null = null;
   let count = 0;
   let previousEnd = from;
   let start = from;
+  const rules = extended ? extendedSpeechActRules : speechActRules;
   for (const word of tail.matchAll(WORD)) {
     const position = from + word.index;
     const gap = tail.slice(previousEnd - from, word.index);
@@ -62,7 +66,7 @@ function firstSocialSpan(original: string, view: string, from: number): SocialSp
     if (count === 1) start = position;
     previousEnd = position + word[0].length;
     const phrase = normalized(tail.slice(start - from, previousEnd - from)).replace(/(?<=[a-z])-(?=[a-z])/gu, ' ');
-    const rule = speechActRules.find(candidate => candidate.pattern.test(phrase))
+    const rule = rules.find(candidate => candidate.pattern.test(phrase))
       ?? everydayThanksWithSpellingVariant(phrase);
     if (rule) best = { rule, end: previousEnd };
   }
@@ -105,11 +109,19 @@ function formatOrLanguageOnly(text: string, rule: SpeechActRule): boolean {
     || isEverydayManners(rule) && TRAILING_COURTESY.test(phrase);
 }
 
-function leadingSocial(original: string, view: string, from = 0): { rule: SpeechActRule; end: number; requestStart: number | null } | null {
+function leadingSocial(original: string, view: string, extended: boolean, from = 0): { rule: SpeechActRule; end: number; requestStart: number | null } | null {
   const tail = view.slice(from);
-  const prefix = LEADING_COURTESY.exec(tail)?.[0] ?? LEADING_ADDRESS.exec(tail)?.[0] ?? LEADING_DISCOURSE.exec(tail)?.[0];
-  const prefixed = prefix ? firstSocialSpan(original, view, from + prefix.length) : null;
-  const first = firstSocialSpan(original, view, from) ?? (prefixed && isEverydayManners(prefixed.rule) ? prefixed : null);
+  const arabicAddress = extended ? arabicAssistantAddress.exec(tail)?.[0] : undefined;
+  const address = arabicAddress ?? LEADING_ADDRESS.exec(tail)?.[0];
+  const prefix = LEADING_COURTESY.exec(tail)?.[0] ?? address ?? LEADING_DISCOURSE.exec(tail)?.[0];
+  const prefixed = prefix ? firstSocialSpan(original, view, from + prefix.length, extended) : null;
+  const addressed = extended && prefix === address && prefixed?.rule;
+  const addressedSocial = addressed && (
+    addressed.language === 'en' && addressed.act === 'compliment'
+    || arabicAddress && addressed.language === 'ar' && (addressed.act === 'apology' || addressed.act === 'wellbeing')
+  );
+  const first = firstSocialSpan(original, view, from, extended)
+    ?? (prefixed && (addressedSocial || isEverydayManners(prefixed.rule)) ? prefixed : null);
   if (!first) return null;
   let { rule, end } = first;
   for (let clauses = 0; clauses < MAX_SOCIAL_CLAUSES; clauses++) {
@@ -119,7 +131,7 @@ function leadingSocial(original: string, view: string, from = 0): { rule: Speech
     const rest = end + boundary.length;
     if (formatOrLanguageOnly(original.slice(rest), rule)) return { rule, end: original.length, requestStart: null };
     const connector = ADDITIVE.exec(original.slice(rest))?.[0] ?? '';
-    const next = firstSocialSpan(original, view, rest + connector.length);
+    const next = firstSocialSpan(original, view, rest + connector.length, extended);
     if (next) {
       rule = strongerAct(rule, next.rule);
       end = next.end;
@@ -138,7 +150,7 @@ function leadingSocial(original: string, view: string, from = 0): { rule: Speech
   return null;
 }
 
-function trailingSocial(original: string, view: string, from: number): { rule: SpeechActRule; start: number; requestEnd: number } | null {
+function trailingSocial(original: string, view: string, from: number, extended: boolean): { rule: SpeechActRule; start: number; requestEnd: number } | null {
   const tail = view.slice(from);
   // A colon can introduce a literal operand. A greeting after the colon must
   // stay with the request, even when the particular instruction is unfamiliar.
@@ -150,18 +162,18 @@ function trailingSocial(original: string, view: string, from: number): { rule: S
     const requestEnd = /[،,؛;\r\n—–]/u.test(boundary[0]) ? position : start;
     const request = original.slice(from, requestEnd).trim();
     if (!isRequest(request)) continue;
-    const social = leadingSocial(original, view, start);
+    const social = leadingSocial(original, view, extended, start);
     if (social && social.requestStart === null) return { rule: social.rule, start, requestEnd };
   }
   return null;
 }
 
 /** Recognize outer conversational acts while retaining the user's original request text. */
-export function detectManners(original: string): MannersDetection | null {
+export function detectManners(original: string, extended = fullMannersEnabled()): MannersDetection | null {
   if (!original.trim() || original.length > 8000) return null;
   const view = maskRequestLiteralData(original).replace(URL, value => ' '.repeat(value.length));
-  const leading = leadingSocial(original, view);
-  const trailing = leading?.requestStart === null ? null : trailingSocial(original, view, leading?.requestStart ?? 0);
+  const leading = leadingSocial(original, view, extended);
+  const trailing = leading?.requestStart === null ? null : trailingSocial(original, view, leading?.requestStart ?? 0, extended);
   const rule = leading?.rule ?? trailing?.rule;
   if (!rule) return null;
   const request = leading?.requestStart === null ? null
