@@ -60,6 +60,8 @@ v5 runs on the resident worker, never in a second process. Models without a runn
 - The runtime looks there first, then in the checkout, which carries the checked-in models.
 - The council and the page share one runtime. A model's worker starts on first use and unloads after 15 minutes idle. Only one Python model is loaded at a time, beside the resident v5 worker.
 
+Follow the [model store sync runbook](MODEL-STORE-SYNC.md) to upload, verify, or roll back trained model files.
+
 The Python worker gained a raw `prompt` request: a plain text continuation without chat framing. The reading fine-tunes need it; they were trained on «passage, سؤال/Question, الجواب/Answer».
 
 Registry changes:
