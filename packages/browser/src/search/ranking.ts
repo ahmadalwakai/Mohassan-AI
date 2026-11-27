@@ -19,7 +19,7 @@ export function requestsWikipedia(query: SourceSelectionQuery): boolean {
     || !excludesWikipedia(query) && /\bwikipedia\b|ويكيبيديا|ويكبيديا/iu.test(query.question);
 }
 // Request intent is not evidence of the academic subject. Explicitly quoted terms remain mandatory.
-const academicRequestWords = new Set('research paper papers study studies journal journals doi دراسة دراسات بحث علمي ورقة علمية'.split(' ').map(normalizeMatchingWord));
+const academicRequestWords = new Set('research paper papers study studies journal journals doi دراسة دراسات بحث علمي ورقة علمية'.split(' ').map(normalizeWord));
 // These describe the requested fact, but cannot replace its subject: a visa fee
 // page is not about a passport merely because both mention UK renewal fees.
 const requestDetailWords = new Set('price prices fee fees fare fares cost costs renewal renew version versions release releases opening hours سعر اسعار أسعار رسوم تكلفة تكاليف مواعيد تجديد اصدار إصدار اصدارات إصدارات'.split(' ').map(normalizeMatchingWord));
@@ -80,7 +80,7 @@ export function compileQuery(input: string) {
   const retrievalQuestion=/\p{Script=Arabic}/u.test(question)
     ? translatedQuestion.replace(/^(latest\s+)?version(?:\s+(stable))?\s+([a-z][a-z0-9.+#_-]*(?:\s+[a-z0-9.+#_-]+)*)$/i,(_,latest:string|undefined,stable:string|undefined,subject:string)=>`${subject} ${latest?'latest ':''}${stable?'stable ':''}version`)
     : translatedQuestion;
-  const quotedTokens = new Set(phrases.flatMap(matchingTokens));
+  const quotedTokens = new Set(phrases.flatMap(searchTokens));
   const rankingQuestion = retrievalQuestion.replace(new RegExp(wikipediaExclusion.source, 'giu'), ' ');
   // In an explicit question, initial متي can be the informal interrogative متى.
   // Keep it in names elsewhere and in terms explicitly quoted by the user.
@@ -91,7 +91,8 @@ export function compileQuery(input: string) {
   const rankingText=subjectText
     .replace(/\b(?:latest|newest|current)\s+stable\b|\bstable\s+(?:versions?|releases?)\b|\b(?:versions?|releases?)\s+stable\b/gu,phrase=>phrase.replace(/\bstable\b/u,''))
     .replace(/(?:^|\s)(?:اصدار|نسخة)\s+(?:ال)?مستقر(?:ة|ه|ا)?(?=\s|$)/gu,phrase=>phrase.replace(/(?:ال)?مستقر(?:ة|ه|ا)?/u,''));
-  const tokens = [...new Set([...matchingTokens(rankingText),...quotedTokens])]
+  // Shared callers use these spellings to build provider queries and score evidence.
+  const tokens = [...new Set([...searchTokens(rankingText),...quotedTokens])]
     .filter(term=>intent!=='scholarly'||!academicRequestWords.has(term)||quotedTokens.has(term));
   if (!question || !tokens.length) throw new Error('SEARCH_QUERY_EMPTY');
   return { question, retrievalQuestion, sites: [...new Set(sites)], tokens, phrases,
@@ -104,8 +105,12 @@ export function compileQuery(input: string) {
 export function localSearchSnippet(query: ReturnType<typeof compileQuery>, title: string, content: string): string | null {
   const maximum=1400, missing=query.phrases.filter(phrase=>!matchesSearchPhrases({phrases:[phrase]},title));
   if(!missing.length){
+    const queryTerms = [...new Set(query.tokens.map(matchingSearchWord))];
     const passages=content.match(/.{1,650}(?:\s|$)/gu)??[];
-    return passages.map((text,index)=>({text,index,score:query.tokens.filter(term=>matchingTokens(text).includes(term)).length}))
+    return passages.map((text, index) => {
+      const terms = new Set(matchingTokens(text));
+      return { text, index, score: queryTerms.filter(term => terms.has(term)).length };
+    })
       .sort((a,b)=>b.score-a.score||a.index-b.index).slice(0,2).sort((a,b)=>a.index-b.index).map(item=>item.text.trim()).join(' … ').slice(0,maximum);
   }
   // Keep source offsets while applying precisely the same word/mark normalization as phrase matching.
@@ -132,7 +137,8 @@ export type RankedHit = SearchHit & { providers: string[]; relevance: 'lexical';
 /** Intent-specific source ordering, then BM25 + reciprocal rank fusion; never arrival time. */
 export function rankResults(query: ReturnType<typeof compileQuery>, results: readonly { provider: string; hits: SearchHit[] }[], limit: number): RankedHit[] {
   const docs = new Map<string, { hit: SearchHit; providers: Set<string>; rrf: number }>();
-  const descriptionScore = (hit:SearchHit) => { const title=new Set(matchingTokens(hit.title)),snippet=new Set(matchingTokens(hit.snippet));return query.tokens.reduce((score,term)=>score+(title.has(term)?2:snippet.has(term)?1:0),0); };
+  const queryTerms = [...new Set(query.tokens.map(matchingSearchWord))];
+  const descriptionScore = (hit:SearchHit) => { const title=new Set(matchingTokens(hit.title)),snippet=new Set(matchingTokens(hit.snippet));return queryTerms.reduce((score,term)=>score+(title.has(term)?2:snippet.has(term)?1:0),0); };
   for (const result of [...results].sort((a, b) => a.provider.localeCompare(b.provider))) {
     const seen = new Set<string>();
     result.hits.slice(0, 40).forEach((hit, rank) => {
@@ -165,8 +171,8 @@ export function rankResults(query: ReturnType<typeof compileQuery>, results: rea
   // A requested source name is not part of the topic a destination page must
   // repeat. Keep it only when it is the entire query; quoted phrases still use
   // the separate mandatory phrase gate above.
-  const subjectTokens = query.tokens.filter(term => !(requestedWikipedia && ['wikipedia', 'ويكيبيديا', 'ويكبيديا'].includes(term)));
-  const rankingTokens = subjectTokens.length ? subjectTokens : query.tokens;
+  const subjectTokens = queryTerms.filter(term => !(requestedWikipedia && ['wikipedia', 'ويكيبيديا', 'ويكبيديا'].includes(term)));
+  const rankingTokens = subjectTokens.length ? subjectTokens : queryTerms;
   const topicTokens = rankingTokens.filter(term => !requestDetailWords.has(term));
   const anchors = topicTokens.length ? topicTokens : rankingTokens;
   const neededAnchors = Math.min(4, anchors.length <= 3 ? anchors.length : Math.ceil(anchors.length * 0.6));

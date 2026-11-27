@@ -100,6 +100,7 @@ describe('explicit public index lifecycle',()=>{
     const ownerId = 'local-spelling-gate';
     await index.indexUrl(ownerId, { url: 'https://example.com/local-spelling-gate' });
     expect(await index.search('زيارة', 5, undefined, { ownerId })).toHaveLength(1);
+    expect(await index.search('زيارة زياره', 5, undefined, { ownerId })).toHaveLength(1);
     expect(await index.search('زيارة مستشفى', 5, undefined, { ownerId })).toEqual([]);
   });
   it('retains a late exact phrase through local retrieval and the shared ranking gate',async()=>{

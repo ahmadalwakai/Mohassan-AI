@@ -176,7 +176,8 @@ export class LocalPublicIndex implements SearchLocalIndex {
     // Full bounded owner corpus supplies BM25 document lengths and frequencies.
     const docs=await this.db.selectFrom('search_index_documents').selectAll().where('owner_id','=',ownerId).where('expires_at','>',new Date(this.now())).limit(100).execute();
     // Look up both spellings so the terms persisted by older versions remain searchable.
-    const lookupTerms = [...new Set(query.tokens.flatMap(term => [term, alternateSearchWord(term)]))];
+    const queryTerms = new Set(query.tokens.map(matchingSearchWord));
+    const lookupTerms = [...new Set([...queryTerms].flatMap(term => [term, alternateSearchWord(term)]))];
     const terms=await this.db.selectFrom('search_index_terms').select(['document_id','term','frequency']).where('owner_id','=',ownerId).where('term','in',lookupTerms).execute();
     signal?.throwIfAborted();const average=docs.reduce((sum,row)=>sum+row.term_count,0)/Math.max(1,docs.length);
     const termsByDocument = new Map<string, Map<string, number>>();
@@ -193,7 +194,7 @@ export class LocalPublicIndex implements SearchLocalIndex {
       if(!matchesSearchPhrases(query,row.title,row.content))return [];
       const host=new URL(row.url).hostname;if(query.sites.length&&!query.sites.some(site=>host===site||host.endsWith(`.${site}`)))return [];
       const found = termsByDocument.get(row.id);
-      if (!found || found.size < Math.min(2, query.tokens.length)) return [];
+      if (!found || found.size < Math.min(2, queryTerms.size)) return [];
       const score = [...found].reduce((sum, [term, count]) => {
         const documents = documentFrequency.get(term)!;
         return sum + Math.log(1 + (docs.length - documents + 0.5) / (documents + 0.5))
