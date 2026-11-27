@@ -3574,6 +3574,11 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             return;
           }
         }
+        if (state.adsCampaign && (await import('./assistant/consent-wording.js')).deniesCampaignHandoff(request, state.trail)) {
+          const draft = state.adsCampaign.draft;
+          state.adsCampaign = null;
+          return await finish(id, runId, state, vault.scrub(id, draft), 'completed');
+        }
         if (state.adsCampaign && config.chromeExtension) {
           const connection = await config.chromeExtension.status(ownerId);
           await active();

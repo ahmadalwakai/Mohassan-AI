@@ -6,6 +6,7 @@ import type { GoogleAdsControl } from '@mohassan/google-ads';
 import type { MemoryExactWriteInput, MemoryExactWriteOptions, MemoryExactWriteResult, MemoryExactReconcileInput, MemoryExactReconciliation } from '@mohassan/memory';
 import { z } from 'zod';
 import type { CampaignPorts } from './campaign-run.js';
+import { deniesFoldedCampaignCreation, foldConsentWording } from './consent-wording.js';
 
 /**
  * What the assistant may reach outside the browser. Each adapter calls the
@@ -86,8 +87,8 @@ const ACTIONABLE = /Button|Edit|MenuItem|ListItem|TabItem|CheckBox|ComboBox|Hype
 export const EFFECT_KEYS = new Set(['Enter', 'Space', 'Delete']);
 /** Only the current owner's request authorizes account creation, never retrieved content. */
 export function requestsPausedCampaign(request:string):boolean {
-  const text=request.normalize('NFKC').replace(/[أإآ]/g,'ا').toLowerCase();
-  if(/\b(?:do not|don't|never)\b|لا\s+(?:تنش|تعمل|تحفظ|تبن)|معاينة فقط|مسودة فقط|preview only|draft only/i.test(text))return false;
+  const text=foldConsentWording(request);
+  if(deniesFoldedCampaignCreation(text))return false;
   const direct=/^(?:(?:please|can you|could you|i want you to)\s+){0,2}(?:create|build|save)\b/i.test(text.trim())||/^(?:(?:من فضلك|لو سمحت)\s+)?(?:(?:اريد|احتاج)(?:\s+منك)?\s+(?:ان\s+)?(?:تنشئ|انشاء|تبني|بناء|تحفظ|حفظ)|انشئ|انشاء|ابنِ?|ابني|احفظ)(?:\s|$)/u.test(text.trim());
   return direct&&/حمل[ةه]|\bcampaign\b/i.test(text)&&/حساب|google ads|جوجل ادز|غوغل ادز|\baccount\b/i.test(text);
 }

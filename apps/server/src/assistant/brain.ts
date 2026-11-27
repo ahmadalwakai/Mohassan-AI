@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { AgentElement, AgentPage } from '@mohassan/browser';
+import { asksToRemember as recognizesRememberConsent, deniesMemoryWrite as recognizesMemoryWriteRefusal } from './consent-wording.js';
 import { parseRequestContextState, type RequestContextState, type RequestResolution } from './request-context.js';
 import { appendResponsePolicyPrompt, responsePolicyPromptInput } from './response-policy-runtime.js';
 
@@ -49,21 +50,14 @@ const SENSITIVE_ACTIONS: [RegExp, string][] = [
   [/\b(?:enable campaign|launch campaign|publish campaign|activate campaign|increase budget|set budget|apply budget)\b|تفعيل الحملة|إطلاق الحملة|تعديل الميزانية|زيادة الميزانية/i, 'تغيير إنفاق الإعلانات'],
 ];
 
-const REMEMBER_REQUEST_AR = /^(?:(?:من فضلك|لو سمحت|رجاء)[،,\s]+)?(?:تذكر|احفظ|لا تنس)(?=\s|[:،])/u;
-const REMEMBER_REQUEST_EN = /^(?:please[,\s]+)?(?:remember\b|don['’]?t forget\b|save (?:this|that|it)\b|keep in mind\b)/i;
-const DENY_MEMORY_WRITE = /(?:^|[.!?؟،,;\n]\s*|\bbut\s+|لكن\s+)(?:(?:please\s+)?(?:do not|don['’]t|never)\s+(?:save|store|remember|record|write|change|update)\b|لا\s+(?:تحفظ|تخزن|تسجل|تكتب|تضف|تعدل|تغير|تحدث)(?:ها|ه)?(?=[^\p{L}]|$))/iu;
-
 /** Shared denial precedence; a later parser must not bypass a current-user refusal. */
 export function deniesMemoryWrite(request: string): boolean {
-  const text = request.normalize('NFKC').replace(/[\u0640\u064b-\u065f\u0670]/gu, '').replace(/[أإآٱ]/gu, 'ا').trim();
-  return DENY_MEMORY_WRITE.test(text);
+  return recognizesMemoryWriteRefusal(request);
 }
 
 /** Saving requires an affirmative directive at the start of the owner's request. */
 export function asksToRemember(request: string): boolean {
-  const text = request.normalize('NFKC').replace(/[\u0640\u064b-\u065f\u0670]/gu, '').replace(/[أإآٱ]/gu, 'ا').trim();
-  return !/[?؟]\s*$/u.test(text) && !deniesMemoryWrite(request)
-    && (REMEMBER_REQUEST_AR.test(text) || REMEMBER_REQUEST_EN.test(text));
+  return recognizesRememberConsent(request);
 }
 
 export function sensitiveAction(label: string): string | null {

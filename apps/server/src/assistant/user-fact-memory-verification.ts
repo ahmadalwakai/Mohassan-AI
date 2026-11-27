@@ -3,6 +3,7 @@ import { ClarifiedRequestSourceSchema } from './effective-request-source.js';
 import { restoreUserFactMemoryFlowState, validateUserFactMemoryReadback, type UserFactMemoryFlowState } from './user-fact-memory-flow.js';
 import { maskRequestLiteralData, parseUserRequestConstraints } from './request-constraints.js';
 import { createTaskSupervisor, taskEvidenceHash, type TaskObservation, type TaskSupervisorState } from './task-supervisor.js';
+import { foldConsentWording as fold, isMemoryWriteOnlyProhibition } from './consent-wording.js';
 
 const instant = z.number().int().min(0).max(8_640_000_000_000_000);
 const digest = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -55,16 +56,12 @@ function own(value: unknown, field: string): { present: boolean; value?: unknown
 }
 const text = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 4000 && !!value.trim()
   && !/[\u0000\ud800-\udfff]/u.test(value);
-const fold = (value: string) => value.normalize('NFKC').replace(/[\u0640\u064b-\u065f\u0670]/gu, '').replace(/[أإآٱ]/gu, 'ا').replace(/ى/gu, 'ي').replace(/ة/gu, 'ه')
-  .toLowerCase().replace(/\s+/gu, ' ').trim();
 const lead = (value: string) => fold(value).replace(/^(?:(?:please|kindly|من فضلك|لو سمحت)[,،\s]+)+/u, '');
 function question(value: string): boolean {
   const view = lead(value).replace(/[.!?؟\s]+$/u, '');
   return /^(?:(?:did you (?:save|store|record|remember)|have you (?:saved|stored|recorded|remembered)) (?:the|my) note|was (?:the|my) note (?:saved|stored|recorded)|has (?:the|my) note been (?:saved|stored|recorded))(?: (?:in|to) (?:my|your|the) memory)?$/u.test(view)
     || /^(?:هل (?:حفظت|خزنت|سجلت|تذكرت) (?:الملاحظه|ملاحظتي)|هل تم (?:حفظ|تخزين|تسجيل) (?:الملاحظه|ملاحظتي))(?: في (?:ذاكرتي|ذاكرتك|الذاكره))?$/u.test(view);
 }
-const writeOnly = (value: string) => /^(?:do not|don't|don’t|never|avoid) (?:save|store|record|remember)(?: (?:anything|any (?:data|information)|it|this|that|the (?:note|statement)))?(?: (?:in|to) (?:my |your |the )?memory)?$/u.test(lead(value))
-  || /^(?:لا|ممنوع|بلاش) (?:تحفظ|تخزن|تسجل|تتذكر)(?: (?:اي شيء|شيئا|الملاحظه|العباره|البيانات|المعلومات))?(?: في (?:ذاكرتي|ذاكرتك|الذاكره))?$/u.test(lead(value));
 const trimmed = (raw: string, start: number, end: number) => {
   while (start < end && /[\s;؛,.!?؟،]/u.test(raw[start]!)) start++;
   while (end > start && /[\s;؛,.!?؟،]/u.test(raw[end - 1]!)) end--;
@@ -90,7 +87,8 @@ export function recognizeUserFactMemoryVerificationRequest(raw: unknown): UserFa
       span = trimmed(matching, 0, matching.length);
       if (!question(matching.slice(span.start, span.end))) return null;
       const veto = constraints.forbiddenCapabilities.includes('memory_read');
-      const writes = ordered.every(item => item.capabilities.length === 1 && item.capabilities[0] === 'memory_write' && writeOnly(raw.slice(item.span.start, item.span.end)));
+      const writes = ordered.every(item => item.capabilities.length === 1 && item.capabilities[0] === 'memory_write'
+        && isMemoryWriteOnlyProhibition(raw.slice(item.span.start, item.span.end), 'note'));
       allowed = !veto && writes && (ordered.every(item => item.span.end <= span.start)
         || !constraints.ambiguous && constraints.positiveSpan?.start === span.start && constraints.positiveSpan.end === span.end);
       reason = veto ? 'memory_read_forbidden' : allowed ? 'recognized' : 'ambiguous_constraints';

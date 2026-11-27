@@ -3,6 +3,7 @@ import { restoreComputationMemoryFlowState, validateComputationMemoryReadback, t
 import { maskRequestLiteralData, parseUserRequestConstraints } from './request-constraints.js';
 import { ClarifiedRequestSourceSchema } from './effective-request-source.js';
 import { createTaskSupervisor, taskEvidenceHash, type TaskObservation, type TaskSupervisorState } from './task-supervisor.js';
+import { foldConsentWording as fold, isMemoryWriteOnlyProhibition } from './consent-wording.js';
 
 /** Host-only recovery of a previous save's status. No write, permission, quota or old-run resumption is represented here. */
 const instant = z.number().int().min(0).max(8_640_000_000_000_000);
@@ -69,18 +70,11 @@ const terminal = new Set(['completed', 'partial', 'blocked', 'failed', 'cancelle
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const textInput = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 4000
   && !!value.trim() && !/[\u0000\ud800-\udfff]/u.test(value);
-const fold = (value: string) => value.normalize('NFKC').replace(/[\u0640\u064b-\u065f\u0670]/gu, '').replace(/[أإآٱ]/gu, 'ا').replace(/ى/gu, 'ي').replace(/ة/gu, 'ه')
-  .toLowerCase().replace(/\s+/gu, ' ').trim();
 const question = (value: string) => {
   const text = fold(value).replace(/^(?:(?:please|kindly|من فضلك|لو سمحت)[,،\s]+)+/u, '').replace(/[.!?؟\s]+$/u, '');
   return /^(?:(?:did you|have you) (?:save|store|record|remember)(?:d)? the (?:result|answer|value)|(?:was|has) the (?:result|answer|value) (?:been )?(?:saved|stored|recorded))(?: (?:in|to) (?:my|your|the) memory)?$/u.test(text)
     || /^(?:هل (?:حفظت|خزنت|سجلت|تذكرت) (?:النتيجه|الناتج|الجواب)|هل تم (?:حفظ|تخزين|تسجيل) (?:النتيجه|الناتج|الجواب))(?: في (?:ذاكرتي|ذاكرتك|الذاكره))?$/u.test(text);
 };
-function writeOnlyProhibition(value: string): boolean {
-  const text = fold(value).replace(/^(?:(?:please|kindly|من فضلك|لو سمحت)[,،\s]+)+/u, '');
-  return /^(?:do not|don't|don’t|never|avoid) (?:save|store|record|remember)(?: (?:anything|any (?:data|information)|it|this|that|the (?:result|answer|value)))?(?: (?:in|to) (?:my |your |the )?memory)?$/u.test(text)
-    || /^(?:لا|ممنوع|بلاش) (?:تحفظ|تخزن|تسجل|تتذكر)(?: (?:اي شيء|شيئا|النتيجه|الناتج|الجواب|البيانات|المعلومات))?(?: في (?:ذاكرتي|ذاكرتك|الذاكره))?$/u.test(text);
-}
 const trimmedSpan = (raw: string, start: number, end: number) => {
   while (start < end && /[\s;؛,.!?؟،]/u.test(raw[start]!)) start++;
   while (end > start && /[\s;؛,.!?؟،]/u.test(raw[end - 1]!)) end--;
@@ -113,7 +107,7 @@ export function recognizeMemoryVerificationRequest(raw: unknown): MemoryVerifica
       if (!question(matching.slice(span.start, span.end))) return null;
       const readVeto = constraints.forbiddenCapabilities.includes('memory_read');
       const onlyWrite = constraints.prohibitions.every(item => item.capabilities.length === 1 && item.capabilities[0] === 'memory_write'
-        && writeOnlyProhibition(raw.slice(item.span.start, item.span.end)));
+        && isMemoryWriteOnlyProhibition(raw.slice(item.span.start, item.span.end), 'result'));
       // A write-only prefix is safe because the remaining anchored question has
       // no action. A suffix is accepted only with the parser's own safe span.
       const safePrefix = onlyWrite && constraints.prohibitions.every(item => item.span.end <= span.start);
