@@ -119,7 +119,7 @@ describe('terms used as reader evidence', () => {
 
   // Unicode documents U+2019 and U+0027 as apostrophe forms, retrieved 2026-11-27.
   // https://www.unicode.org/Public/18.0.0/charts/nameslist/2000/
-  it.each(["'", '’'])('removes possessive %ss before tokenization', apostrophe => {
+  it.each(["'", '’'])('keeps the word before a possessive %ss', apostrophe => {
     const word = 'abandon';
     expect(readerEvidenceTerms(`${word}${apostrophe}s`)).toEqual([{ word, variants: [word] }]);
   });
