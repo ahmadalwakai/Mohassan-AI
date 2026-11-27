@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.11/" version="0.11" xml:lang="ar">
+  <siteinfo>
+    <sitename>ويكيبيديا، عينة اختبار مصطنعة</sitename>
+    <dbname>arwiki</dbname>
+  </siteinfo>
+  <page>
+    <title>أرْضُ العَنْبَر</title>
+    <ns>0</ns>
+    <id>41</id>
+    <revision>
+      <id>511</id>
+      <timestamp>2024-06-02T09:10:11Z</timestamp>
+      <text xml:space="preserve"><![CDATA[{{صندوق معلومات تجمع سكاني
+| اسم = أرْضُ العَنْبَر
+| تعداد_السكان = ١٨٠٠
+| منطقة = [[الأرض التجريبية|المنطقة]]
+}}
+'''أرْضُ العَنْبَر''' عينة خيالية على [[الشاطئ]].
+==المتن==
+تفاصيل المتن لا تدخل في البحث.]]></text>
+    </revision>
+  </page>
+  <page>
+    <title>ميناء الاختبار</title>
+    <ns>0</ns>
+    <id>42</id>
+    <revision>
+      <id>512</id>
+      <timestamp>2024-06-03T09:10:11Z</timestamp>
+      <text xml:space="preserve">'''ميناء الاختبار''' مرفأ يجاور أرض العنبر.</text>
+    </revision>
+  </page>
+</mediawiki>
