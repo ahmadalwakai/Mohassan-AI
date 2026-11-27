@@ -1,9 +1,26 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentBrowser } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
+import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { startChatRecoveryTimer } from '../apps/server/src/chat-lease-recovery.js';
-import { createCommandChatControl } from '../apps/server/src/command-chat.js';
+import { commandChatMigration, createCommandChatControl } from '../apps/server/src/command-chat.js';
+
+it('records the chat status-index migration when the index already exists', async () => {
+  const database = await createDatabase();
+  try {
+    await migrate(database.db);
+    await sql`CREATE INDEX chat_conversations_status_idx ON chat_conversations(status)`.execute(database.db);
+
+    await commandChatMigration(database.db);
+
+    const migration = await database.db.selectFrom('schema_migrations').select('version')
+      .where('version', '=', '059_chat_status_index').executeTakeFirst();
+    expect(migration).toEqual({ version: '059_chat_status_index' });
+  } finally {
+    await database.close();
+  }
+});
 
 it('does not overlap recovery ticks and waits for an in-flight sweep at shutdown', async () => {
   vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });

@@ -98,9 +98,7 @@ export async function migrateMembers(database: Kysely<any>) {
 }
 
 /** Null means no access at all: an account that is neither the owner nor an active member. */
-export function roleOf(db: Kysely<any>, userId: string): Promise<WorkspaceRole | null> {
-  return memoizeChatDetailRole(db, userId, () => readRole(db, userId));
-}
+export const roleOf = memoizeChatDetailRole(readRole);
 
 async function readRole(db: Kysely<any>, userId: string): Promise<WorkspaceRole | null> {
   const row = await sql<{ owner: boolean; role: string | null; disabled: boolean }>`

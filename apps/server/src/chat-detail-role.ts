@@ -8,6 +8,7 @@ type RoleRead = {
   value?: Promise<WorkspaceRole | null>;
 };
 
+type LookupRole = (db: Kysely<any>, ownerId: string) => Promise<WorkspaceRole | null>;
 const detailRole = new AsyncLocalStorage<RoleRead>();
 
 export function withChatDetailRole<T>(db: Kysely<any>, ownerId: string, work: () => T) {
@@ -15,7 +16,10 @@ export function withChatDetailRole<T>(db: Kysely<any>, ownerId: string, work: ()
 }
 
 /** Only this detail's read-only lookup on the same connection and account can be reused. */
-export function memoizeChatDetailRole(db: Kysely<any>, ownerId: string, read: () => Promise<WorkspaceRole | null>) {
-  const scope = detailRole.getStore();
-  return scope?.db === db && scope.ownerId === ownerId ? (scope.value ??= read()) : read();
+export function memoizeChatDetailRole(read: LookupRole): LookupRole {
+  return (db, ownerId) => {
+    const scope = detailRole.getStore();
+    if (scope?.db === db && scope.ownerId === ownerId) return scope.value ??= read(db, ownerId);
+    return read(db, ownerId);
+  };
 }

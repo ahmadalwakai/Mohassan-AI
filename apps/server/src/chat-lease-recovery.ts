@@ -14,7 +14,7 @@ export type ChatRecoveryScope = { ownerId: string; id: string };
 export async function migrateChatStatusIndex(tx: Kysely<any>) {
   const version = '059_chat_status_index';
   if (await tx.selectFrom('schema_migrations').select('version').where('version', '=', version).executeTakeFirst()) return;
-  await sql`CREATE INDEX chat_conversations_status_idx ON chat_conversations(status)
+  await sql`CREATE INDEX IF NOT EXISTS chat_conversations_status_idx ON chat_conversations(status)
     WHERE status IN (${sql.join(recoverableStatuses)})`.execute(tx);
   await tx.insertInto('schema_migrations').values({ version }).execute();
 }
