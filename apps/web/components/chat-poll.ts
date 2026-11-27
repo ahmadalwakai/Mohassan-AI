@@ -52,7 +52,7 @@ export function startChatPoll({ interval, hiddenInterval, firstDelay, run, onErr
         stopped = true;
         return;
       }
-      delay = Math.max(interval, pollBackoffMs(++failures));
+      delay = Math.max(interval, pollBackoffMs(++failures, Math.random()));
       onError?.(error);
     } finally {
       if (request === controller) {

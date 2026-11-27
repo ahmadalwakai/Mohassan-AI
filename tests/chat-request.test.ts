@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { ChatHttpError, chatErrorMessage, OFFLINE_MESSAGE } from "../apps/web/components/chat-connection";
+import { ChatHttpError, chatErrorMessage, OFFLINE_REQUEST_MESSAGE } from "../apps/web/components/chat-connection";
 import { onSessionExpired, renewChatSession, requestChatJson, sessionFetch } from "../apps/web/components/chat-request";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -47,7 +47,7 @@ it("localizes browser transport errors and propagates intentional aborts", async
   vi.stubGlobal("navigator", { onLine: true });
   await expect(sessionFetch("/api/access")).rejects.toThrow(chatErrorMessage(nativeError));
   vi.stubGlobal("navigator", { onLine: false });
-  await expect(sessionFetch("/api/access")).rejects.toThrow(OFFLINE_MESSAGE);
+  await expect(sessionFetch("/api/access")).rejects.toThrow(OFFLINE_REQUEST_MESSAGE);
   expect(fetch).toHaveBeenCalledOnce();
   vi.stubGlobal("navigator", { onLine: true });
   await expect(sessionFetch("/api/access")).rejects.toBe(abort);

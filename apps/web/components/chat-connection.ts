@@ -4,6 +4,7 @@ export const POLL_INTERVAL_MS = 450;
 export const MAX_POLL_BACKOFF_MS = 2 * 15_000;
 
 export const OFFLINE_MESSAGE = "أنت غير متصل بالإنترنت. ستُستأنف المحادثة عند عودة الاتصال.";
+export const OFFLINE_REQUEST_MESSAGE = "تعذّر إتمام الطلب بسبب انقطاع الاتصال. أعد المحاولة.";
 const requestFailed = "تعذر إتمام الطلب. حاول مجددًا.";
 const timedOut = "انتهت مهلة الاتصال. حاول مجددًا.";
 
@@ -40,7 +41,7 @@ export function chatHttpErrorMessage(status: number, details?: { message?: unkno
 
 export function chatErrorMessage(error: unknown, offline = false): string {
   if (error instanceof ChatHttpError) return chatHttpErrorMessage(error.status, error);
-  if (offline) return OFFLINE_MESSAGE;
+  if (offline) return OFFLINE_REQUEST_MESSAGE;
   // Timeout and Fetch network errors (retrieved 2026-11-27).
   // https://dom.spec.whatwg.org/#dom-abortsignal-timeout
   // https://fetch.spec.whatwg.org/#fetch-method
@@ -51,7 +52,7 @@ export function chatErrorMessage(error: unknown, offline = false): string {
 
 // Equal jitter, with the retry window doubled after the first failure (retrieved 2026-11-27).
 // https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
-export function pollBackoffMs(failures: number, random = Math.random()): number {
+export function pollBackoffMs(failures: number, random: number): number {
   const windowMs = Math.min(MAX_POLL_BACKOFF_MS, POLL_INTERVAL_MS * 2 ** failures);
   return Math.floor(windowMs * (1 + random) / 2);
 }

@@ -1,6 +1,6 @@
 import { ChatCapabilitiesSchema, ChatConversationSchema, ChatConversationSummarySchema, type ChatConversation } from "@mohassan/contracts";
 import { z } from "zod";
-import { ChatHttpError, chatErrorMessage, isSessionExpired, OFFLINE_MESSAGE } from "./chat-connection";
+import { ChatHttpError, chatErrorMessage, isSessionExpired, OFFLINE_REQUEST_MESSAGE } from "./chat-connection";
 export { chatHttpErrorMessage } from "./chat-connection";
 
 const sessionEvents = new EventTarget();
@@ -19,7 +19,7 @@ export function onSessionExpired(listener: () => void): () => void {
 export async function sessionFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const offline = () => typeof navigator !== "undefined" && navigator.onLine === false;
   init?.signal?.throwIfAborted();
-  if (offline()) throw new Error(OFFLINE_MESSAGE);
+  if (offline()) throw new Error(OFFLINE_REQUEST_MESSAGE);
   const version = sessionVersion;
   const response = await fetch(input, init).catch((error: unknown) => {
     if (error instanceof Error && error.name === "AbortError") throw error;

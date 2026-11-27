@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ChatHttpError, MAX_POLL_BACKOFF_MS, OFFLINE_MESSAGE, POLL_INTERVAL_MS,
+  ChatHttpError, MAX_POLL_BACKOFF_MS, POLL_INTERVAL_MS,
   chatErrorMessage, isSessionExpired, pollBackoffMs,
 } from '../apps/web/components/chat-connection';
 
@@ -32,7 +32,7 @@ describe('Arabic chat connection errors', () => {
   it.each(['Failed to fetch', 'Load failed'])('localizes a rejected fetch (%s)', (rawMessage) => {
     const error = new TypeError(rawMessage);
     expect(chatErrorMessage(error)).toBe('تعذر الاتصال بالخدمة. تحقق من اتصالك بالإنترنت وحاول مجددًا.');
-    expect(chatErrorMessage(error, true)).toBe(OFFLINE_MESSAGE);
+    expect(chatErrorMessage(error, true)).toBe('تعذّر إتمام الطلب بسبب انقطاع الاتصال. أعد المحاولة.');
   });
 
   it('localizes a browser timeout', () => {
