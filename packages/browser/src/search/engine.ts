@@ -13,7 +13,7 @@ export interface SearchOutcome {
   fetchedAt: string;
   freshness: 'fresh' | 'cached' | 'indexed_snapshot';
   coverage: 'web_sources' | 'specialized_sources' | 'local_only' | 'mixed';
-  failures: { provider: string; kind: 'rate_limited' | 'unavailable' | 'invalid_response' }[];
+  failures: { provider: string; kind: SearchProviderFailure['kind'] }[];
   limitations: string[];
 }
 export interface SearchContext { ownerId: string }

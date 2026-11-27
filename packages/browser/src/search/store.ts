@@ -15,7 +15,7 @@ const cachedOutcome = z.object({
     contentHash: hash.optional(), sourceHash: hash.optional(), trust: z.literal('untrusted').optional(),
   }).strict()).max(20),
   fetchedAt: z.iso.datetime(), freshness: z.enum(['fresh','cached','indexed_snapshot']), coverage: z.enum(['web_sources','specialized_sources','local_only','mixed']),
-  failures: z.array(z.object({ provider: z.string().max(100), kind: z.enum(['rate_limited','unavailable','invalid_response']) }).strict()).max(20),
+  failures: z.array(z.object({ provider: z.string().max(100), kind: z.enum(['rate_limited','unavailable','invalid_response','forbidden_by_robots','no_search_method','needs_account']) }).strict()).max(20),
   limitations: z.array(z.string().max(1000)).max(20),
 }).strict();
 
