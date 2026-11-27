@@ -34,6 +34,8 @@ function through(key: string, table: string, parentKey = 'id'): string {
 }
 
 const ownEmail = '(SELECT lower(email) FROM "user" WHERE id = $1)';
+const throughChatMessage = `data.message_id IN (SELECT m.id FROM chat_messages AS m
+  JOIN chat_conversations AS c ON c.id = m.conversation_id WHERE c.owner_id = $1)`;
 const lastPurgeTransaction = { action: 'delete', final: true } as const;
 
 /**
@@ -129,6 +131,8 @@ export const memberDataRegistry: readonly AccountDataTable[] = [
   accountData('chat_model_receipts', through('run_id', 'chat_runs'), 'id run_id step model status input_tokens output_tokens usage_known action_valid output_hash error_code started_at finished_at purpose http_status retry_after_ms retry_reason'),
   accountData('chat_events', through('conversation_id', 'chat_conversations'), 'id conversation_id run_id kind message data created_at'),
   accountData('chat_observations', through('conversation_id', 'chat_conversations'), 'id conversation_id session_id content_hash screenshot_hash created_at'),
+  accountData('chat_feedback_reviews', throughChatMessage, false),
+  accountData('chat_feedback_evidence', throughChatMessage, false),
   accountData('chat_messages', through('conversation_id', 'chat_conversations'), 'id conversation_id role text created_at images run_id'),
   owned('chat_request_keys', false),
   owned('chat_runs', 'id conversation_id owner_id status goal steps created_at updated_at attempt intent'),

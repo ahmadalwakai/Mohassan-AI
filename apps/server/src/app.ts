@@ -46,6 +46,8 @@ import { createBrowserTaskControl } from './browser-task.js';
 import { clarifyDesktopFile } from './assistant/clarify/host.js';
 import { commandChatMigration } from './command-chat.js';
 import { registerWindowsScopedChatRoutes } from './windows-chat-session.js';
+import { registerFeedbackRoutes } from './feedback-routes.js';
+import { feedbackLoopEnabled } from './feedback-config.js';
 import { createRefusalAwareCommandChat as createCommandChatControl } from './assistant/refusal/chat-control.js';
 import { migrateRemindersInTransaction } from './reminders/migration.js';
 import { registerReminderRuntime } from './reminders/runtime.js';
@@ -527,6 +529,7 @@ export async function createApplication(config: AppConfig) {
   await registerReminderRuntime(app, { db: database.db, owner });
   await registerMonitorRuntime(app, database.db, owner, (tx, userId, id) => reserveMemberRun(tx, userId, id, memberDailyRuns));
   await registerWindowsScopedChatRoutes(app, { control: chat, owner }, windows, sessionUser);
+  registerFeedbackRoutes(app, { db: database.db, owner, role, enabled: feedbackLoopEnabled() });
   registerNotificationRoutes(app, { db: database.db, owner, isActive: async id => Boolean(await roleOf(database.db, id)), recoverChatRuns: chat.recoverExpired });
   registerConversationShareRoutes(app,{db:database.db,owner,role,webOrigin:config.webOrigin,internalSecret:config.internalSecret,fontsDir:config.documentsFontsDir});
   await registerBrowserFileRoutes(app,{db:database.db,browser:agentBrowser,owner});

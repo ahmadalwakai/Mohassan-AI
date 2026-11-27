@@ -405,7 +405,7 @@ export function Workspace() {
   if (boot === "setup" || boot === "signin") return <AuthScreen needsSetup={boot === "setup"} onAuthenticated={(value) => { setSession(value); setBoot("ready"); }} onRetry={() => { void request<{ needsSetup: boolean; setupAvailable?: boolean }>("/api/setup").then((value) => { if (!value.needsSetup) setBoot("signin"); }).catch(() => {}); }} />;
 
   if (shouldMountMemberDataAccess(access, advanced)) return <MemberDataAccessMount access={access} error={error} tools={MemberTools} onChat={() => setAdvanced(false)} onSignOut={() => { void signOut(); }} />;
-  if (!advanced || !owner) return <AssistantApp name={session?.user.name ?? "بك"} onAdvanced={() => setAdvanced(true)} onOpenTool={owner ? (target) => { setView(target); setAdvanced(true); } : undefined} onSignOut={() => { void signOut(); }} notifications={notifications} />;
+  if (!advanced || !owner) return <AssistantApp name={session?.user.name ?? "بك"} owner={owner} feedbackReviewEnabled={owner && access?.feedbackReviewEnabled === true} onAdvanced={() => setAdvanced(true)} onOpenTool={owner ? (target) => { setView(target); setAdvanced(true); } : undefined} onSignOut={() => { void signOut(); }} notifications={notifications} />;
 
   const tasks = snapshot?.tasks ?? [];
   const capabilities = snapshot?.capabilities ?? [];

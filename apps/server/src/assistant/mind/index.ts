@@ -1,4 +1,5 @@
 import { BrowserError } from '@mohassan/browser';
+import { feedbackSelectionScope, observeMindEvidence, restrictFeedbackMind } from '../../feedback-selection.js';
 import type { Frame, Mind, MindDeps, MindReply } from './contract.js';
 import { buildFrame } from './frame.js';
 import { route } from './route.js';
@@ -110,6 +111,7 @@ export function createMind(): Mind {
   return {
     async handle(request, deps, signal, resume) {
       signal.throwIfAborted();
+      if (feedbackSelectionScope.getStore()) deps = await restrictFeedbackMind(deps);
       const started = performance.now();
       const input = resume ? `${request.trimEnd()} ${resume.answer.trim()}` : request;
       const frame = buildFrame(input);
@@ -124,6 +126,7 @@ export function createMind(): Mind {
       else context.comparisonReads = outcome.comparisonReads;
       const timings = { frame: parsed - started, reply: resolved - parsed };
       const checked = critiqueReply(composeReply({ ...outcome.reply, frame, timings }), context);
+      observeMindEvidence(checked);
       return { ...checked, timings: { ...timings, critic: performance.now() - resolved } };
     },
   };

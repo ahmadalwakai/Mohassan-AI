@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { feedbackLoopEnabled } from './feedback-config.js';
 import type { FastifyInstance } from 'fastify';
 import { sql, type Kysely } from 'kysely';
 import { z } from 'zod';
@@ -139,7 +140,7 @@ export async function registerMemberRoutes(app: FastifyInstance, options: Member
     const user = await options.owner(request), role = await options.role(request);
     const services = role === 'owner' ? ['all'] : ['chat', 'memory', ...(options.adsAvailable() ? ['ads'] : []), ...(options.imagesAvailable() ? ['images'] : []), ...(options.sitesAvailable?.() ? ['sites'] : [])];
     const used = role === 'member' ? await memberRunsToday(db, user.id) : 0;
-    return { user: { id: user.id, name: user.name, email: user.email }, role, services, ...(role === 'member' ? { quota: { dailyRuns: options.dailyRuns, used } } : {}) };
+    return { user: { id: user.id, name: user.name, email: user.email }, role, services, ...(role === 'owner' && feedbackLoopEnabled() && { feedbackReviewEnabled: true }), ...(role === 'member' ? { quota: { dailyRuns: options.dailyRuns, used } } : {}) };
   });
 
   app.get('/api/members', async (request) => {
