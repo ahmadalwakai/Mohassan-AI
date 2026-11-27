@@ -53,6 +53,14 @@ describe('standalone social and identity routing', () => {
     expect(decideRequestRoute({ text, capabilities })).toMatchObject(localRoute);
   });
 
+  it('recognizes standalone gratitude after a compliment addressed to the assistant when opted in', () => {
+    const text = 'Digital assistant, you have offered me such good advice, thank you.';
+    expect(prepareMannersTurn(text, true)).toBeNull();
+    vi.stubEnv(localOnlyFlag, '1');
+    expect(prepareMannersTurn(text, true)).toMatchObject({ request: null, detection: { act: 'thanks', language: 'en' } });
+    expect(decideRequestRoute({ text, capabilities })).toMatchObject(localRoute);
+  });
+
   it.each([
     ['1', '0'],
     ['0', '1'],

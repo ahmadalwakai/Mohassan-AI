@@ -111,13 +111,17 @@ function formatOrLanguageOnly(text: string, rule: SpeechActRule): boolean {
 
 function leadingSocial(original: string, view: string, extended: boolean, from = 0): { rule: SpeechActRule; end: number; requestStart: number | null } | null {
   const tail = view.slice(from);
-  const address = extended ? arabicAssistantAddress.exec(tail)?.[0] : undefined;
-  const prefix = address ?? LEADING_COURTESY.exec(tail)?.[0] ?? LEADING_ADDRESS.exec(tail)?.[0] ?? LEADING_DISCOURSE.exec(tail)?.[0];
+  const arabicAddress = extended ? arabicAssistantAddress.exec(tail)?.[0] : undefined;
+  const address = arabicAddress ?? LEADING_ADDRESS.exec(tail)?.[0];
+  const prefix = LEADING_COURTESY.exec(tail)?.[0] ?? address ?? LEADING_DISCOURSE.exec(tail)?.[0];
   const prefixed = prefix ? firstSocialSpan(original, view, from + prefix.length, extended) : null;
-  const addressedArabic = address && prefixed?.rule.language === 'ar'
-    && (prefixed.rule.act === 'apology' || prefixed.rule.act === 'wellbeing');
+  const addressed = extended && prefix === address && prefixed?.rule;
+  const addressedSocial = addressed && (
+    addressed.language === 'en' && addressed.act === 'compliment'
+    || arabicAddress && addressed.language === 'ar' && (addressed.act === 'apology' || addressed.act === 'wellbeing')
+  );
   const first = firstSocialSpan(original, view, from, extended)
-    ?? (prefixed && (addressedArabic || isEverydayManners(prefixed.rule)) ? prefixed : null);
+    ?? (prefixed && (addressedSocial || isEverydayManners(prefixed.rule)) ? prefixed : null);
   if (!first) return null;
   let { rule, end } = first;
   for (let clauses = 0; clauses < MAX_SOCIAL_CLAUSES; clauses++) {
