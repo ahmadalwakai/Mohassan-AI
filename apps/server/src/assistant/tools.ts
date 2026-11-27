@@ -7,6 +7,7 @@ import type { MemoryExactWriteInput, MemoryExactWriteOptions, MemoryExactWriteRe
 import type { CodingCheckResult, ImportsLookup, ProjectSearchResult } from '@mohassan/coding';
 import { z } from 'zod';
 import type { CampaignPorts } from './campaign-run.js';
+import type { CodeProjectsPort } from './code-projects-chat.js';
 
 /**
  * What the assistant may reach outside the browser. Each adapter calls the
@@ -54,6 +55,7 @@ export interface AssistantTools {
     codeSearch?(ownerId: string, projectId: string, query: string): Promise<ProjectSearchResult>;
     codeImports?(ownerId: string, projectId: string, reference: string): Promise<ImportsLookup>;
     codeCheck?(ownerId: string, projectId: string, signal: AbortSignal): Promise<CodingCheckResult>;
+    codeProjects?: CodeProjectsPort;
     studio?(ownerId: string, input: { id: string; goal: string }, idempotencyKey: string, runId?: string): Promise<PendingWorkTask>;
     approve(ownerId: string, taskId: string): Promise<void>;
     cancel(ownerId: string, taskId: string): Promise<void>;
@@ -169,6 +171,7 @@ interface ToolModules {
     reconcileExact?(ownerId: string, input: MemoryExactReconcileInput, options?: Pick<MemoryExactWriteOptions, 'signal'>): Promise<MemoryExactReconciliation>;
   };
   coding: { available: boolean; workspace(ownerId: string): Promise<{ projects: { id: string; name: string; path: string }[] }>;
+    projects?: CodeProjectsPort['projects']; inspect?: CodeProjectsPort['inspect']; register?: CodeProjectsPort['register'];
     search?(ownerId: string, projectId: string, query: string): Promise<ProjectSearchResult>;
     imports?(ownerId: string, projectId: string, reference: string): Promise<ImportsLookup>;
     check?(ownerId: string, projectId: string, signal: AbortSignal): Promise<CodingCheckResult> };
@@ -248,6 +251,7 @@ export function createAssistantTools({ memory, coding, studio, studioChange, run
       ...(coding.search && coding.imports ? { codeSearch: (ownerId, projectId, query) => guarded(() => coding.search!(ownerId, projectId, query)),
         codeImports: (ownerId, projectId, reference) => guarded(() => coding.imports!(ownerId, projectId, reference)) } satisfies Pick<NonNullable<AssistantTools['work']>, 'codeSearch' | 'codeImports'> : {}),
       ...(coding.available && coding.check ? { codeCheck: (ownerId, projectId, signal) => guarded(() => coding.check!(ownerId, projectId, signal)) } satisfies Pick<NonNullable<AssistantTools['work']>, 'codeCheck'> : {}),
+      ...(coding.projects && coding.inspect && coding.register ? { codeProjects: { projects: coding.projects, inspect: coding.inspect, register: coding.register } } : {}),
       ...(studioChange ? { studio: (ownerId, raw, key, runId) => guarded(async () => {
         const input = StudioInput.parse({ sessionId: raw.id, goal: raw.goal });
         const session = await studio.detail(ownerId, input.sessionId);
