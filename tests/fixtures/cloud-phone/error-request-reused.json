@@ -1,0 +1,21 @@
+{
+  "capturedAt": "2026-11-27T00:16:12.412Z",
+  "sourceCommit": "29448ae",
+  "request": {
+    "method": "POST",
+    "url": "/api/chat/conversations",
+    "idempotencyKey": "phone-create-0001",
+    "body": {
+      "goal": "كم يساوي 2 ضرب 2؟"
+    }
+  },
+  "response": {
+    "status": 409,
+    "body": {
+      "error": {
+        "code": "CHAT_REQUEST_KEY_REUSED",
+        "message": "استُخدم مفتاح الطلب نفسه لطلب مختلف."
+      }
+    }
+  }
+}

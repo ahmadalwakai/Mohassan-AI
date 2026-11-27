@@ -1,0 +1,22 @@
+{
+  "capturedAt": "2026-11-27T00:16:14.722Z",
+  "sourceCommit": "29448ae",
+  "request": {
+    "method": "POST",
+    "url": "/api/chat/conversations/7e73971c-d2f2-4884-87b0-dfa048faea29/approve",
+    "idempotencyKey": "phone-approve-0007",
+    "body": {
+      "approvalId": "5772e8a2-45c5-4ba9-b6c9-bdd81e671a89",
+      "approved": true
+    }
+  },
+  "response": {
+    "status": 409,
+    "body": {
+      "error": {
+        "code": "CHAT_APPROVAL_CHANGED",
+        "message": "هذا الطلب لم يعد معلقًا."
+      }
+    }
+  }
+}

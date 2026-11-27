@@ -1,0 +1,22 @@
+{
+  "capturedAt": "2026-11-27T00:16:12.874Z",
+  "sourceCommit": "29448ae",
+  "request": {
+    "method": "POST",
+    "url": "/api/chat/conversations/8dc8c414-5d76-40b7-b8aa-aa3b0ca86d72/respond",
+    "idempotencyKey": "phone-respond-0004",
+    "body": {
+      "questionId": "dc968328-306c-4459-ba21-86e667753ec7",
+      "optionId": "stop"
+    }
+  },
+  "response": {
+    "status": 409,
+    "body": {
+      "error": {
+        "code": "CHAT_QUESTION_CHANGED",
+        "message": "هذا السؤال لم يعد معلقًا."
+      }
+    }
+  }
+}

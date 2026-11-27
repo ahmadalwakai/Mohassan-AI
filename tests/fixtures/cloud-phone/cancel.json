@@ -1,0 +1,178 @@
+{
+  "capturedAt": "2026-11-27T00:16:15.374Z",
+  "sourceCommit": "29448ae",
+  "request": {
+    "method": "POST",
+    "url": "/api/chat/conversations/d9cea195-b911-4ef3-9963-32107622eed5/cancel",
+    "body": {}
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "d9cea195-b911-4ef3-9963-32107622eed5",
+      "title": "افتح http://fixture-site.test/ads",
+      "status": "idle",
+      "updatedAt": "2026-11-27T00:16:15.363Z",
+      "browserAccount": null,
+      "messages": [
+        {
+          "id": "7dcbaef1-8ea9-41f6-b501-728a6827e9d7",
+          "role": "user",
+          "text": "افتح http://fixture-site.test/ads",
+          "createdAt": "2026-11-27T00:16:14.731Z"
+        },
+        {
+          "id": "1a9060aa-00a6-47be-821d-36b9771a8b2f",
+          "role": "assistant",
+          "text": "أريد إرسال «رفض ملفات الارتباط غير الضرورية» إلى fixture-site.test. هل أتابع؟",
+          "createdAt": "2026-11-27T00:16:15.256Z"
+        }
+      ],
+      "question": null,
+      "approval": null,
+      "secure": null,
+      "browser": {
+        "url": "http://fixture-site.test/consent",
+        "title": "Cookie consent",
+        "observedAt": "2026-11-27T00:16:15.237Z",
+        "live": true,
+        "screenUrl": "/api/chat/conversations/d9cea195-b911-4ef3-9963-32107622eed5/screen?v=0fa0338d-1d26-4a85-b540-1ea714084dbe",
+        "recovery": "available",
+        "recoveryToken": "3fdaf48c3846cad8cc3421d87b7748898eb9574790fe36a179f3e4c8261daae2"
+      },
+      "progress": null,
+      "steps": [
+        {
+          "id": "298e5f6f-508e-42a7-b42b-85348b842b69",
+          "text": "فتح fixture-site.test",
+          "createdAt": "2026-11-27T00:16:14.755Z"
+        }
+      ],
+      "error": null,
+      "configured": false,
+      "capabilities": {
+        "chatModel": false,
+        "available": [
+          "computation",
+          "web",
+          "browser",
+          "memory",
+          "knowledge",
+          "documents",
+          "sites",
+          "planner",
+          "letters",
+          "pc"
+        ]
+      },
+      "visibility": {
+        "version": 1,
+        "level": 3,
+        "code": "open_only",
+        "reason": "طلبت فتح الموقع لعرضه",
+        "lang": "ar",
+        "decidedAt": "2026-11-27T00:16:15.363Z",
+        "requested": 3,
+        "canView": true,
+        "history": [
+          {
+            "level": 3,
+            "code": "open_only",
+            "at": "2026-11-27T00:16:15.363Z"
+          }
+        ]
+      },
+      "campaign": null,
+      "version": "cda920d8da8d11e6128aa43d",
+      "run": {
+        "id": "1f80686d-8567-4783-9a64-5e3c8a34cf53",
+        "phase": "cancelled",
+        "path": "action",
+        "engine": {
+          "kind": "rules",
+          "modelCalls": 0
+        },
+        "context": {
+          "objective": "افتح http://fixture-site.test/ads",
+          "previousTurns": 0,
+          "constraints": [],
+          "corrections": [],
+          "capabilities": [
+            "computation",
+            "web",
+            "browser",
+            "memory",
+            "knowledge",
+            "documents",
+            "sites",
+            "planner",
+            "letters",
+            "pc"
+          ],
+          "limitations": [
+            "chatModel"
+          ]
+        },
+        "plan": {
+          "version": 1,
+          "steps": [
+            {
+              "id": "approve-1",
+              "outcome": "رفض ملفات الارتباط غير الضرورية",
+              "dependsOn": [],
+              "capability": "browser.submit",
+              "input": "POST http://fixture-site.test/consent",
+              "acceptance": [
+                "نُفّذ الإجراء الموافَق عليه بتفاصيله نفسها مرة واحدة"
+              ],
+              "verification": "observation",
+              "required": true,
+              "risk": "irreversible_write",
+              "authorization": "required",
+              "state": "invalidated",
+              "attempts": 0
+            }
+          ]
+        },
+        "evidence": [
+          {
+            "id": "e2cc6ef69d05d6fc",
+            "stepId": null,
+            "kind": "observation",
+            "label": "HTTP 200",
+            "reference": "http://fixture-site.test/consent",
+            "observedAt": "2026-11-27T00:16:15.237Z",
+            "independent": true
+          }
+        ],
+        "permissions": [
+          {
+            "id": "c19f5b78-3b1c-4058-afba-37ff7fc2dafc",
+            "stepId": "approve-1",
+            "action": "رفض ملفات الارتباط غير الضرورية",
+            "target": "POST http://fixture-site.test/consent",
+            "consequence": "يُرسَل طلب POST إلى fixture-site.test بالقيم المعروضة، مرة واحدة.",
+            "reversible": null,
+            "fingerprint": "54db9372006b5fecda280388bd2d1acbedacdd48fe5789988096a133831c8c55",
+            "decision": "invalidated",
+            "reason": "owner_cancelled",
+            "decidedAt": "2026-11-27T00:16:15.364Z"
+          }
+        ],
+        "verification": null,
+        "verdict": {
+          "status": "cancelled",
+          "reason": "owner_cancelled",
+          "decidedAt": "2026-11-27T00:16:15.364Z"
+        },
+        "repairs": {
+          "used": 0,
+          "limit": 1
+        },
+        "steeredFrom": null,
+        "sequence": 7,
+        "updatedAt": "2026-11-27T00:16:15.364Z"
+      }
+    }
+  }
+}

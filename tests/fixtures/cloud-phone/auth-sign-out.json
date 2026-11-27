@@ -1,0 +1,15 @@
+{
+  "capturedAt": "2026-11-27T00:16:16.363Z",
+  "sourceCommit": "29448ae",
+  "request": {
+    "method": "POST",
+    "url": "/api/auth/sign-out",
+    "body": {}
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "success": true
+    }
+  }
+}

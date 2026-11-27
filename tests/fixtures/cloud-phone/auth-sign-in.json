@@ -1,0 +1,33 @@
+{
+  "capturedAt": "2026-11-27T00:16:11.600Z",
+  "sourceCommit": "29448ae",
+  "request": {
+    "method": "POST",
+    "url": "/api/auth/sign-in/email",
+    "body": {
+      "email": "phone-owner@example.test",
+      "password": "[fixture password]",
+      "rememberMe": true
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "set-cookie": [
+        "better-auth.session_token=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB%3D; Max-Age=604800; Path=/; HttpOnly; SameSite=Lax"
+      ]
+    },
+    "body": {
+      "redirect": false,
+      "user": {
+        "name": "Phone fixture owner",
+        "email": "phone-owner@example.test",
+        "emailVerified": false,
+        "image": null,
+        "createdAt": "2026-11-27T00:16:11.389Z",
+        "updatedAt": "2026-11-27T00:16:11.389Z",
+        "id": "ocHPn7XMJOXJGHRzoN4SyqjShSXmIXDG"
+      }
+    }
+  }
+}

@@ -1,0 +1,138 @@
+{
+  "capturedAt": "2026-11-27T00:16:16.004Z",
+  "sourceCommit": "29448ae",
+  "request": {
+    "method": "GET",
+    "url": "/api/chat/conversations/e09d4c4f-119a-48c4-a802-9c77e524bc51"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "e09d4c4f-119a-48c4-a802-9c77e524bc51",
+      "title": "افتح http://fixture-site.test/account وسجّل الدخول",
+      "status": "idle",
+      "updatedAt": "2026-11-27T00:16:15.948Z",
+      "browserAccount": null,
+      "messages": [
+        {
+          "id": "97ce9bd9-b930-440e-a335-a0b97f1d56dc",
+          "role": "user",
+          "text": "افتح http://fixture-site.test/account وسجّل الدخول",
+          "createdAt": "2026-11-27T00:16:15.390Z"
+        },
+        {
+          "id": "e4c369b4-3c2d-4416-8367-4b3f96dd2868",
+          "role": "assistant",
+          "text": "لم أؤكد إتمام هذا الطلب. لم يتحقق مسار البحث أو التصفح من النتيجة المطلوبة. لم أؤكد فتح الصفحة أو صحة معلومة حديثة.",
+          "createdAt": "2026-11-27T00:16:15.938Z"
+        }
+      ],
+      "question": null,
+      "approval": null,
+      "secure": null,
+      "browser": {
+        "url": "http://fixture-site.test/login",
+        "title": "Sign in",
+        "observedAt": "2026-11-27T00:16:15.927Z",
+        "live": true,
+        "screenUrl": "/api/chat/conversations/e09d4c4f-119a-48c4-a802-9c77e524bc51/screen?v=42647fc3-3813-4627-a9c5-fdc35e3da3f7",
+        "recovery": "available",
+        "recoveryToken": "5a446555c89ec61e9498205c448e2fdc03905268387879fece016caa3e12a30e"
+      },
+      "progress": null,
+      "steps": [
+        {
+          "id": "139c53b1-97f4-42bc-85c3-7b5c2366c9f3",
+          "text": "فتح fixture-site.test",
+          "createdAt": "2026-11-27T00:16:15.424Z"
+        }
+      ],
+      "error": null,
+      "configured": false,
+      "capabilities": {
+        "chatModel": false,
+        "available": [
+          "computation",
+          "web",
+          "browser",
+          "memory",
+          "knowledge",
+          "documents",
+          "sites",
+          "planner",
+          "letters",
+          "pc"
+        ]
+      },
+      "visibility": {
+        "version": 1,
+        "level": 2,
+        "code": "browser_steps",
+        "reason": "خطوات داخل موقع في متصفح مخفي",
+        "lang": "ar",
+        "decidedAt": "2026-11-27T00:16:15.948Z",
+        "requested": 2,
+        "canView": true,
+        "history": [
+          {
+            "level": 2,
+            "code": "browser_steps",
+            "at": "2026-11-27T00:16:15.948Z"
+          }
+        ]
+      },
+      "campaign": null,
+      "version": "3f7d2aa5ec99fb52fad3e6b2",
+      "run": {
+        "id": "79d68379-a4e2-444e-82aa-3ef264d1d220",
+        "phase": "blocked",
+        "path": "action",
+        "engine": {
+          "kind": "rules",
+          "modelCalls": 0
+        },
+        "context": {
+          "objective": "افتح http://fixture-site.test/account وسجّل الدخول",
+          "previousTurns": 0,
+          "constraints": [],
+          "corrections": [],
+          "capabilities": [
+            "computation",
+            "web",
+            "browser",
+            "memory",
+            "knowledge",
+            "documents",
+            "sites",
+            "planner",
+            "letters",
+            "pc"
+          ],
+          "limitations": [
+            "chatModel"
+          ]
+        },
+        "plan": null,
+        "evidence": [],
+        "permissions": [],
+        "verification": {
+          "status": "not_applicable",
+          "criteria": [],
+          "checkedAt": "2026-11-27T00:16:15.947Z"
+        },
+        "verdict": {
+          "status": "blocked",
+          "reason": "not_possible",
+          "decidedAt": "2026-11-27T00:16:15.947Z"
+        },
+        "repairs": {
+          "used": 0,
+          "limit": 1
+        },
+        "steeredFrom": null,
+        "sequence": 3,
+        "updatedAt": "2026-11-27T00:16:15.949Z"
+      }
+    }
+  }
+}

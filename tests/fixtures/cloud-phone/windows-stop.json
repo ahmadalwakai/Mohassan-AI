@@ -1,0 +1,15 @@
+{
+  "capturedAt": "2026-11-27T00:16:16.347Z",
+  "sourceCommit": "29448ae",
+  "request": {
+    "method": "POST",
+    "url": "/api/windows/devices/d98a9b67-e17c-4e6e-b0ce-54d3a44c97a5/stop",
+    "body": {}
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true
+    }
+  }
+}

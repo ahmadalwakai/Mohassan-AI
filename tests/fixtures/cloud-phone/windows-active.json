@@ -1,0 +1,73 @@
+{
+  "capturedAt": "2026-11-27T00:16:16.332Z",
+  "sourceCommit": "29448ae",
+  "request": {
+    "method": "GET",
+    "url": "/api/windows"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "enabled": true,
+      "devices": [
+        {
+          "id": "d98a9b67-e17c-4e6e-b0ce-54d3a44c97a5",
+          "name": "Office PC",
+          "revoked": false,
+          "online": true,
+          "lastSeenAt": "2026-11-27T00:16:16.325Z",
+          "state": {
+            "status": "جلسة تفاعلية",
+            "target": {
+              "key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "mode": "window",
+              "title": "Mohassan Companion",
+              "width": 400,
+              "height": 200
+            },
+            "localView": true,
+            "sessionId": 1,
+            "safeDesktop": true,
+            "localControl": true,
+            "approvalNonce": "e90e39ba-ba93-4e5b-a26a-5c534d9c5853"
+          },
+          "grant": {
+            "id": "110a0dc6-524b-4121-9bd6-6527393e0e5f",
+            "scope": "control",
+            "targetKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "approvalNonce": "e90e39ba-ba93-4e5b-a26a-5c534d9c5853",
+            "expiresAt": "2026-11-27T00:18:16.322Z"
+          }
+        }
+      ],
+      "events": [
+        {
+          "id": "401add78-a5c4-4513-ab03-f138d3ffe4b5",
+          "deviceId": "d98a9b67-e17c-4e6e-b0ce-54d3a44c97a5",
+          "type": "grant_created",
+          "detail": {
+            "id": "110a0dc6-524b-4121-9bd6-6527393e0e5f",
+            "scope": "control",
+            "targetMode": "window",
+            "durationSeconds": 120
+          },
+          "createdAt": "2026-11-27T00:16:16.319Z"
+        },
+        {
+          "id": "ad4f9943-d08e-46f5-9b48-dde3d08f24b0",
+          "deviceId": "d98a9b67-e17c-4e6e-b0ce-54d3a44c97a5",
+          "type": "device_paired",
+          "detail": {},
+          "createdAt": "2026-11-27T00:16:16.292Z"
+        },
+        {
+          "id": "89f19a12-c776-4c36-a4c1-8a670db7c7a4",
+          "deviceId": null,
+          "type": "pairing_created",
+          "detail": {},
+          "createdAt": "2026-11-27T00:16:16.289Z"
+        }
+      ]
+    }
+  }
+}

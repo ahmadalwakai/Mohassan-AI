@@ -1,0 +1,26 @@
+{
+  "capturedAt": "2026-11-27T00:16:16.343Z",
+  "sourceCommit": "29448ae",
+  "request": {
+    "method": "POST",
+    "url": "/api/windows/devices/d98a9b67-e17c-4e6e-b0ce-54d3a44c97a5/actions",
+    "body": {
+      "grantId": "110a0dc6-524b-4121-9bd6-6527393e0e5f",
+      "nonce": "c04a4107-dd08-4458-b4ff-eff4d7b51ccb",
+      "frameId": "327c338f-842f-45a3-90ee-78de06abe28d",
+      "action": {
+        "type": "click",
+        "x": 0.5,
+        "y": 0.25,
+        "button": "left"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "590dd562-46ae-427c-ac66-7a6969ed6532",
+      "status": "queued"
+    }
+  }
+}

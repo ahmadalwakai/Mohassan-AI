@@ -1,0 +1,142 @@
+{
+  "capturedAt": "2026-11-27T00:16:12.863Z",
+  "sourceCommit": "29448ae",
+  "request": {
+    "method": "GET",
+    "url": "/api/chat/conversations/8dc8c414-5d76-40b7-b8aa-aa3b0ca86d72"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "8dc8c414-5d76-40b7-b8aa-aa3b0ca86d72",
+      "title": "اكتب لي رسالة اعتذار لعميل",
+      "status": "idle",
+      "updatedAt": "2026-11-27T00:16:12.808Z",
+      "browserAccount": null,
+      "messages": [
+        {
+          "id": "bb37c518-c470-4e0c-ad7a-22e1a36925a8",
+          "role": "user",
+          "text": "اكتب لي رسالة اعتذار لعميل",
+          "createdAt": "2026-11-27T00:16:12.618Z"
+        },
+        {
+          "id": "552b98de-7ced-4e38-a447-98a639dfd5a2",
+          "role": "assistant",
+          "text": "أكتب لك الرسالة من قالب رسمي، والتفاصيل تبقى بكلماتك. أجب عن هذه الأسئلة:",
+          "createdAt": "2026-11-27T00:16:12.706Z"
+        },
+        {
+          "id": "515211f3-2b6d-4f5d-b770-eb7f6f10d43f",
+          "role": "user",
+          "text": "1. الأستاذ خالد\n2. اعتذار\n3. تأخر التسليم يومين بسبب الشحن، وسيصل الطلب يوم الأحد\n4. موحسن",
+          "createdAt": "2026-11-27T00:16:12.769Z"
+        },
+        {
+          "id": "cded823c-4b2f-4703-87f0-821d9ac864ba",
+          "role": "assistant",
+          "text": "**الموضوع:** اعتذار\n\nالأستاذ خالد المحترم،\nالسلام عليكم ورحمة الله وبركاته، وبعد:\n\nأود أن أعتذر لكم بصدق عما يلي:\nتأخر التسليم يومين بسبب الشحن، وسيصل الطلب يوم الأحد\n\nنقدّر تفهمكم، ونعمل على ألا يتكرر ذلك.\n\nمع التحية،\nموحسن\n\n---\nهذه مسودة من قالب: الإطار ثابت والتفاصيل بكلماتك كما كتبتها. لم يكتبها نموذج.",
+          "createdAt": "2026-11-27T00:16:12.805Z"
+        }
+      ],
+      "question": null,
+      "approval": null,
+      "secure": null,
+      "browser": null,
+      "progress": null,
+      "steps": [
+        {
+          "id": "f5a1987c-5216-4924-93f8-17aa2c854631",
+          "text": "أسئلة الرسالة",
+          "createdAt": "2026-11-27T00:16:12.693Z"
+        }
+      ],
+      "error": null,
+      "configured": false,
+      "capabilities": {
+        "chatModel": false,
+        "available": [
+          "computation",
+          "web",
+          "browser",
+          "memory",
+          "knowledge",
+          "documents",
+          "sites",
+          "planner",
+          "letters",
+          "pc"
+        ]
+      },
+      "visibility": {
+        "version": 1,
+        "level": 0,
+        "code": "local_card",
+        "reason": "بطاقة أسئلة ثم نص من قالب؛ لا يحتاج متصفحًا",
+        "lang": "ar",
+        "decidedAt": "2026-11-27T00:16:12.808Z",
+        "requested": 0,
+        "canView": true,
+        "history": [
+          {
+            "level": 0,
+            "code": "local_card",
+            "at": "2026-11-27T00:16:12.808Z"
+          }
+        ]
+      },
+      "campaign": null,
+      "version": "01e1b8f1c2b8f43577b5cbf5",
+      "run": {
+        "id": "cfb19c72-e55c-4259-a994-117281528f37",
+        "phase": "completed",
+        "path": "action",
+        "engine": {
+          "kind": "rules",
+          "modelCalls": 0
+        },
+        "context": {
+          "objective": "اكتب لي رسالة اعتذار لعميل",
+          "previousTurns": 0,
+          "constraints": [],
+          "corrections": [],
+          "capabilities": [
+            "computation",
+            "web",
+            "browser",
+            "memory",
+            "knowledge",
+            "documents",
+            "sites",
+            "planner",
+            "letters",
+            "pc"
+          ],
+          "limitations": [
+            "chatModel"
+          ]
+        },
+        "plan": null,
+        "evidence": [],
+        "permissions": [],
+        "verification": {
+          "status": "not_applicable",
+          "criteria": [],
+          "checkedAt": "2026-11-27T00:16:12.807Z"
+        },
+        "verdict": {
+          "status": "completed",
+          "reason": "answered",
+          "decidedAt": "2026-11-27T00:16:12.807Z"
+        },
+        "repairs": {
+          "used": 0,
+          "limit": 1
+        },
+        "steeredFrom": null,
+        "sequence": 5,
+        "updatedAt": "2026-11-27T00:16:12.809Z"
+      }
+    }
+  }
+}
