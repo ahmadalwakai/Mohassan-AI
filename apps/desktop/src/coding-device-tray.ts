@@ -1,6 +1,6 @@
 import { BrowserWindow, Notification, dialog, ipcMain, safeStorage, type MenuItemConstructorOptions, type NativeImage } from 'electron';
 import { hostname } from 'node:os';
-import { join } from 'node:path';
+import { join, win32 } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { DesktopCodingWorker, pairCodingDevice, readCodingDeviceState, writeCodingDeviceState, type CodingDeviceState, type CodingDeviceStatus } from './coding-device.js';
 
@@ -9,7 +9,12 @@ const statusText: Record<CodingDeviceStatus, string> = {
   online: 'متصل',
   offline: 'غير متصل',
   unpaired: 'غير مربوط',
+  'setup-required': 'يحتاج إعدادًا',
+  'repair-required': 'يحتاج إعادة الربط',
 };
+const foldDrive = (url: string) => url.replace(/^file:\/\/\/([A-Za-z]):\//, (_match, drive: string) => `file:///${drive.toLowerCase()}:/`);
+const folderKey = (folder: string) => win32.normalize(folder).replace(/\\+$/, '').toLowerCase();
+const folderLabel = (folder: string) => folder.replaceAll('&', '&&');
 
 export function createCodingDeviceTray(options: {
   userDir: string;
@@ -40,13 +45,20 @@ export function createCodingDeviceTray(options: {
     worker.setState(state);
   }
 
-  function unlink() {
+  function unlink(source: 'local' | 'server') {
     const next = { allowedRoots: state.allowedRoots };
-    try { persist(next); }
-    catch {
+    let saved = true;
+    try { persist(next); } catch {
+      saved = false;
       state = next;
       worker.setState(state);
-      notify('توقف محرك البرمجة. تعذر تحديث ملف الربط، فألغِ ربط الجهاز من «مشاريع البرمجة».');
+    }
+    if (source === 'server') {
+      notify(saved ? 'ألغى الخادم ربط محرك البرمجة بهذا الجهاز.' : 'ألغى الخادم الربط. تعذر تحديث ملف الربط على هذا الجهاز.');
+    } else {
+      notify(saved
+        ? 'أُلغي الربط على هذا الجهاز. ألغِ ربط الجهاز أيضًا من «مشاريع البرمجة» على الويب لإبطال المفتاح على الخادم.'
+        : 'توقف محرك البرمجة. تعذر تحديث ملف الربط. ألغِ ربط الجهاز من «مشاريع البرمجة» على الويب.');
     }
   }
 
@@ -54,14 +66,15 @@ export function createCodingDeviceTray(options: {
     repoRoot: options.repoRoot,
     decrypt: encryptedKey => safeStorage.decryptString(Buffer.from(encryptedKey, 'base64')),
     onStatus: next => { status = next; options.refresh(); },
-    onRevoked: unlink,
+    onRevoked: () => unlink('server'),
+    onRapidExit: () => notify('توقف محرك البرمجة عدة مرات. راجع سجل التشغيل. سيحاول التطبيق تشغيله مجددًا بعد خمس دقائق.'),
     log: options.log,
   });
 
   ipcMain.handle(submitChannel, async (event, code: unknown) => {
     if (
       !supported || !window || event.sender !== window.webContents ||
-      event.senderFrame !== window.webContents.mainFrame || event.senderFrame.url !== pageUrl ||
+      event.senderFrame !== window.webContents.mainFrame || foldDrive(event.senderFrame.url) !== foldDrive(pageUrl) ||
       busy || shuttingDown
     ) return { ok: false, message: 'تعذر بدء الربط.' };
     if (!safeStorage.isEncryptionAvailable()) return { ok: false, message: 'تعذر استخدام مخزن مفاتيح Windows.' };
@@ -116,8 +129,36 @@ export function createCodingDeviceTray(options: {
       properties: ['openDirectory', 'multiSelections'],
     });
     if (selected.canceled || shuttingDown) return;
-    try { persist({ ...state, allowedRoots: [...new Set(selected.filePaths)] }); }
+    const folders = new Map(state.allowedRoots.map(folder => [folderKey(folder), folder]));
+    const originalSize = folders.size;
+    for (const folder of selected.filePaths) {
+      const key = folderKey(folder);
+      if (!folders.has(key)) folders.set(key, folder);
+    }
+    if (folders.size === originalSize) return;
+    if (folders.size > 128) {
+      notify('تسمح قائمة مجلدات المشاريع بما يصل إلى 128 مجلدًا. أزل مجلدًا قبل إضافة مجلدات أخرى.');
+      return;
+    }
+    try { persist({ ...state, allowedRoots: [...folders.values()] }); }
     catch { notify('تعذر حفظ مجلدات المشاريع المسموحة.'); }
+  }
+
+  async function removeRoot(folder: string) {
+    const { response } = await dialog.showMessageBox({
+      type: 'question',
+      title: 'إزالة مجلد مشروع',
+      message: 'هل تريد إزالة هذا المجلد من قائمة المجلدات المسموحة؟',
+      detail: folder,
+      buttons: ['إزالة', 'إلغاء'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (response !== 0 || shuttingDown) return;
+    const key = folderKey(folder);
+    const allowedRoots = state.allowedRoots.filter(root => folderKey(root) !== key);
+    if (allowedRoots.length !== state.allowedRoots.length) persist({ ...state, allowedRoots });
   }
 
   if (supported) worker.setState(state);
@@ -127,12 +168,19 @@ export function createCodingDeviceTray(options: {
         { label: `محرك البرمجة: ${statusText[status]}`, enabled: false },
         { label: 'ربط محرك البرمجة بهذا الجهاز…', enabled: supported && !busy, click: showPairing },
         { label: 'مجلدات المشاريع المسموحة…', enabled: supported, click: () => { void chooseRoots().catch(() => notify('تعذر فتح مجلدات المشاريع.')); } },
-        { label: 'إلغاء ربط محرك البرمجة', enabled: supported && Boolean(state.pairing) && !busy, click: unlink },
+        ...state.allowedRoots.map(folder => ({ label: folderLabel(folder), enabled: false })),
+        {
+          label: 'إزالة مجلد…', enabled: supported && state.allowedRoots.length > 0,
+          submenu: state.allowedRoots.map(folder => ({
+            label: folderLabel(folder), click: () => { void removeRoot(folder).catch(() => notify('تعذر إزالة مجلد المشروع.')); },
+          })),
+        },
+        { label: 'إلغاء ربط محرك البرمجة', enabled: supported && Boolean(state.pairing) && !busy, click: () => unlink('local') },
       ];
     },
     stop() {
       shuttingDown = true;
-      worker.setState({ allowedRoots: state.allowedRoots });
+      return worker.stop();
     },
   };
 }

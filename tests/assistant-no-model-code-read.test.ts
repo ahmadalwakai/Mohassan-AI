@@ -160,7 +160,7 @@ describe('answering a read without a model', () => {
     ['CODING_DEVICE_OFFLINE', 'غير متصل', 'the paired coding device is offline'],
     ['CODING_DEVICE_TIMEOUT', 'انتهت مهلة المهمة قبل إرسالها', 'expired before it could be sent'],
     ['CODING_DEVICE_RESULT_UNKNOWN', 'لن تُعاد المهمة تلقائيًا', 'will not be re-run automatically'],
-    ['CODING_DEVICE_PATH_DENIED', 'المشروع خارج الجذور المصرح بها', 'outside the allowed folders'],
+    ['CODING_DEVICE_PATH_DENIED', 'أضف مجلده من «مجلدات المشاريع المسموحة…»', 'Add its folder from Allowed project folders…'],
     ['CODING_DEVICE_VERSION', 'غير متوافق مع الخادم', 'incompatible protocol version'],
   ])('reports %s in Arabic and English before claiming any check result', async (code, arabic, english) => {
     const failedWork = { ...work, codeCheck: async () => { throw new BrowserError(code, 'Untranslated transport error', 503); } };

@@ -74,6 +74,8 @@ let codingDeviceTray: ReturnType<typeof createCodingDeviceTray> | undefined;
 let stack: ChildProcess | null = null;
 let stackStartedHere = false;
 let quitting = false;
+let codingDeviceShutdown: Promise<void> | undefined;
+let readyToQuit = false;
 
 const icon = () => nativeImage.createFromPath(join(assets, 'icon.png'));
 const trayIcon = () => nativeImage.createFromPath(join(assets, 'tray.png'));
@@ -234,6 +236,7 @@ function buildTray() {
 /** Opens the window as soon as the web app answers; starts the stack first when nothing answers. */
 async function boot(restart = false): Promise<void> {
   if (config.mode === 'production' && new URL(config.webUrl).protocol === 'https:') {
+    log(`web already running at ${config.webUrl}`);
     openMain();
     return;
   }
@@ -288,5 +291,16 @@ else {
     app.on('activate', showMain);
   });
   app.on('window-all-closed', () => { /* the tray keeps the app alive */ });
-  app.on('before-quit', () => { quitting = true; codingDeviceTray?.stop(); globalShortcut.unregisterAll(); if (stackStartedHere) stopStack(); });
+  app.on('before-quit', event => {
+    if (readyToQuit) return;
+    quitting = true;
+    if (codingDeviceTray) {
+      event.preventDefault();
+      if (codingDeviceShutdown) return;
+      codingDeviceShutdown = codingDeviceTray.stop();
+      void codingDeviceShutdown.then(() => { readyToQuit = true; app.quit(); });
+    }
+    globalShortcut.unregisterAll();
+    if (stackStartedHere) stopStack();
+  });
 }

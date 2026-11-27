@@ -4,6 +4,12 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { git } from '../../packages/coding/src/git.ts';
 
+// P5 keeps the real refusal from each execution location and checks its full English reply.
+export const projectOutsideRootsReplies = {
+  local: 'The project was not registered. The project is outside the allowed folders.',
+  device: 'The project was not registered. The project is outside the folders allowed on your PC. Add its folder from Allowed project folders… in the Mohassan tray menu on the PC, then try again.',
+} as const;
+
 export async function configureModelFreeMeasurement(checkout: string, directory: string) {
   // Do not load the owner's configuration, local models, or optional shadow classifiers.
   process.env.MOHASSAN_ISOLATED_TEST = 'true';

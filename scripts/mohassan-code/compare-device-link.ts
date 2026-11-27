@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
+import { projectOutsideRootsReplies } from './fixtures.ts';
 
 const sets = ['slice2', 'before-after', 'logic', 'show-change', 'instructions', 'rename', 'projects', 'suite'];
 const replyFields = ['firstText', 'afterQuestionText', 'approvalPrompt', 'approvalDetail', 'finalText'] as const;
@@ -54,11 +55,18 @@ for (const set of sets) {
     if (!after) throw new Error(`${set}/${before.id}: case missing from device report`);
     const original = observations(before), throughLink = observations(after);
     const sameOutcome = isDeepStrictEqual(original.outcome, throughLink.outcome);
-    const sameReplies = isDeepStrictEqual(original.replies, throughLink.replies);
+    const pathDenial = set === 'projects' && before.id === 'P5';
+    const repliesMatch = pathDenial
+      ? before.met === true && after.met === true
+        && original.replies[0] === projectOutsideRootsReplies.local
+        && throughLink.replies[0] === projectOutsideRootsReplies.device
+        && isDeepStrictEqual(original.replies.slice(1), throughLink.replies.slice(1))
+      : isDeepStrictEqual(original.replies, throughLink.replies);
+    const replyLabel = repliesMatch ? pathDenial ? 'Expected source-specific wording' : 'Same' : 'Different';
     total++;
-    if (sameOutcome && sameReplies) matches++;
-    else console.error(JSON.stringify({ set, case: before.id, sameOutcome, sameReplies, local: original, device: throughLink }));
-    console.log(`| ${set} | ${before.id} | ${before.control ? 'Control' : 'Target'} | ${outcomeLabel(before)} | ${outcomeLabel(after)} | ${sameReplies ? 'Same' : 'Different'} |`);
+    if (sameOutcome && repliesMatch) matches++;
+    else console.error(JSON.stringify({ set, case: before.id, sameOutcome, repliesMatch, local: original, device: throughLink }));
+    console.log(`| ${set} | ${before.id} | ${before.control ? 'Control' : 'Target'} | ${outcomeLabel(before)} | ${outcomeLabel(after)} | ${replyLabel} |`);
   }
 }
 console.log(`\n${matches}/${total} cases matched.`);

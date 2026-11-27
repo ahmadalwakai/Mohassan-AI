@@ -5,6 +5,8 @@ import { dirname, join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { snapshotHash, type SandboxRunner } from '@mohassan/coding';
 import type { ChatConversation, CodingWorkspace } from '@mohassan/contracts';
+import { newBrainState } from '../apps/server/src/assistant/brain.js';
+import { handleCodeProjectsChat } from '../apps/server/src/assistant/code-projects-chat.js';
 import { createApplication } from '../apps/server/src/app.js';
 import { git } from '../packages/coding/src/git.js';
 
@@ -42,6 +44,26 @@ async function repository(root: string, files: Record<string, string> = defaultF
 const registerArabic = (path: string, name: string) => `سجّل مشروع "${path}" باسم ${name}`;
 const registerEnglish = (path: string, name: string, files: readonly string[]) => `register project "${path}" as ${name} with files ${files.join(', ')}`;
 const reply = (conversation: ChatConversation) => conversation.messages.findLast(message => message.role === 'assistant')?.text;
+
+it.each([
+  ['سجّل مشروع "/pc/project" باسم مشروع جديد', 'لم يُسجّل المشروع. المشروع خارج المجلدات المسموحة على جهازك. أضف مجلده من «مجلدات المشاريع المسموحة…» في قائمة موحسن على الجهاز، ثم أعد الطلب.'],
+  ['register project "/pc/project" as New Project', 'The project was not registered. The project is outside the folders allowed on your PC. Add its folder from Allowed project folders… in the Mohassan tray menu on the PC, then try again.'],
+])('explains the local folder setting when the device refuses %s', async (request, expected) => {
+  const finish = vi.fn();
+  const register = vi.fn();
+  expect(await handleCodeProjectsChat({
+    request, state: newBrainState(), ownerId: 'owner', id: 'conversation', runId: 'run', signal: new AbortController().signal,
+    port: {
+      projects: vi.fn(),
+      inspect: async () => { throw Object.assign(new Error('Device-only path error'), { code: 'CODING_DEVICE_PATH_DENIED' }); },
+      register,
+    },
+    ledger: vi.fn(), checkpoint: vi.fn(), transaction: vi.fn(), ownerAccess: vi.fn(), lockOwner: vi.fn(),
+    scrub: value => value, pause: vi.fn(), finish,
+  })).toBe(true);
+  expect(finish).toHaveBeenCalledWith(expected, 'blocked');
+  expect(register).not.toHaveBeenCalled();
+});
 
 describe('owner-only coding project registration and inventory in chat', () => {
   let application: Awaited<ReturnType<typeof createApplication>>;
@@ -192,12 +214,12 @@ describe('owner-only coding project registration and inventory in chat', () => {
     expect(await registeredAt(project.path)).toEqual([]);
   });
 
-  it('explains an out-of-scope folder in English and keeps the Arabic inspection diagnosis', async () => {
+  it('describes a project outside the server roots in English', async () => {
     const project = await repository(directory);
     const refused = await ask(`register project "${project.path}" as Outside Project`);
     expect(refused.status).toBe('idle');
     expect(refused.approval).toBeNull();
-    expect(reply(refused)).toContain('The project is outside the allowed folders. المشروع خارج الجذور المصرح بها.');
+    expect(reply(refused)).toBe('The project was not registered. The project is outside the allowed folders.');
     expect(await registeredAt(project.path)).toEqual([]);
   });
 

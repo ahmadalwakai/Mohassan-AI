@@ -175,6 +175,33 @@ describe('the reply after the approved task settles', () => {
     expect(failed.text).toContain('هذا المشروع غير مسجل.');
     expect(failed.text).toContain('مشروعك الأصلي لم يتغيّر');
   });
+  it.each(['NOT_PAIRED', 'OFFLINE', 'TIMEOUT', 'VERSION', 'SANDBOX_UNAVAILABLE', 'DISABLED', 'PATH_DENIED'])(
+    'reports no execution or source change for CODING_DEVICE_%s', suffix => {
+      const error = `task status: failed\nerror: CODING_DEVICE_${suffix}: Stored task error.`;
+      expect(codingOutcomeReply(error, label, 'أصلح الكود في مشروع تجربة الجمع')).toMatchObject({
+        status: 'blocked', text: expect.stringContaining('لم يُشغَّل كود المشروع. مشروعك الأصلي لم يتغيّر.'),
+      });
+      expect(codingOutcomeReply(error, label, 'Fix the code in مشروع تجربة الجمع')).toMatchObject({
+        status: 'blocked', text: expect.stringContaining('No project code ran. Your original project is unchanged.'),
+      });
+    },
+  );
+  it.each(['RESULT_UNKNOWN', 'BAD_RESULT', 'RESULT_TOO_LARGE'])(
+    'reports uncertainty for CODING_DEVICE_%s', suffix => {
+      const error = `failed: CODING_DEVICE_${suffix}: Stored task error.`;
+      const ar = codingOutcomeReply(error, label, 'أصلح الكود في مشروع تجربة الجمع');
+      const en = codingOutcomeReply(error, label, 'Fix the code in مشروع تجربة الجمع');
+      expect(ar).toMatchObject({ status: 'blocked', text: expect.stringContaining('لم أتمكن من تأكيد نتيجة التعديل') });
+      expect(en).toMatchObject({ status: 'blocked', text: expect.stringContaining('I could not confirm the outcome of the change') });
+      for (const reply of [ar, en]) expect(reply.text).not.toMatch(/Stored task error|unchanged|لم يتغيّر/u);
+    },
+  );
+  it('reports device cancellation without claiming it occurred before execution', () => {
+    const error = 'task status: cancelled\nerror: CODING_DEVICE_CANCELLED: Stored task error.';
+    expect(codingOutcomeReply(error, label, 'Fix the code in مشروع تجربة الجمع')).toEqual({
+      status: 'blocked', text: 'The coding job was cancelled.',
+    });
+  });
   it.each([
     ['أصلح الكود في مشروع تجربة الجمع', 'لم تصل نتيجة المهمة من الجهاز. لن تُعاد المهمة تلقائيًا.'],
     ['Fix the code in مشروع تجربة الجمع', 'The device did not return a result. The job will not be re-run automatically.'],

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { BrowserError } from '@mohassan/browser';
 import type { CheckFailure, CodingCheckResult, ImportsLookup, ProjectSearchResult } from '@mohassan/coding';
 import { readRenameGoal } from '@mohassan/coding';
-import { codingDeviceFailureText, codingDeviceTaskFailureText } from '@mohassan/coding-link/failures';
+import { codingDeviceFailureText } from '@mohassan/coding-link/failures';
 import { addEvidence, appendStep, planStep, settleStep, startStep, tryEnterPhase, type RunLedger } from './agent-run.js';
 import type { BrainState } from './brain.js';
 import { codeLogicReply, recognizeCodeLogicRequest } from './code-logic-request.js';
@@ -129,12 +129,17 @@ export function codingOutcomeReply(outcome: string, label: string, request: stri
   const error = field('error') ?? failed;
   const name = label.replace(/^تعديل (?:مشروع )?/u, '').trim() || label;
   const deviceLang = requestLanguage(request, name);
-  const deviceFailure = codingDeviceTaskFailureText(error, deviceLang);
-  if (deviceFailure) return {
-    status: 'blocked',
-    text: (deviceLang === 'ar' ? `لم أتمكن من تأكيد نتيجة التعديل في «${name}». `
-      : `I could not confirm the outcome of the change to "${name}". `) + deviceFailure,
-  };
+  const deviceCode = error?.split(':', 1)[0];
+  const deviceFailure = codingDeviceFailureText(deviceCode, deviceLang);
+  if (deviceFailure) {
+    if (deviceCode === 'CODING_DEVICE_CANCELLED') return { status: 'blocked', text: deviceFailure };
+    const uncertain = deviceCode === 'CODING_DEVICE_RESULT_UNKNOWN'
+      || deviceCode === 'CODING_DEVICE_BAD_RESULT' || deviceCode === 'CODING_DEVICE_RESULT_TOO_LARGE';
+    const lead = uncertain
+      ? (deviceLang === 'ar' ? `لم أتمكن من تأكيد نتيجة التعديل في «${name}».` : `I could not confirm the outcome of the change to "${name}".`)
+      : (deviceLang === 'ar' ? 'لم يُشغَّل كود المشروع. مشروعك الأصلي لم يتغيّر.' : 'No project code ran. Your original project is unchanged.');
+    return { status: 'blocked', text: `${lead} ${deviceFailure}` };
+  }
   const project = lang === 'ar' ? `«${name}»` : `"${name}"`;
   const unchanged = lang === 'ar' ? 'مشروعك الأصلي لم يتغيّر ولم يُدمج شيء.' : 'Your original project is unchanged and nothing was merged.';
   const withSummary = (text: string) => [text, summary, codingOutcomeReportText(field, lang)].filter(Boolean).join('\n\n');

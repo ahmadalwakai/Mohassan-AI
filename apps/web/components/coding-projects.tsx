@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Button, Spinner, VisuallyHidden } from "@chakra-ui/react";
 import { Code2, Copy, FolderGit2, Link2, Plus, RefreshCw, ShieldCheck, Terminal, Unplug } from "lucide-react";
 import { CodingDeviceListSchema, CodingDevicePairingSchema, ProjectSchema, RegisterProjectSchema, type CodingDeviceList, type CodingDevicePairing, type CodingWorkspace, type Project } from "@mohassan/contracts";
@@ -25,21 +25,28 @@ async function saveProject(path: string, body: unknown, signal: AbortSignal): Pr
 const deviceStatusError = "تعذر تحديث حالة جهاز البرمجة. حاول مجددًا.";
 const deviceActionError = "تعذر إكمال طلب ربط الجهاز. حدّث حالته قبل تكرار الطلب.";
 const deviceDate = new Intl.DateTimeFormat("ar", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+type PairingState = (CodingDevicePairing & { kind: "issued"; previousDeviceId: string | null })
+  | { kind: "completed"; deviceId: string }
+  | { kind: "expired"; previousDeviceId: string | null };
 
 function CodingDevicePanel({ offline, onRefresh }: { offline: boolean; onRefresh: () => void }) {
   const [list, setList] = useState<CodingDeviceList | null>(null);
   const [statusError, setStatusError] = useState("");
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState<"pair" | "revoke" | null>(null);
-  const [pairing, setPairing] = useState<(CodingDevicePairing & { previousDeviceId: string | null }) | null>(null);
+  const [pairingState, setPairingState] = useState<PairingState | null>(null);
   const [notice, setNotice] = useState("");
   const statusRequest = useRef<AbortController | null>(null);
   const actionRequest = useRef<AbortController | null>(null);
+  const pollingDisabled = useRef(false);
   const codeInput = useRef<HTMLInputElement>(null);
+  const replacementWarningId = useId();
   const device = list?.devices[0];
+  const disabled = list?.enabled === false;
+  const pairing = pairingState?.kind === "issued" ? pairingState : null;
 
   const load = useCallback(async () => {
-    if (offline || statusRequest.current || actionRequest.current) return;
+    if (offline || pollingDisabled.current || statusRequest.current || actionRequest.current) return;
     const controller = new AbortController();
     statusRequest.current = controller;
     try {
@@ -47,10 +54,18 @@ function CodingDevicePanel({ offline, onRefresh }: { offline: boolean; onRefresh
       const parsed = CodingDeviceListSchema.safeParse(data);
       if (!parsed.success) throw new Error(deviceStatusError);
       if (!controller.signal.aborted) {
+        const { enabled, devices } = parsed.data;
+        // A timer or reconnect can fire before React commits the disabled state.
+        pollingDisabled.current = !enabled;
         setList(parsed.data);
         setStatusError("");
-        const activeId = parsed.data.devices[0]?.id ?? null;
-        setPairing((current) => parsed.data.enabled && current?.previousDeviceId === activeId ? current : null);
+        const active = devices[0];
+        setPairingState((current) => {
+          if (!enabled || !current) return null;
+          if (current.kind === "completed") return active?.id === current.deviceId ? current : null;
+          if (!active || active.id === current.previousDeviceId) return current;
+          return { kind: "completed", deviceId: active.id };
+        });
       }
     } catch (caught) {
       if (!controller.signal.aborted) setStatusError(caught instanceof Error && !(caught instanceof TypeError) ? caught.message : deviceStatusError);
@@ -60,7 +75,7 @@ function CodingDevicePanel({ offline, onRefresh }: { offline: boolean; onRefresh
   }, [offline]);
 
   useEffect(() => {
-    if (offline) return;
+    if (offline || disabled) return;
     void load();
     const timer = window.setInterval(() => { if (!document.hidden) void load(); }, 5000);
     return () => {
@@ -68,19 +83,19 @@ function CodingDevicePanel({ offline, onRefresh }: { offline: boolean; onRefresh
       statusRequest.current?.abort();
       statusRequest.current = null;
     };
-  }, [load, offline]);
+  }, [load, offline, disabled]);
   useEffect(() => () => actionRequest.current?.abort(), []);
   useEffect(() => {
     if (!pairing) return;
     const timer = window.setTimeout(() => {
-      setPairing(null);
-      setNotice("انتهت صلاحية رمز الربط. اطلب رمزًا جديدًا.");
+      setPairingState((current) => current === pairing ? { kind: "expired", previousDeviceId: pairing.previousDeviceId } : current);
     }, Math.max(0, Date.parse(pairing.expiresAt) - Date.now()));
     return () => window.clearTimeout(timer);
   }, [pairing]);
 
   async function update(kind: "pair" | "revoke") {
-    if (offline || statusError || !list?.enabled || actionRequest.current || (kind === "revoke" && !device)) return;
+    if (offline || statusError || !list?.enabled || pollingDisabled.current || actionRequest.current) return;
+    if (kind === "revoke" && (!device || !window.confirm(`هل تريد إلغاء ربط جهاز البرمجة «${device.name}»؟ سيُبطَل مفتاح الجهاز وتُلغى المهام المنتظرة.`))) return;
     const controller = new AbortController();
     actionRequest.current = controller;
     statusRequest.current?.abort();
@@ -90,17 +105,17 @@ function CodingDevicePanel({ offline, onRefresh }: { offline: boolean; onRefresh
     setNotice("");
     try {
       if (kind === "pair") {
-        setPairing(null);
+        setPairingState(null);
         const data = await codingRequest("/api/coding/devices/pairing", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", signal: controller.signal }, deviceActionError);
         const parsed = CodingDevicePairingSchema.safeParse(data);
         if (!parsed.success) throw new Error(deviceActionError);
-        if (!controller.signal.aborted) setPairing({ ...parsed.data, previousDeviceId: device?.id ?? null });
+        if (!controller.signal.aborted) setPairingState({ ...parsed.data, kind: "issued", previousDeviceId: device?.id ?? null });
       } else if (device) {
         const data = await codingRequest(`/api/coding/devices/${device.id}`, { method: "DELETE", signal: controller.signal }, deviceActionError);
         if (!data || typeof data !== "object" || !("revoked" in data) || data.revoked !== true) throw new Error(deviceActionError);
         if (!controller.signal.aborted) {
           setList({ enabled: true, devices: [] });
-          setPairing(null);
+          setPairingState(null);
           setNotice("أُلغي ربط جهاز البرمجة.");
           onRefresh();
         }
@@ -141,9 +156,12 @@ function CodingDevicePanel({ offline, onRefresh }: { offline: boolean; onRefresh
 
   return <section className="panel coding-device-panel" aria-label="ربط جهاز البرمجة" dir="rtl">
     <div className="panel-heading">
-      <div><h2>جهاز البرمجة</h2><p role="status">{status}</p></div>
+      <div>
+        <h2>جهاز البرمجة</h2><p role="status">{status}</p>
+        {list?.enabled && device ? <p id={replacementWarningId}>استخدام رمز ربط جديد يستبدل الجهاز المرتبط حاليًا ويُبطل مفتاحه.</p> : null}
+      </div>
       <div className="coding-device-actions">
-        {list?.enabled ? <Button className="primary-button" type="button" loading={busy === "pair"} disabled={unavailable} onClick={() => { void update("pair"); }}><Link2 size={16} aria-hidden="true" />اربط جهازك</Button> : null}
+        {list?.enabled ? <Button className="primary-button" type="button" aria-describedby={device ? replacementWarningId : undefined} loading={busy === "pair"} disabled={unavailable} onClick={() => { void update("pair"); }}><Link2 size={16} aria-hidden="true" />اربط جهازك</Button> : null}
         {list?.enabled && device ? <Button type="button" variant="outline" loading={busy === "revoke"} disabled={unavailable} onClick={() => { void update("revoke"); }}><Unplug size={16} aria-hidden="true" />إلغاء ربط الجهاز</Button> : null}
         {statusError ? <Button type="button" variant="outline" disabled={offline} onClick={() => { void load(); }}><RefreshCw size={15} aria-hidden="true" />تحديث حالة الجهاز</Button> : null}
       </div>
@@ -163,8 +181,10 @@ function CodingDevicePanel({ offline, onRefresh }: { offline: boolean; onRefresh
             <Button type="button" variant="outline" onClick={() => { void copyCode(); }}><Copy size={15} aria-hidden="true" />نسخ رمز الربط</Button>
           </div>
         </div> : null}
+        {pairingState?.kind === "completed" && device ? <p className="coding-device-notice">اكتمل ربط جهاز البرمجة «<bdi>{device.name}</bdi>».</p> : null}
+        {pairingState?.kind === "expired" ? <p className="coding-device-notice">انتهت صلاحية رمز الربط. اطلب رمزًا جديدًا.</p> : null}
       </div>
-      <p className="coding-device-notice" role="status">{notice}</p>
+      <p className="coding-device-notice" role="status">{!disabled && (!pairingState || pairing) ? notice : ""}</p>
       {statusError ? <p className="inline-error" role="alert">{statusError}</p> : null}
       {actionError ? <p className="inline-error" role="alert">{actionError}</p> : null}
     </div>

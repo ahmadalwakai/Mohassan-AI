@@ -18,8 +18,8 @@ const messages: Record<CodingDeviceErrorCode, Record<'ar' | 'en', string>> = {
     en: 'The device did not return a result. The job will not be re-run automatically.',
   },
   CODING_DEVICE_PATH_DENIED: {
-    ar: 'المشروع خارج الجذور المصرح بها.',
-    en: 'The project is outside the allowed folders.',
+    ar: 'المشروع خارج المجلدات المسموحة على جهازك. أضف مجلده من «مجلدات المشاريع المسموحة…» في قائمة موحسن على الجهاز، ثم أعد الطلب.',
+    en: 'The project is outside the folders allowed on your PC. Add its folder from Allowed project folders… in the Mohassan tray menu on the PC, then try again.',
   },
   CODING_DEVICE_VERSION: {
     ar: 'إصدار ربط جهاز البرمجة غير متوافق مع الخادم. حدّث نسخة محرك البرمجة على الجهاز.',

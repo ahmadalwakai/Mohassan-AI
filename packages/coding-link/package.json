@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/protocol.ts",
+    "./bootstrap": "./src/bootstrap.ts",
     "./failures": "./src/failures.ts",
     "./protocol": "./src/protocol.ts",
     "./worker": "./src/worker.ts"

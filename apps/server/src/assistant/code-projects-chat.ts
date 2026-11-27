@@ -61,12 +61,9 @@ function recognize(request: string) {
 
 function refusalReason(error: unknown, lang: Language): string | undefined {
   const code = (error as NodeJS.ErrnoException | null)?.code;
-  const pathDenied = code === 'PROJECT_OUTSIDE_ROOTS' || code === 'CODING_DEVICE_PATH_DENIED';
-  const deviceReason = codingDeviceFailureText(pathDenied ? 'CODING_DEVICE_PATH_DENIED' : code, lang);
-  if (deviceReason) {
-    // Keep the established project-registration diagnosis available in Arabic too.
-    return pathDenied && lang === 'en' ? `${deviceReason} ${codingDeviceFailureText('CODING_DEVICE_PATH_DENIED', 'ar')}` : deviceReason;
-  }
+  if (code === 'PROJECT_OUTSIDE_ROOTS') return say(lang, 'المشروع خارج الجذور المصرح بها.', 'The project is outside the allowed folders.');
+  const deviceReason = codingDeviceFailureText(code, lang);
+  if (deviceReason) return deviceReason;
   if (error instanceof CodingError) return error.message;
   if (code === 'ENOENT') return say(lang, 'مسار المشروع غير موجود.', 'The project path does not exist.');
   if (code === 'EACCES' || code === 'EPERM') return say(lang, 'تعذرت قراءة مسار المشروع بسبب صلاحيات الوصول.', 'Access to the project path was denied.');

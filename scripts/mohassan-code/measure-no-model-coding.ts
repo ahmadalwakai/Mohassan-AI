@@ -44,9 +44,9 @@ import { PASSING_OUTPUT, REAL_OUTPUT } from '../../tests/fixtures/coding-test-ou
 import { REPAIR_DEMO_FAILURE_OUTPUT, REPAIR_DEMO_SUCCESS_OUTPUT } from '../../tests/fixtures/coding-repair-demo-output.js';
 import { git } from '../../packages/coding/src/git.ts';
 import { pairMeasurementDevice, unavailableServerSandbox } from './device-fixture.ts';
-import { configureModelFreeMeasurement } from './fixtures.ts';
+import { configureModelFreeMeasurement, projectOutsideRootsReplies } from './fixtures.ts';
 
-interface Case { id: string; goal: string; expect?: string[]; approval?: boolean; expectApproval?: string[]; question?: { option: string; expect: string[] }; control?: boolean; blocked?: boolean }
+interface Case { id: string; goal: string; expect?: string[]; expectedReply?: typeof projectOutsideRootsReplies; approval?: boolean; expectApproval?: string[]; question?: { option: string; expect: string[] }; control?: boolean; blocked?: boolean }
 const beforeAfter = ['قبل التعديل: نجح 0 من 2، وفشل 2.', 'بعد التعديل: نجح 2 من 2، وفشل 0.', 'adds positive values', 'test/sum.test.mjs:5', 'ReferenceError', 'src/sum.ts:2'];
 const LOGIC_AR = ['مشروع تجربة الجمع', 'تغيير المنطق يحتاج إلى نموذج لا يعمل الآن', 'تشغيل الفحوص وشرح نتائجها', 'البحث', 'الاستيراد', 'الإصلاحات المثبتة', 'بعد موافقتك'];
 const LOGIC_EN = ['مشروع تجربة الجمع', 'A logic change needs a model, which is not running now', 'run the checks and explain the results', 'search', 'imports', 'proven fixes', 'with your approval'];
@@ -125,7 +125,7 @@ const SETS: Record<'slice1' | 'slice2' | 'before-after' | 'logic' | 'show-change
     { id: 'P2', goal: 'list my coding projects', expect: ['مشروع تجربة الجمع', 'Editable files', 'src/sum.ts', 'Test files', 'test/sum.test.mjs'] },
     { id: 'P3', goal: 'سجّل مشروع "{selection}" باسم مشروع الاختيار', question: { option: 'src/sum.ts', expect: ['اختر من ملف واحد إلى 5', 'src/sum.ts'] }, approval: true, expect: ['سُجّل مشروع', 'مشروع الاختيار', 'src/sum.ts'] },
     { id: 'P4', goal: 'register project "{direct}" as Direct Project with files src/sum.ts', approval: true, expect: ['Registered coding project', 'Direct Project', 'src/sum.ts'] },
-    { id: 'P5', goal: 'register project "{outside}" as Outside Project', expect: ['المشروع خارج الجذور المصرح بها.'] },
+    { id: 'P5', goal: 'register project "{outside}" as Outside Project', expectedReply: projectOutsideRootsReplies, blocked: true },
     { id: 'K1', goal: 'ابحث عن ملف اسمه README', control: true },
     { id: 'K2', goal: 'صحح هذا النص: انا ذهبت الي المدرسه', control: true },
   ],
@@ -333,11 +333,12 @@ try {
       row.codingOutcome = task.result?.outcome ?? null;
     }
     row.ms = Date.now() - started;
-    if (item.expect) row.met = questionMet && (item.approval === undefined || (item.approval
+    if (item.expect || item.expectedReply) row.met = questionMet && (item.approval === undefined || (item.approval
       ? decision.status === 'waiting_approval' : decision.status !== 'waiting_approval' && !decision.approval))
       && (!item.blocked || first.run?.verdict?.status === 'blocked')
       && (item.expectApproval ?? []).every(text => (decision.approval?.detail ?? '').includes(text))
-      && item.expect.every(text => (finalText ?? '').includes(text));
+      && (item.expect ?? []).every(text => (finalText ?? '').includes(text))
+      && (!item.expectedReply || finalText === item.expectedReply[viaDeviceLink ? 'device' : 'local']);
     if (item.control) row.control = true;
     rows.push(row);
   }
