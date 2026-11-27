@@ -5,6 +5,8 @@ export type { CheckCounts, CheckFailure, CheckReport, SourceLocation, SyntaxFail
 export { fileImports, importRelations, lookupImports, resolveProjectReference, searchProjectFiles } from "./project-read.ts";
 export type { ImportEdge, ImportRelations, ImportsLookup, ProjectReference, ProjectSearchResult, SearchMatch } from "./project-read.ts";
 export type { TypeScriptDiagnostic } from "./typescript-repair.ts";
+export { readRenameGoal } from "./rename.ts";
+export type { RenameRequest } from "./rename.ts";
 export type { CodingContext, CodingContextFile, CodingModelReceipt, EditGenerator, EditRefusal } from "./edit-generator.ts";
 export { deterministicCodingMessage, generateDeterministicEdits } from "./deterministic.ts";
 export { createDemoProject, createRepairDemoProject, inspectProject } from "./project.ts";

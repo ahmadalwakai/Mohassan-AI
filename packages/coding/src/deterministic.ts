@@ -1,9 +1,10 @@
 import type { CodingContextFile, EditGenerator } from "./edit-generator.ts";
+import { readRenameGoal, renameTypeScript } from "./rename.ts";
 import { credentialLike, limits, sha256 } from "./security.ts";
 import { formatSourceFiles } from "./typescript-repair.ts";
 
 const noProvenFix = "لم تجد الأدوات إصلاحًا يمكن إثباته ضمن الملفات المسموح بها. تحتاج أخطاء المنطق غير المشخّصة إلى تعديل يدوي.";
-export const deterministicCodingMessage = "محرك البرمجة يعمل دون نموذج. يصلح تشخيصات TypeScript ذات الإصلاح المؤكد ومشكلات ESLint القابلة للإصلاح، وينسّق الملفات عند الطلب. يرفض تغييرات المنطق التي لا تستطيع الأدوات إثباتها.";
+export const deterministicCodingMessage = "محرك البرمجة يعمل دون نموذج. يطبق إعادة التسمية المثبتة وإصلاحات TypeScript وESLint المؤكدة، وينسّق الملفات عند الطلب. يرفض تغييرات المنطق التي لا تستطيع الأدوات إثباتها.";
 
 function requestsFormatting(goal: string): boolean {
   const normalized = goal.normalize("NFKC").replace(/\p{M}/gu, "");
@@ -28,6 +29,8 @@ function formattingTargets(files: CodingContextFile[], goal: string): CodingCont
 export const generateDeterministicEdits: EditGenerator = Object.assign(async (context: Parameters<EditGenerator>[0]) => {
   const { files, goal, signal, tools } = context;
   signal.throwIfAborted();
+  const rename = readRenameGoal(goal);
+  if (rename) return tools?.renameTypeScript?.(rename) ?? renameTypeScript(files, rename, signal);
   const formatting = requestsFormatting(goal);
   const formattingFiles = formatting ? formattingTargets(files, goal) : files;
   const proposed = tools?.repairTypeScript() ?? new Map<string, string>();

@@ -1,6 +1,7 @@
 import { beforeEach,afterEach,describe,it,expect } from 'vitest';
 import { randomUUID,createHash } from 'node:crypto';
 import { createDatabase,migrate,type DatabaseHandle } from '@mohassan/database';
+import { CodingError } from '@mohassan/coding/security';
 import { Runtime,type RuntimeOptions } from '@mohassan/runtime';
 import type { CodingResult } from '@mohassan/contracts';
 const digest=(text:string)=>createHash('sha256').update(text).digest('hex');
@@ -61,6 +62,17 @@ describe('coding task authorization, results and usage persistence',()=>{
     expect(calls).toBe(1);
     expect(await store.db.selectFrom('coding_runs').select(['status','error_code']).executeTakeFirstOrThrow()).toEqual({status:'failed',error_code:'NO_PROVEN_FIX'});
     expect(JSON.stringify(detail)).not.toContain('untrusted tool details');
+  });
+  it('preserves a checked rename refusal in the terminal coding outcome',async()=>{
+    const reason='تعذرت إعادة التسمية: تتطلب إعادة التسمية تعديل ملف محمي «test/sum.test.mjs».';
+    const runtime=new Runtime(store.db,options(async()=>{throw new CodingError('NO_PROVEN_FIX',reason);}));
+    const task=await runtime.createTask('owner',{...input,goal:'rename sum to add'},'rename-refusal');
+    await runtime.approve('owner',task.id);
+    await runtime.tick();
+    const detail=await runtime.detail('owner',task.id);
+    expect(detail.task).toMatchObject({status:'failed',error:reason});
+    expect(detail.events.at(-1)).toMatchObject({type:'task_failed',message:reason});
+    expect(await store.db.selectFrom('coding_runs').select(['status','error_code']).executeTakeFirstOrThrow()).toEqual({status:'failed',error_code:'NO_PROVEN_FIX'});
   });
   it('keeps an interrupted tool-backed repair behind fresh approval',async()=>{
     let calls=0;

@@ -15,7 +15,7 @@ const supportedDiagnostics = new Set(ts.getSupportedCodeFixes().map(Number));
 // Other compiler actions can silence diagnostics or insert inferred implementations.
 const provenFixes = new Set(["import", "spelling"]);
 
-function absolutePath(path: string): string {
+export function absolutePath(path: string): string {
   return posix.resolve(projectRoot, path.replaceAll("\\", "/"));
 }
 
@@ -37,7 +37,7 @@ function matches(path: string, glob: string, root: string): boolean {
   return path === pattern || path.startsWith(`${pattern}/`);
 }
 
-function createSnapshot(files: readonly SnapshotFile[], formatting = false, signal?: AbortSignal, project?: string) {
+export function createSnapshot(files: readonly SnapshotFile[], formatting = false, signal?: AbortSignal, project?: string, allSources = false) {
   const contents = new Map(files.map((file) => [absolutePath(file.path), file.content]));
   const paths = new Map(files.map((file) => [absolutePath(file.path), file.path]));
   const directories = new Set([projectRoot, libraryRoot]);
@@ -78,6 +78,11 @@ function createSnapshot(files: readonly SnapshotFile[], formatting = false, sign
     rootNames = parsed.fileNames.filter((file) => contents.has(absolutePath(file)));
     options = parsed.options;
     projectReferences = parsed.projectReferences;
+  }
+  if (allSources) {
+    // A test or configuration script can reference a symbol even if tsc excludes the file.
+    rootNames = [...new Set([...rootNames, ...[...contents.keys()].filter((file) => /\.(?:[cm]?[jt]s|[jt]sx)$/i.test(file))])];
+    options = { ...options, allowJs: true, noCheck: false };
   }
   const resolution = options.moduleResolution ?? ts.ModuleResolutionKind.NodeNext;
   let defaultModule = ts.ModuleKind.ESNext;
@@ -149,7 +154,7 @@ function createSnapshot(files: readonly SnapshotFile[], formatting = false, sign
     return result;
   }
 
-  return { contents, paths, service, diagnostics, update, imports };
+  return { contents, paths, service, diagnostics, update, imports, configValid };
 }
 
 export function inspectTypeScript(files: readonly SnapshotFile[], signal?: AbortSignal, project?: string): { diagnosticPaths: string[]; imports: Map<string, Set<string>> } {
@@ -178,7 +183,7 @@ export function typeScriptDiagnostics(files: readonly SnapshotFile[], signal?: A
   } finally { snapshot.service.dispose(); }
 }
 
-function applyTextChanges(content: string, changes: readonly ts.TextChange[]): string | undefined {
+export function applyTextChanges(content: string, changes: readonly ts.TextChange[]): string | undefined {
   let end = content.length;
   let result = content;
   for (const { span, newText } of [...changes].sort((a, b) => a.span.start - b.span.start).reverse()) {
@@ -193,7 +198,7 @@ function diagnosticKey(diagnostic: ts.Diagnostic): string {
   return JSON.stringify([diagnostic.file?.fileName, diagnostic.code, ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")]);
 }
 
-function diagnosticCounts(diagnostics: readonly ts.Diagnostic[]): Map<string, number> {
+export function diagnosticCounts(diagnostics: readonly ts.Diagnostic[]): Map<string, number> {
   const counts = new Map<string, number>();
   for (const item of diagnostics) {
     const key = diagnosticKey(item);

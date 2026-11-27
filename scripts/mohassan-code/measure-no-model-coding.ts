@@ -12,12 +12,14 @@
  *   task for a second registered project, and compare two control replies verbatim across checkouts.
  * - `instructions` (2026-11-27): read saved project instructions in Arabic and English, report an absent file,
  *   surface notes in the check reply and approval card, and compare two controls.
+ * - `rename` (2026-11-27): two successful renames, two refusals after approval, and two controls whose replies must
+ *   match exactly between arms. Uses a passing variant of the demo with a declaration and its import in separate files.
  *
  * Each request runs in a fresh conversation; an approval card is approved once. The demo project is registered, no chat
  * model is configured, and the database is embedded and in memory. Records the first and final replies, the run status
  * and the time per request.
  *
- * Usage: npx tsx scripts/mohassan-code/measure-no-model-coding.ts [checkout] [out.json] [--set=slice1|slice2|before-after|logic|show-change|instructions] [--real-sandbox]
+ * Usage: npx tsx scripts/mohassan-code/measure-no-model-coding.ts [checkout] [out.json] [--set=slice1|slice2|before-after|logic|show-change|instructions|rename] [--real-sandbox]
  * `checkout` (default: the current directory) is the repository to measure, so one copy of this file measures a base
  * checkout too. That checkout needs its own installed node_modules. `--real-sandbox` uses the Windows AppContainer
  * sandbox instead of the stub (Windows only; its first isolation probe takes about half a minute).
@@ -28,13 +30,14 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { PASSING_OUTPUT, REAL_OUTPUT } from '../../tests/fixtures/coding-test-output.js';
 import { REPAIR_DEMO_FAILURE_OUTPUT, REPAIR_DEMO_SUCCESS_OUTPUT } from '../../tests/fixtures/coding-repair-demo-output.js';
+import { git } from '../../packages/coding/src/git.ts';
 
 interface Case { id: string; goal: string; expect?: string[]; approval?: boolean; expectApproval?: string[]; control?: boolean; blocked?: boolean }
 const beforeAfter = ['قبل التعديل: نجح 0 من 2، وفشل 2.', 'بعد التعديل: نجح 2 من 2، وفشل 0.', 'adds positive values', 'test/sum.test.mjs:5', 'ReferenceError', 'src/sum.ts:2'];
 const LOGIC_AR = ['مشروع تجربة الجمع', 'تغيير المنطق يحتاج إلى نموذج لا يعمل الآن', 'تشغيل الفحوص وشرح نتائجها', 'البحث', 'الاستيراد', 'الإصلاحات المثبتة', 'بعد موافقتك'];
 const LOGIC_EN = ['مشروع تجربة الجمع', 'A logic change needs a model, which is not running now', 'run the checks and explain the results', 'search', 'imports', 'proven fixes', 'with your approval'];
 const REPAIR_DIFF = ['mohassan/', 'src/sum.ts', '-  return leftHandValue + rightHandVaule;', '+  return leftHandValue + rightHandValue;', 'git merge'];
-const SETS: Record<'slice1' | 'slice2' | 'before-after' | 'logic' | 'show-change' | 'instructions', Case[]> = {
+const SETS: Record<'slice1' | 'slice2' | 'before-after' | 'logic' | 'show-change' | 'instructions' | 'rename', Case[]> = {
   slice1: [
     'أصلح الكود في مشروع تجربة الجمع',
     'أصلح مشروع تجربة الجمع',
@@ -95,6 +98,14 @@ const SETS: Record<'slice1' | 'slice2' | 'before-after' | 'logic' | 'show-change
     { id: 'BK1', goal: 'ابحث عن ملف اسمه README', control: true },
     { id: 'BK2', goal: 'صحح هذا النص: انا ذهبت الي المدرسه', control: true },
   ],
+  rename: [
+    { id: 'R1', goal: 'أعد تسمية addValues إلى combineValues في مشروع تجربة الجمع', approval: true, expect: ['addValues', 'combineValues', 'فرع المراجعة'] },
+    { id: 'R2', goal: 'rename addValues to addNumbers in مشروع تجربة الجمع', approval: true, expect: ['addValues', 'addNumbers', 'فرع المراجعة'] },
+    { id: 'R3', goal: 'غيّر اسم الدالة sum إلى sumValues في مشروع تجربة الجمع', approval: true, expect: ['ملف محمي', 'test/sum.test.mjs'] },
+    { id: 'R4', goal: 'أعد تسمية addValues إلى existingName في مشروع تجربة الجمع', approval: true, expect: ['existingName', 'موجود بالفعل في النطاق'] },
+    { id: 'K1', goal: 'ابحث عن ملف اسمه README', control: true },
+    { id: 'K3', goal: 'صحح هذا النص: انا ذهبت الي المدرسه', control: true },
+  ],
 };
 
 // Recorded Windows AppContainer demo output from tests/assistant-no-model-code-read.test.ts.
@@ -109,11 +120,46 @@ const recordedFailure = [
 const flags = process.argv.slice(2).filter(value => value.startsWith('--'));
 const [checkoutArgument, out] = process.argv.slice(2).filter(value => !value.startsWith('--'));
 const set = flags.find(value => value.startsWith('--set='))?.slice('--set='.length) ?? 'slice1';
-if (set !== 'slice1' && set !== 'slice2' && set !== 'before-after' && set !== 'logic' && set !== 'show-change' && set !== 'instructions') throw new Error(`unknown set ${set}`);
+if (set !== 'slice1' && set !== 'slice2' && set !== 'before-after' && set !== 'logic' && set !== 'show-change' && set !== 'instructions' && set !== 'rename') throw new Error(`unknown set ${set}`);
 const realSandbox = flags.includes('--real-sandbox');
 const checkout = resolve(checkoutArgument ?? process.cwd());
 const { createApplication } = await import(pathToFileURL(join(checkout, 'apps/server/src/app.ts')).href);
 const { createRepairDemoProject, snapshotHash } = await import(pathToFileURL(join(checkout, 'packages/coding/src/index.ts')).href);
+
+const renameDemo = {
+  'package.json': '{"name":"mohassan-rename-demo","private":true,"type":"module"}\n',
+  'src/sum.ts': "import { addValues } from './values.ts';\n\nexport function sum(left: number, right: number) {\n  return addValues(left, right);\n}\n",
+  'src/values.ts': 'export const existingName = 0;\n\nexport function addValues(left: number, right: number) {\n  return left + right;\n}\n',
+  'test/sum.test.mjs': "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { sum } from '../src/sum.ts';\n\ntest('adds positive values', () => assert.equal(sum(2, 3), 5));\ntest('adds negative values', () => assert.equal(sum(-3, 1), -2));\n",
+};
+const renameDemoPaths = ['src/sum.ts', 'src/values.ts'];
+// Recorded with Node 24.22.3 on Linux (`node --test test/sum.test.mjs`), including both renamed snapshots.
+const renameDemoOutput = new Map(([
+  ['addValues', '0.793655', '0.115764', '165.782501'],
+  ['combineValues', '1.046726', '0.114192', '153.762073'],
+  ['addNumbers', '0.868949', '0.163366', '337.734402'],
+] as const).map(([name, positive, negative, duration]) => {
+  const files = Object.entries(renameDemo).map(([path, content]) => ({
+    path, content: renameDemoPaths.includes(path) ? content.replaceAll('addValues', name) : content,
+  }));
+  return [snapshotHash(files), `✔ adds positive values (${positive}ms)\n✔ adds negative values (${negative}ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms ${duration}\n`];
+}));
+
+async function createRenameDemo(directory: string) {
+  const path = join(directory, 'rename-demo-project');
+  await mkdir(join(path, 'src'), { recursive: true });
+  await mkdir(join(path, 'test'));
+  await git(path, ['init', '--initial-branch=main', '--template=', '.']);
+  for (const [file, content] of Object.entries(renameDemo)) {
+    await writeFile(join(path, file), content, { flag: 'wx' });
+    const oid = (await git(path, ['hash-object', '-w', '--no-filters', '--stdin'], { input: content })).stdout.trim();
+    await git(path, ['update-index', '--add', '--cacheinfo', '100644', oid, file]);
+  }
+  const tree = (await git(path, ['write-tree'])).stdout.trim();
+  const commit = (await git(path, ['commit-tree', tree, '-m', 'Mohassan AI: rename measurement fixture'], { deterministicDate: true })).stdout.trim();
+  await git(path, ['update-ref', 'refs/heads/main', commit]);
+  return path;
+}
 
 const directory = await mkdtemp(join(tmpdir(), 'mohassan-measure-coding-'));
 const secret = 'measure-coding-fixture-internal-secret-01', origin = 'http://127.0.0.1:3000';
@@ -121,14 +167,17 @@ const headers = { 'x-mohassan-internal': secret, origin };
 const stub = {
   available: async () => ({ available: true, provider: 'unit-fixture', message: 'measurement stub' }),
   run: async (request: { files: { path: string; content: string }[] }) => {
+    const hash = snapshotHash(request.files);
+    const recorded = renameDemoOutput.get(hash);
+    if (set === 'rename' && recorded === undefined) throw new Error('No recorded result for this rename fixture snapshot');
     const misspelled = request.files.some(file => file.path === 'src/sum.ts' && file.content.includes('rightHandVaule'));
     return {
       exitCode: misspelled ? 1 : 0,
-      stdout: set === 'before-after' ? (misspelled ? REAL_OUTPUT : PASSING_OUTPUT)
+      stdout: set === 'rename' ? recorded! : set === 'before-after' ? (misspelled ? REAL_OUTPUT : PASSING_OUTPUT)
         : set === 'show-change' ? (misspelled ? REPAIR_DEMO_FAILURE_OUTPUT : REPAIR_DEMO_SUCCESS_OUTPUT)
         : set === 'instructions' && misspelled ? recordedFailure : 'measurement stub',
       stderr: '', timedOut: false, durationMs: 1, provider: 'unit-fixture',
-      network: 'denied', isolation: 'appcontainer', isolationVerified: true, snapshotHash: snapshotHash(request.files),
+      network: 'denied', isolation: 'appcontainer', isolationVerified: true, snapshotHash: hash,
     };
   },
 };
@@ -173,9 +222,14 @@ try {
   const login = await application.app.inject({ method: 'POST', url: '/api/auth/sign-in/email', headers, payload: { email: 'measure@example.test', password: 'Measure-Coding-Password-42' } });
   cookie = (Array.isArray(login.headers['set-cookie']) ? login.headers['set-cookie'] : [login.headers['set-cookie']]).filter(Boolean).map((value: unknown) => String(value).split(';')[0]).join('; ');
   const ownerId = (await application.database.db.selectFrom('user').select('id').executeTakeFirstOrThrow()).id as string;
-  const demo = await api('POST', '/api/coding/projects/demo', {});
+  const demo = set === 'rename' ? null : await api('POST', '/api/coding/projects/demo', {});
+  if (set === 'rename') {
+    const path = await createRenameDemo(directory);
+    const registered = await api('POST', '/api/coding/projects', { name: 'مشروع تجربة الجمع', path, allowedPaths: renameDemoPaths });
+    if (registered.statusCode !== 200) throw new Error(`Rename fixture registration failed (${registered.statusCode})`);
+  }
   if (set === 'show-change') {
-    if (demo.statusCode !== 200) throw new Error('Could not register the measurement repair demo.');
+    if (!demo || demo.statusCode !== 200) throw new Error('Could not register the measurement repair demo.');
     const { id } = demo.json();
     await seedVerifiedChange(ownerId, id);
     const untouched = await createRepairDemoProject(join(directory, 'untouched'));

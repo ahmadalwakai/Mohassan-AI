@@ -87,6 +87,33 @@ describe('preparing the coding task without a model', () => {
   ])('leaves supplied text and quoted requests alone (%s)', async goal => {
     expect(await prepareNoModelCoding(goal, chat, undefined, work, 'owner', 'logic-supplied')).toBeNull();
   });
+  it.each([
+    ['أعد تسمية sum إلى total في مشروع تجربة الجمع', demo.id, 'إعادة التسمية'],
+    ['غيّر اسم الدالة sum إلى total في مشروع تجربة الجمع', demo.id, 'إعادة التسمية'],
+    ['Rename sum to total in Shop API', shop.id, 'The rename is offered for review'],
+    ['من فضلك أعد تسمية إلى إلى في في مشروع تجربة الجمع', demo.id, 'إعادة التسمية'],
+    ['Please rename sum to total in Shop API', shop.id, 'The rename is offered for review'],
+    ['Could you rename the function sum to total in Shop API', shop.id, 'The rename is offered for review'],
+  ])('prepares a named rename for approval: %s', async (goal, id, detail) => {
+    created.length = 0;
+    const start = await prepareNoModelCoding(goal, chat, undefined, work, 'owner', 'run-rename');
+    expect(start).toMatchObject({ kind: 'approval', detail: expect.stringContaining(detail) });
+    expect(created).toEqual([{ id, goal }]);
+  });
+  it('does not prepare unnamed, reported, quoted or unsupported rename forms through the coding route', async () => {
+    created.length = 0;
+    const projects = { ...work, inventory: async () => [demo, { id: 'p-sum', name: 'sum' }] };
+    for (const goal of [
+      'rename sum to total',
+      'The note says rename sum to total in مشروع تجربة الجمع',
+      'Rename sum to total in مشروع تجربة الجمع is what the note says',
+      '«أعد تسمية sum إلى total في مشروع تجربة الجمع»',
+      'Now rename sum to total in مشروع تجربة الجمع',
+    ]) {
+      expect(await prepareNoModelCoding(goal, routed, undefined, projects, 'owner', 'run-rename')).toBeNull();
+    }
+    expect(created).toEqual([]);
+  });
   it('leaves every other request to the existing paths', async () => {
     created.length = 0;
     expect(await prepareNoModelCoding('ما عاصمة فرنسا؟', chat, undefined, work, 'owner', 'run-3')).toBeNull();
@@ -135,6 +162,11 @@ describe('the reply after the approved task settles', () => {
     expect(reply.status).toBe('blocked');
     expect(reply.text).toContain('لم أجد إصلاحًا يمكن إثباته');
     expect(reply.text).toContain('تعديل المنطق يحتاج نموذجًا');
+  });
+  it('shows the verified rename refusal reason', () => {
+    const reason = 'تعذرت إعادة التسمية: أحد مراجع الاسم في ملف اختبار محمي.';
+    const reply = codingOutcomeReply(`task status: failed\nerror: ${reason}`, label, 'أعد تسمية sum إلى total في مشروع تجربة الجمع');
+    expect(reply).toMatchObject({ status: 'blocked', text: expect.stringContaining(reason) });
   });
   it('reports a cancelled task and a failed tool call without claiming a change', () => {
     expect(codingOutcomeReply('task status: cancelled', label, 'fix the code')).toMatchObject({ status: 'blocked' });
@@ -263,5 +295,16 @@ describe('a coding request in the chat when no model exists', () => {
     expect(remaining).toContain('"adds negative values" at `test/sum.test.mjs:6` — AssertionError');
     expect(reply).toContain('I found no further proven fix. A logic fix needs a model.');
     expect(reply).not.toContain('mohassan/');
+  });
+
+  it('asks the owner to approve a named rename', async () => {
+    const goal = 'Please rename sum to total in مشروع تجربة الجمع';
+    const before = await source();
+    const waiting = await ask(goal);
+    expect(waiting.status).toBe('waiting_approval');
+    expect(waiting.approval.prompt).toContain('مشروع تجربة الجمع');
+    expect(waiting.approval.detail).toContain('إعادة التسمية');
+    expect(await source()).toBe(before);
+    expect((await approve(waiting, false)).status).toBe('idle');
   });
 });

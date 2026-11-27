@@ -1,4 +1,5 @@
 import type { CodingEdits } from "@mohassan/contracts";
+import type { RenameRequest } from "./rename.ts";
 import type { SnapshotFile } from "./security.ts";
 
 export interface CodingContextFile extends SnapshotFile {
@@ -21,6 +22,7 @@ export interface CodingContext {
   /** Local tools bound to the immutable run snapshot. */
   tools?: {
     repairTypeScript(): Map<string, string>;
+    renameTypeScript?(request: RenameRequest): CodingEdits | EditRefusal;
     fixESLint?(paths: string[], proposed: ReadonlyMap<string, string>, formatting: boolean): Promise<SnapshotFile[]>;
   };
 }

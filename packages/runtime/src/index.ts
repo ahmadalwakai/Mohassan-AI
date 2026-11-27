@@ -1135,8 +1135,10 @@ export class Runtime {
       if (current.cancellation_requested) { await this.cancelClaim(tx, current); return; }
       const coding=['coding.change','studio.change'].includes(current.capability_id);
       const failureCode=typeof(failure as any)?.code==='string'?(failure as any).code:'';
+      // The coding engine validates and bounds the detailed rename refusal before it reaches Runtime.
       const refusal = current.capability_id==='coding.change' && failureCode==='NO_PROVEN_FIX'
-        ? 'لم تجد أدوات البرمجة إصلاحًا يمكن إثباته ضمن الملفات المصرح بها. لم تُطبّق أي تغييرات.' : null;
+        ? failure instanceof Error && failure.name==='CodingError' && failure.message.startsWith('تعذرت إعادة التسمية: ')
+          ? failure.message : 'لم تجد أدوات البرمجة إصلاحًا يمكن إثباته ضمن الملفات المصرح بها. لم تُطبّق أي تغييرات.' : null;
       const terminalCoding=coding&&['RUN_ALREADY_EXISTS','PROJECT_HEAD_CHANGED','UNSAFE_EDIT_SCOPE','PROJECT_FORBIDDEN','SENSITIVE_SOURCE_REJECTED','STUDIO_REVISION_CONFLICT','STUDIO_PROPOSAL_EXISTS'].includes(failureCode);
       const retry = !refusal && !terminalCoding && current.attempt < current.max_attempts;
       const paidPlanning = current.autonomy !== "shadow" && (['plan.draft','studio.change'].includes(current.capability_id)
