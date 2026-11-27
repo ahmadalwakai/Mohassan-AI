@@ -1,9 +1,11 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtempSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
+import type { DatabaseOptions } from '@mohassan/database';
 import { Kysely, PGliteDialect, sql } from 'kysely';
-import { vi } from 'vitest';
+import { afterEach, vi } from 'vitest';
 import { createApplication, type AppConfig } from '../../apps/server/src/app.js';
 
 const { open } = vi.hoisted(() => ({ open: vi.fn() }));
@@ -12,13 +14,18 @@ vi.mock('@mohassan/database', async importOriginal => ({
   createDatabase: open,
 }));
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+  open.mockReset();
+});
+
 export const ledgerNames = ['schema_migrations', 'auth_schema_migrations'] as const;
 type LedgerName = typeof ledgerNames[number];
 type LedgerRow = { version: string; applied_at: string };
 type MigrationAppConfig = AppConfig & { dataDir: string };
 
 export async function createMigrationDatabase() {
-  const directory = await mkdtemp(join(tmpdir(), 'mohassan-migrations-'));
+  const directory = mkdtempSync(join(tmpdir(), 'mohassan-migrations-'));
   const inserts: { ledger: LedgerName; version: string }[] = [];
   const client = new PGlite();
   const db = new Kysely<any>({
@@ -35,10 +42,6 @@ export async function createMigrationDatabase() {
   const close = async () => {
     try { await db.destroy(); } finally { await rm(directory, { recursive: true, force: true }); }
   };
-  try { await client.waitReady; } catch (error) {
-    await close();
-    throw error;
-  }
   const appConfig: MigrationAppConfig = {
     authSecret: 'fixture-auth-for-migration-tests-only',
     internalSecret: 'fixture-internal-for-migration-tests-only',
@@ -54,25 +57,26 @@ export async function createMigrationDatabase() {
     documentsDir: join(directory, 'documents'),
     browserProfileDir: join(directory, 'browser'),
   };
+  // Bind startup to this case before yielding. A timed-out case can still reach
+  // its next startup, so reject requests for a different case's directory.
+  vi.stubEnv('MOHASSAN_MODEL_COUNCIL', 'owner');
+  vi.stubEnv('MOHASSAN_OCR_MODEL_DIR', join(appConfig.dataDir, 'no-model-artifacts'));
+  open.mockImplementation(async (options?: DatabaseOptions) => {
+    if (options?.dataDir !== appConfig.dataDir) {
+      throw new Error('Migration startup requested a database outside its test case');
+    }
+    return { db, mode: 'embedded', close: async () => {} };
+  });
+  try { await client.waitReady; } catch (error) {
+    await close();
+    throw error;
+  }
   return { client, db, close, appConfig, directory, inserts };
 }
 
-export async function runStartup(db: Kysely<any>, appConfig: MigrationAppConfig) {
-  const previousCouncil = process.env.MOHASSAN_MODEL_COUNCIL;
-  const previousOcr = process.env.MOHASSAN_OCR_MODEL_DIR;
-  process.env.MOHASSAN_MODEL_COUNCIL = 'owner';
-  process.env.MOHASSAN_OCR_MODEL_DIR = join(appConfig.dataDir, 'no-model-artifacts');
-  open.mockResolvedValue({ db, mode: 'embedded', close: async () => {} });
-  try {
-    const { app } = await createApplication(appConfig);
-    await app.close();
-  } finally {
-    open.mockReset();
-    if (previousCouncil === undefined) delete process.env.MOHASSAN_MODEL_COUNCIL;
-    else process.env.MOHASSAN_MODEL_COUNCIL = previousCouncil;
-    if (previousOcr === undefined) delete process.env.MOHASSAN_OCR_MODEL_DIR;
-    else process.env.MOHASSAN_OCR_MODEL_DIR = previousOcr;
-  }
+export async function runStartup(appConfig: MigrationAppConfig) {
+  const { app } = await createApplication(appConfig);
+  await app.close();
 }
 
 export async function readLedgers(db: Kysely<any>): Promise<Record<LedgerName, LedgerRow[]>> {

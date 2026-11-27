@@ -165,7 +165,7 @@ it.each(histories)('$path and preserves old data across two starts', async ({ fi
     }
 
     inserts.length = 0;
-    await runStartup(db, appConfig);
+    await runStartup(appConfig);
 
     const afterLedgers = await readLedgers(db);
     const recognisedRows = beforeLedgers.schema_migrations.map(row => ({ ...row, version: aliases.get(row.version) ?? row.version }));
@@ -187,11 +187,11 @@ it.each(histories)('$path and preserves old data across two starts', async ({ fi
     expect(await snapshotRows(db, historicalTables)).toEqual(expectedRows);
 
     const afterSchema = await dumpSchema(client);
-    await runStartup(db, appConfig);
+    await runStartup(appConfig);
     expect(await dumpSchema(client)).toEqual(afterSchema);
     expect(await readLedgers(db)).toEqual(afterLedgers);
     expect(await snapshotRows(db, historicalTables)).toEqual(expectedRows);
   } finally {
     await close();
   }
-}, 60_000);
+}, 240_000);

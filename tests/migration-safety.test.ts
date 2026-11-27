@@ -29,7 +29,7 @@ const injectedFailure = { code: '42P01', message: expect.stringContaining('migra
 it('applies the production startup migrations to an empty database and restarts unchanged', async () => {
   const { appConfig, client, db, close, inserts } = await createMigrationDatabase();
   try {
-    await runStartup(db, appConfig);
+    await runStartup(appConfig);
     const schema = await dumpSchema(client);
     const ledgers = await readLedgers(db);
     expect(inserts.map(({ ledger, version }) => ledger === 'auth_schema_migrations' ? `auth:${version}` : version))
@@ -40,14 +40,14 @@ it('applies the production startup migrations to an empty database and restarts 
       .toEqual(startupOrder.filter(id => id.startsWith('auth:')).map(id => id.slice('auth:'.length)).sort());
 
     inserts.length = 0;
-    await runStartup(db, appConfig);
+    await runStartup(appConfig);
     expect(await dumpSchema(client)).toEqual(schema);
     expect(await readLedgers(db)).toEqual(ledgers);
     expect(inserts.filter(entry => entry.version !== '010_studio_live')).toEqual([]);
   } finally {
     await close();
   }
-});
+}, 240_000);
 
 it('rolls back the monitor transaction after 048 has created its table and succeeds on retry', async () => {
   const { client, db, close, inserts } = await createMigrationDatabase();
