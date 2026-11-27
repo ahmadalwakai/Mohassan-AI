@@ -13,6 +13,8 @@ import { isolatedE2EEnvironment } from './e2e/isolation.js';
 
 const repository = fileURLToPath(new URL('../', import.meta.url));
 const entry = join(repository, 'apps', 'server', 'src', 'index.ts');
+// Dedicated loopback PostgreSQL fixture convention, retrieved 2026-11-27.
+// https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/tests/platform-wave-migrations.test.ts#L81
 const postgresUrl = process.env.PLATFORM_MIGRATION_TEST_DATABASE_URL?.trim();
 const switches: readonly { name: string; off?: string; on?: string }[] = runtimeSwitches;
 const allOff = Object.fromEntries(switches.map(item => [item.name, item.off]));
@@ -179,6 +181,8 @@ describe.skipIf(process.platform === 'win32' || !postgresUrl)('production switch
 });
 
 const variable = /^MOHASSAN_[A-Z0-9_]+$/;
+// Sandbox completion messages, retrieved 2026-11-27.
+// https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/packages/sandbox/src/index.ts#L310-L323
 const sandboxMessages = new Set(['MOHASSAN_BOUNDARY_PROVEN', 'MOHASSAN_NODE_RESTRICTIONS_PROVEN']);
 
 function sourceVariables(file: string, text: string): string[] {
