@@ -6,6 +6,7 @@ import { InsertQueryNode, PrimitiveValueListNode, ValuesNode, type Kysely } from
 import { sql, type DatabaseHandle, type DatabaseOptions } from '@mohassan/database';
 import { expect, it, vi } from 'vitest';
 import { createApplication } from '../apps/server/src/app.js';
+import { commandChatMigration } from '../apps/server/src/command-chat.js';
 
 const trace = vi.hoisted(() => ({
   inserts: [] as string[],
@@ -76,6 +77,25 @@ const baseIds = [
   '033_chat_request_keys', '033_skill_retention', '034_skill_catalogue', 'memory_exact_writes_v1',
 ];
 
+async function withPlatformApplication<T>(fixtureDir: string, databaseUrl: string | undefined, run: (db: Kysely<any>) => Promise<T>) {
+  const { app, database } = await createApplication({
+    databaseUrl, dataDir: join(fixtureDir, 'database'),
+    authSecret: 'test-platform-migration-auth-fixture',
+    internalSecret: 'test-platform-migration-internal-fixture',
+    setupToken: 'test-platform-migration-fixture',
+    webOrigin: 'http://localhost:3000',
+    production: false, runWorker: false, skillEngineEnabled: true,
+    codingDataDir: join(fixtureDir, 'coding'),
+    documentsDir: join(fixtureDir, 'documents'),
+    browserProfileDir: join(fixtureDir, 'browser'),
+  });
+  try {
+    return await run(database.db);
+  } finally {
+    await app.close();
+  }
+}
+
 async function expectChatForeignKeyIndexes(db: Kysely<any>) {
   const foreignKeys = await sql<{ table_name: string; foreign_key: string; references_runs: boolean; indexed: boolean }>`
     SELECT rel.relname AS table_name, fk.conname AS foreign_key,
@@ -128,7 +148,7 @@ async function expectChatForeignKeyIndexes(db: Kysely<any>) {
   }
 }
 
-it('records platform migrations in order, indexes chat foreign keys, restarts unchanged, and adopts legacy IDs', async () => {
+it('records platform migrations in startup order, restarts unchanged, and adopts legacy IDs', async () => {
   const fixtureDir = await mkdtemp(join(tmpdir(), 'mohassan-platform-migration-'));
   const databaseName = `platform_test_${randomUUID().replaceAll('-', '')}`;
   const localPostgres = process.env.PLATFORM_MIGRATION_TEST_DATABASE_URL?.trim();
@@ -138,28 +158,15 @@ it('records platform migrations in order, indexes chat foreign keys, restarts un
 
   async function boot(beforeClose?: (db: Kysely<any>) => Promise<void>) {
     trace.inserts.length = 0;
-    const { app, database } = await createApplication({
-      databaseUrl, dataDir: join(fixtureDir, 'database'),
-      authSecret: 'test-platform-migration-auth-fixture',
-      internalSecret: 'test-platform-migration-internal-fixture',
-      setupToken: 'test-platform-migration-fixture',
-      webOrigin: 'http://localhost:3000',
-      production: false, runWorker: false, skillEngineEnabled: true,
-      codingDataDir: join(fixtureDir, 'coding'),
-      documentsDir: join(fixtureDir, 'documents'),
-      browserProfileDir: join(fixtureDir, 'browser'),
-    });
-    try {
-      const appLedger = await database.db.selectFrom('schema_migrations')
+    return withPlatformApplication(fixtureDir, databaseUrl, async db => {
+      const appLedger = await db.selectFrom('schema_migrations')
         .select(['version', 'applied_at']).orderBy('version').execute();
-      const authLedger = await database.db.selectFrom('auth_schema_migrations')
+      const authLedger = await db.selectFrom('auth_schema_migrations')
         .select(['version', 'applied_at']).orderBy('version').execute();
       const platformInserts = trace.inserts.filter(id => currentIds.includes(id));
-      await beforeClose?.(database.db);
+      await beforeClose?.(db);
       return { appLedger, authLedger, platformInserts };
-    } finally {
-      await app.close();
-    }
+    });
   }
 
   try {
@@ -176,7 +183,7 @@ it('records platform migrations in order, indexes chat foreign keys, restarts un
       databaseUrl = target.href;
     }
 
-    const first = await boot(expectChatForeignKeyIndexes);
+    const first = await boot();
     expect(first.platformInserts).toEqual(currentIds);
     expect(first.appLedger.map(row => row.version)).toEqual([...baseIds, ...agentIds, ...currentIds].sort());
     expect(first.authLedger.map(row => row.version)).toEqual(['001_auth', '002_members', '003_member_run_quota']);
@@ -211,4 +218,34 @@ it('records platform migrations in order, indexes chat foreign keys, restarts un
       await rm(fixtureDir, { recursive: true, force: true });
     }
   }
-}, 60_000);
+}, 120_000);
+
+it('records the chat index migration with existing indexes and uses them for run lookups', async () => {
+  const fixtureDir = await mkdtemp(join(tmpdir(), 'mohassan-chat-index-migration-'));
+  try {
+    await withPlatformApplication(fixtureDir, undefined, async db => {
+      const version = '058_chat_run_indexes';
+      const existingIndexes = () => sql<{ index_oid: number }>`
+        SELECT i.indexrelid AS index_oid FROM pg_index i
+        JOIN pg_class rel ON rel.oid = i.indrelid
+        WHERE rel.relnamespace = current_schema()::regnamespace AND left(rel.relname, 5) = 'chat_'
+        ORDER BY i.indexrelid
+      `.execute(db);
+      const before = await existingIndexes();
+      await db.deleteFrom('schema_migrations').where('version', '=', version).returning('version').executeTakeFirstOrThrow();
+
+      await commandChatMigration(db);
+
+      const ledger = await db.selectFrom('schema_migrations').select('version').where('version', '=', version).execute();
+      expect(ledger).toEqual([{ version }]);
+      expect((await existingIndexes()).rows).toEqual(before.rows);
+      await expectChatForeignKeyIndexes(db);
+    });
+  } finally {
+    try {
+      await Promise.all([...trace.handles].map(handle => handle.close()));
+    } finally {
+      await rm(fixtureDir, { recursive: true, force: true });
+    }
+  }
+}, 90_000);

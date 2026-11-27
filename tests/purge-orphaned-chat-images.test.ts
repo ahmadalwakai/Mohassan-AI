@@ -14,7 +14,7 @@ import { commandChatMigration } from '../apps/server/src/command-chat.js';
 const script = fileURLToPath(new URL('../scripts/purge-orphaned-chat-images.ts', import.meta.url));
 const run = promisify(execFile);
 
-it('lists orphaned images and deletes only those images on explicit confirmation', async () => {
+it('previews orphaned images and deletes them on confirmation while keeping referenced uploads', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'mohassan-orphaned-chat-images-'));
   try {
     const createdAt = new Date(0);
@@ -32,15 +32,21 @@ it('lists orphaned images and deletes only those images on explicit confirmation
       await commandChatMigration(database.db);
       await database.db.insertInto('chat_conversations').values([
         { id: 'removed-conversation', owner_id: 'first-owner', title: 'Removed' },
+        { id: 'surviving-conversation', owner_id: 'first-owner', title: 'Surviving' },
         { id: 'live-conversation', owner_id: 'second-owner', title: 'Live' },
       ]).execute();
       await database.db.insertInto('chat_images').values([
         { ...stored, id: 'orphaned-a', owner_id: 'first-owner', conversation_id: 'removed-conversation', expires_at: null },
         { ...stored, id: 'orphaned-b', owner_id: 'second-owner', conversation_id: null, expires_at: null },
+        { ...stored, id: 'referenced-legacy', owner_id: 'first-owner', conversation_id: 'removed-conversation', expires_at: null },
         { ...stored, id: 'attached', owner_id: 'second-owner', conversation_id: 'live-conversation', expires_at: null },
         { ...stored, id: 'expired', owner_id: 'third-owner', conversation_id: null, expires_at: createdAt },
         { ...stored, id: 'unattached', owner_id: 'third-owner', conversation_id: null, expires_at: new Date(Date.now() + 60_000) },
       ]).execute();
+      await database.db.insertInto('chat_messages').values({
+        id: 'surviving-message', conversation_id: 'surviving-conversation', role: 'user', text: 'Earlier attachment',
+        images: JSON.stringify([{ id: 'referenced-legacy', width: stored.width, height: stored.height }]),
+      }).execute();
       await database.db.deleteFrom('chat_conversations').where('id', '=', 'removed-conversation').execute();
     } finally {
       await database.close();
@@ -59,8 +65,9 @@ it('lists orphaned images and deletes only those images on explicit confirmation
     expect(JSON.parse(confirmed.stdout)).toEqual({ mode: 'deleted', count: listed.length, images: expect.arrayContaining(listed) });
     const after = await createDatabase({ dataDir });
     try {
-      const remaining = await after.db.selectFrom('chat_images').select('id').orderBy('id').execute();
-      expect(remaining.map(row => row.id)).toEqual(['attached', 'expired', 'unattached']);
+      const remaining = await after.db.selectFrom('chat_images').select(['id', 'conversation_id', 'expires_at']).orderBy('id').execute();
+      expect(remaining.map(row => row.id)).toEqual(['attached', 'expired', 'referenced-legacy', 'unattached']);
+      expect(remaining.find(row => row.id === 'referenced-legacy')).toMatchObject({ conversation_id: null, expires_at: null });
     } finally {
       await after.close();
     }

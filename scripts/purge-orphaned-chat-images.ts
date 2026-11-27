@@ -5,7 +5,11 @@ import { createDatabase, sql } from '@mohassan/database';
 
 const usage = 'Usage: npm exec -- tsx scripts/purge-orphaned-chat-images.ts [--database-dir PATH] [--confirm]';
 const metadata = ['id', 'owner_id', 'bytes', 'created_at'] as const;
-const orphaned = sql<boolean>`conversation_id IS NULL AND expires_at IS NULL`;
+const orphaned = sql<boolean>`conversation_id IS NULL AND expires_at IS NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM chat_messages m
+    WHERE m.images @> jsonb_build_array(jsonb_build_object('id', chat_images.id))
+  )`;
 
 async function main() {
   const { values } = parseArgs({ options: {
