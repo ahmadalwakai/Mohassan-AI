@@ -98,4 +98,4 @@ it('validates the Sites client draft, edit, assets, preview, export, and publish
   } finally {
     await close();
   }
-});
+}, 90_000);

@@ -33,7 +33,7 @@ describe("web API call discovery", () => {
           { method, path, line: 5 },
           ...commands.map(command => ({ method: "POST", path: `${path}/:param/${command}`, line: 6 })),
           { method: "GET", path: `${path}/image/:param`, line: 7 },
-        ];
+        ].map(call => ({ ...call, file: source }));
       }
 
       writeClient(firstPath, "GET");

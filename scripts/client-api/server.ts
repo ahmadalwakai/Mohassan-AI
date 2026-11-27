@@ -1,4 +1,4 @@
-import { relative, resolve } from 'node:path';
+import path, { relative, resolve, sep } from 'node:path';
 import ts from 'typescript';
 import { MEMBER_ROUTES, PUBLIC_ROUTES, routeKey } from '../../apps/server/src/members.js';
 import type { ServerRoute } from './types.js';
@@ -41,6 +41,12 @@ function routeProperties(call: ts.CallExpression, method: string) {
   return { paths: options, handler: call.arguments.at(-1) };
 }
 
+export function isWorkspaceSource(root: string, fileName: string, paths = path) {
+  const ownPath = paths.relative(root, fileName);
+  const segments = ownPath.split(paths.sep);
+  return ownPath !== '' && !paths.isAbsolute(ownPath) && segments[0] !== '..' && !segments.includes('node_modules');
+}
+
 /** A workspace import can resolve through the npm workspace symlink to a source file. */
 function productionFiles(program: ts.Program, root: string, entry: string) {
   const options = program.getCompilerOptions();
@@ -57,7 +63,7 @@ function productionFiles(program: ts.Program, root: string, entry: string) {
       const moduleName = name(statement.moduleSpecifier);
       if (!moduleName) continue;
       const imported = ts.resolveModuleName(moduleName, fileName, options, ts.sys, resolution).resolvedModule?.resolvedFileName;
-      if (imported?.startsWith(`${root}/`) && !imported.startsWith(`${root}/node_modules/`)) follow(imported);
+      if (imported && isWorkspaceSource(root, imported)) follow(imported);
     }
   }
   follow(entry);
@@ -188,7 +194,7 @@ export function serverRoutes(workspace: string): ServerRoute[] {
     if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return;
     const { expression: receiver, name: { text: verb } } = node.expression;
     if (!methods.has(verb) || name(receiver) !== 'app') return;
-    const file = relative(root, source.fileName);
+    const file = relative(root, source.fileName).split(sep).join('/');
     const line = lineOf(node);
     const options = routeProperties(node, verb);
     const paths = options.paths ? strings(options.paths) : [];

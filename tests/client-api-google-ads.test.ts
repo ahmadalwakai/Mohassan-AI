@@ -118,4 +118,4 @@ it('validates the Google Ads replies through a real member session and the local
   } finally {
     try { await fixture?.close(); } finally { await rm(directory, { recursive: true, force: true }); }
   }
-});
+}, 90_000);

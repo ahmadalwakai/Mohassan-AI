@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { basename, join, relative } from "node:path";
+import { basename, join, posix, relative, sep } from "node:path";
 import ts from "typescript";
 import type { ClientCall } from "./types.js";
 
@@ -109,7 +109,7 @@ const routeNotes: Record<string, string> = {
 
 function webSources(root: string, directory: string): string[] {
   return readdirSync(join(root, directory), { withFileTypes: true }).flatMap(entry => {
-    const path = join(directory, entry.name);
+    const path = posix.join(directory, entry.name);
     if (entry.isDirectory()) return webSources(root, path);
     return /\.(tsx?|js)$/.test(entry.name) && !entry.name.endsWith(".d.ts") ? [path] : [];
   });
@@ -245,7 +245,7 @@ export function webCalls(root: string): ClientCall[] {
   }
 
   function record(source: ts.SourceFile, node: ts.Node, method: string, path: string, transport?: ClientCall["transport"], note?: string) {
-    const file = relative(root, source.fileName);
+    const file = relative(root, source.fileName).split(sep).join("/");
     const line = source.getLineAndCharacterOfPosition(node.getStart()).line + 1;
     const routePath = path.split(/[?#]/)[0]!;
     calls.push({
