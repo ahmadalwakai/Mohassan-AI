@@ -106,6 +106,7 @@ import { clarificationAnswers, clarifyCommand } from './assistant/clarify/host.j
 import { reviewWorkRefusal } from './assistant/refusal/turn.js';
 import { answerTestDrivenCoding, bindTestDrivenCodingHash, initializeTestDrivenCoding, publishTestDrivenCoding } from './assistant/test-driven-coding/reply.js';
 import { answerNoModelCodeRead, codingOutcomeReply, prepareNoModelCoding, recordCodeRead } from './assistant/no-model-coding.js';
+import { answerCodeChangeView } from './assistant/code-change-view.js';
 import { describeSearchDestination, extractPublicSearchQueries, isSearchEntryElement, mergePublicQueryTerms, reviewGeneratedPublicQuery } from './assistant/public-query-provenance.js';
 import { reviewExplicitPublicBrowserQuery } from './assistant/browser-public-query.js';
 import { ADS_REWRITE_JSON_SCHEMA, ADS_REWRITE_SCHEMA_NAME, ADS_REWRITE_SYSTEM, buildRewritePrompt, type RewriteRequest } from '@mohassan/google-ads';
@@ -2246,6 +2247,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await finish(id, runId, state, reviewed.replacement?.text ?? 'لم أتحقق من سجل إجراءات صالح لهذا الطلب.', 'blocked');
         return;
       }
+      const changeView = run.intent === 'task' && !state.steps && !state.trail.length && !state.pendingTask && !hasChatModel() && fullReach()
+        ? await answerCodeChangeView(request, tools?.work, ownerId, signal, requireCurrentOwnerAccess) : null;
+      if (changeView) { await requireCurrentOwnerAccess(); state.trail.push({ step: ++state.steps, action: 'code_change_view', result: changeView.evidence, changed: false });
+        await finish(id, runId, state, vault.scrub(id, changeView.text), changeView.status, undefined, undefined, true); return; }
       const codingReply = run.intent === 'task' && !state.steps && !state.trail.length && state.routing?.handler === 'local_coding'
         ? await answerTestDrivenCoding(request, { accountId: ownerId, authorized: fullReach() && state.routing.availability !== 'restricted', signal, originalHash: state.requestOriginalHash, scrub: text => vault.scrub(id, clean(text)) }) : null;
       if (codingReply) return publishTestDrivenCoding(state, codingReply,

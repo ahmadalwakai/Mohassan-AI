@@ -324,6 +324,12 @@ export class Runtime {
     return { tasks: rows.map(row=>taskDto({...row,result:null})), capabilities: this.getCapabilities() };
   }
 
+  async latestCodingChange(ownerId: string, projectId: string): Promise<Pick<Task, 'id' | 'status' | 'result'> | null> {
+    return await this.db.selectFrom('tasks').select(['id', 'status', 'result'])
+      .where('owner_id', '=', ownerId).where('project_id', '=', projectId).where('capability_id', '=', 'coding.change')
+      .orderBy('created_at', 'desc').orderBy('id', 'desc').executeTakeFirst() ?? null;
+  }
+
   async detail(ownerId: string, id: string): Promise<TaskDetail> {
     return this.db.transaction().execute(async (tx) => {
       // Lock the parent while reading its events so the two views agree.
