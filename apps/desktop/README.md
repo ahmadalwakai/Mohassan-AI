@@ -16,7 +16,7 @@ npm run start --workspace @mohassan/desktop-shell
 
 ## الإعدادات
 
-الملف `%APPDATA%\Mohassan\config.json` يُنشأ عند أول تشغيل:
+يُنشأ الملف `%APPDATA%\Mohassan\config.json` عند اختيار «فتح الإعدادات» لأول مرة. تؤثر خيارات سطر الأوامر على التشغيل الحالي فقط.
 
 | المفتاح | الافتراضي | المعنى |
 |---|---|---|
