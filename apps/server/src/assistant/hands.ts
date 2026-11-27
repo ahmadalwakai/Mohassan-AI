@@ -16,6 +16,7 @@ import { refusalReply } from './refusal/replies.js';
 import { refusalPolicyEnabled } from './refusal/settings.js';
 import type { RefusalDecision } from './refusal/types.js';
 import { explicitFactualEvidence, formatFactualPassage, readFactualPassage } from './factual-evidence.js';
+import { compareFigures } from './figure-comparison.js';
 
 export { returnedTo };
 export { siteName };
@@ -82,7 +83,7 @@ export interface HandsPlan {
   /** A question's search results, and the first page whose own sentences answer it. */
   results?: { title: string; url: string }[];
   /** `readAt`: when the page was fetched (a cached page keeps its original time), shown with the source (plan §7.1).
-   *  `second`: for a figure, another page's sentence on the same question, and whether its figure agrees (plan §7.4).
+   *  `second`: another page's sentence on the same figure question. `agrees` is true for unqualified agreement.
    *  `official`: the product's own release page (releases.ts), so no second source is asked of it; `quote` is that page's
    *  own entry, shown under the answer line. */
   found?: { url: string; title: string; lines: string[]; readAt?: string; second?: { url: string; title: string; line: string; agrees: boolean }; official?: boolean; quote?: string };
@@ -561,18 +562,9 @@ export function topicCoverage(text: string, topic: readonly string[]): number {
 
 /** Questions whose answer is a number: a count, a length of time, a price, a date. */
 const WANTS_NUMBER = /(?:^|\s)(?:كم|قديش|اديش|متى|متي)(?=\s|$)|\bhow (?:many|much|long|old|far|tall|big)\b|\bwhen\b/iu;
-/**
- * The figure a sentence states, as plain Latin digits without grouping marks: «105 مليون» → "105", "299,792,458" → "299792458".
- * A year («في 2024 بلغ عدد السكان 105 ملايين») is skipped when the sentence holds another number.
- */
-export function firstFigure(text: string): string | null {
-  const figures = [...text.matchAll(/[\d٠-٩](?:[\d٠-٩,٬]|\.(?=[\d٠-٩]))*/gu)]
-    .map(match => match[0].replace(/[٠-٩]/gu, digit => String(digit.charCodeAt(0) - 0x0660)).replace(/[,٬]/gu, ''));
-  if (!figures.length) return null;
-  return figures.find(figure => !/^(?:1[89]|20)\d\d$/u.test(figure)) ?? figures[0]!;
+function compareAnswerFigures(question: string, first: string, second: string) {
+  return compareFigures(first, second, figureKind(question) === 'date' ? { kind: 'date' } : undefined);
 }
-/** Two sentences name the same figure when their first figures are equal. */
-export const sameFigure = (first: string, second: string): boolean => firstFigure(first) !== null && firstFigure(first) === firstFigure(second);
 
 /** Words that name what is asked about a subject, not the subject: «سكان» in «كم عدد سكان مصر». Folded, without «ال». */
 const ATTRIBUTE_WORDS = new Set(['سكان', 'يعيش', 'يعيشون', 'شخص', 'اشخاص', 'عاصمه', 'مساحه', 'عمله', 'رئيس', 'ملك', 'لغه', 'ديانه', 'تاسيس', 'ارتفاع', 'طول', 'عمر', 'وزن', 'سعر', 'ميلاد', 'وفاه', 'مؤسس', 'مالك', 'موقع', 'علم', 'نشيد', 'ناتج',
@@ -1725,7 +1717,11 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
                   if (!ownArticle && topic.length && titleScore(otherRead.page.title, topic) < topic.length) continue;
                   const [line] = relevantLines(otherRead.page, step.query, 1, true)
                     .filter(candidate => checkAnswerLine(step.query, candidate).ok && namesEntity(candidate, entity, ownArticle));
-                  if (line) { plan.found.second = { url: otherRead.page.url, title: tidy(otherRead.page.title) || hostOf(otherRead.page.url), line, agrees: sameFigure(lines[0], line) }; break; }
+                  if (line) {
+                    const agrees = compareAnswerFigures(step.query, lines[0], line).kind === 'agree';
+                    plan.found.second = { url: otherRead.page.url, title: tidy(otherRead.page.title) || hostOf(otherRead.page.url), line, agrees };
+                    break;
+                  }
                 }
               }
               break;
@@ -2032,13 +2028,28 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
       const readAt = plan.found.readAt && !Number.isNaN(Date.parse(plan.found.readAt)) ? ` · ${en ? 'read' : 'قُرئت'} ${new Date(plan.found.readAt).toISOString().slice(0, 16).replace('T', ' ')} UTC` : '';
       const source = `**${en ? 'Source:' : 'المصدر:'}** [${siteName(plan.found.url)} — ${plainTitle(plan.found.title)}](${plan.found.url})${readAt}`;
       const also = others.length ? `\n\n**${en ? 'See also:' : 'للمزيد:'}** ${others.map(item => `[${shownTitle(item.title)}](${item.url})`).join(' · ')}` : '';
-      // A second page on the same figure: named when it agrees, quoted when it differs, so a lone number is never presented as settled.
-      // With no second page, the reply says so (plan §7.1: «المصدر يقول…، ولم أتحقق منه في مصدر ثانٍ»).
       const wantsFigure = WANTS_NUMBER.test(last.query) || isLiveWebQuestion(last.query);
-      const second = plan.found.second ? plan.found.second.agrees
-        ? `\n\n**${en ? 'A second source agrees:' : 'مصدر ثانٍ يؤكد:'}** [${siteName(plan.found.second.url)} — ${plainTitle(plan.found.second.title)}](${plan.found.second.url})`
-        : `\n\n**${en ? 'A second source differs:' : 'مصدر ثانٍ يختلف:'}** ${en ? `“${plan.found.second.line}”` : `«${plan.found.second.line}»`} — [${siteName(plan.found.second.url)} — ${plainTitle(plan.found.second.title)}](${plan.found.second.url})`
-        : wantsFigure && !plan.found.official ? `\n\n${en ? 'I did not check this figure against a second source.' : 'لم أتحقق من هذا الرقم في مصدر ثانٍ.'}` : '';
+      let second = wantsFigure && !plan.found.official
+        ? `\n\n${en ? 'I did not check this figure against a second source.' : 'لم أتحقق من هذا الرقم في مصدر ثانٍ.'}` : '';
+      const other = plan.found.second;
+      if (other && first) {
+        // Saved plans may carry an older verdict. Compare the quoted sentences again when displaying the evidence.
+        const comparison = compareAnswerFigures(last.query, first, other.line);
+        const link = `[${siteName(other.url)} — ${plainTitle(other.title)}](${other.url})`;
+        if (comparison.kind === 'agree') {
+          second = `\n\n**${en ? 'A second source agrees:' : 'مصدر ثانٍ يؤكد:'}** ${link}`;
+        } else if (comparison.kind === 'agree-period-unstated') {
+          const unstated = comparison.unstatedSource === 'first'
+            ? en ? 'The first source does not state the period.' : 'لم يذكر المصدر الأول الفترة.'
+            : en ? 'The second source does not state the period.' : 'لم يذكر المصدر الثاني الفترة.';
+          second = `\n\n**${en ? 'A second source gives a matching figure:' : 'مصدر ثانٍ يذكر رقماً موافقاً:'}** ${link} ${unstated}`;
+        } else if (comparison.kind !== 'uncomparable') {
+          const label = comparison.kind === 'different-period'
+            ? en ? 'A second source reports a figure for another period:' : 'مصدر ثانٍ يذكر رقماً لعام آخر:'
+            : en ? 'A second source differs:' : 'مصدر ثانٍ يختلف:';
+          second = `\n\n**${label}** ${en ? `“${other.line}”` : `«${other.line}»`} — ${link}`;
+        }
+      }
       // A line composed from a page's data shows the page's own words under it («> node-v26.13.1-… 11-Nov-2026 16:41»).
       const quoted = plan.found.quote ? `\n\n> ${plan.found.quote}` : '';
       return { status: otherLanguage || notOfficial ? 'partial' : 'completed', text: `${named}${first}${quoted}${more}\n\n${source}${second}${also}${note}${languageNote}${officialNote}` };

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentAction, AgentPage } from '@mohassan/browser';
-import { aspectSubject, entityWords, firstFigure, isOwnArticle, namesEntity, runHands, sameFigure, webQuestion, type HandsIO } from '../apps/server/src/assistant/hands.js';
+import { aspectSubject, entityWords, isOwnArticle, namesEntity, runHands, webQuestion, type HandsIO, type HandsPlan } from '../apps/server/src/assistant/hands.js';
 
 /** Plan §7.4: a figure comes with a second source when one was read; both are shown when they differ. */
 // The engine normalizes result URLs (`new URL(...).href`), so pages are keyed by that form.
@@ -31,19 +31,6 @@ function io(pages: Record<string, AgentPage>, hits: Hit[] | ((query: string) => 
 const text = (outcome: Awaited<ReturnType<typeof runHands>>) => outcome.kind === 'done' ? outcome.text : '';
 
 describe('two sources for a figure', () => {
-  it('reads the first figure of a sentence in either digit system', () => {
-    expect(firstFigure('يبلغ عدد سكان مصر نحو 105 ملايين نسمة بحسب تقديرات 2024.')).toBe('105');
-    expect(firstFigure('عدد السكان ١٠٥ ملايين')).toBe('105');
-    expect(firstFigure('The speed of light is 299,792,458 metres per second.')).toBe('299792458');
-    expect(firstFigure('Cataract surgery takes 20 to 45 minutes.')).toBe('20');
-    expect(firstFigure('لا رقم هنا')).toBeNull();
-    expect(sameFigure('سكانها 105 ملايين', 'نحو 105 مليون نسمة')).toBe(true);
-    expect(sameFigure('سكانها 105 ملايين', 'نحو 104 ملايين')).toBe(false);
-    // A year is a date, not the figure asked for, unless it is the only number.
-    expect(firstFigure('في عام 2024 بلغ عدد السكان 105 ملايين نسمة')).toBe('105');
-    expect(firstFigure('تأسست الجامعة عام 1952.')).toBe('1952');
-  });
-
   it('tells the subject of an attribute question from the attribute', () => {
     expect(entityWords('كم عدد سكان مصر؟')).toEqual(['مصر']);
     expect(entityWords('ما عاصمة أستراليا')).toEqual(['استراليا']);
@@ -162,26 +149,84 @@ describe('two sources for a figure', () => {
   });
 
   it('quotes the second page when its figure differs, and names it when it agrees', async () => {
-    const first = pageOf('https://ar.wikipedia.org/wiki/مصر', 'مصر - ويكيبيديا', 'مصر دولة عربية. يبلغ عدد سكان مصر نحو 105 ملايين نسمة بحسب تقديرات 2024. وعاصمتها القاهرة.');
-    const differing = pageOf('https://stats.example/egypt', 'عدد سكان مصر 2024 - stats.example', 'عدد سكان مصر 104.5 ملايين نسمة في منتصف 2024 بحسب الجهاز المركزي للإحصاء.');
+    const first = pageOf('https://ar.wikipedia.org/wiki/مصر', 'مصر - ويكيبيديا', 'مصر دولة عربية. يبلغ عدد سكان مصر نحو 105 ملايين نسمة في 2024. وعاصمتها القاهرة.');
+    const differing = pageOf('https://stats.example/egypt', 'عدد سكان مصر 2024 - stats.example', 'عدد سكان مصر 104.5 ملايين نسمة في 2024 بحسب الجهاز المركزي للإحصاء.');
     // A title made only of the question's words would be read first as the subject's own article; this one is not.
-    const agreeing = pageOf('https://facts.example/egypt', 'إحصاءات سكان مصر - facts.example', 'يبلغ عدد سكان مصر 105 ملايين نسمة تقريبًا.');
+    const agreeing = pageOf('https://facts.example/egypt', 'إحصاءات سكان مصر - facts.example', 'يبلغ عدد سكان مصر 105.3 مليون نسمة في 2024 بحسب التقديرات.');
     const differs = await runHands({ steps: webQuestion('كم عدد سكان مصر؟')!, next: 0, lang: 'ar' },
       io(by(first, differing), [{ title: first.title, url: first.url }, { title: differing.title, url: differing.url }]));
     expect(differs).toMatchObject({ kind: 'done', status: 'completed' });
     expect(text(differs).split('\n')[0]).toContain('105 ملايين');
-    expect(text(differs)).toContain(`**مصدر ثانٍ يختلف:** «عدد سكان مصر 104.5 ملايين نسمة في منتصف 2024 بحسب الجهاز المركزي للإحصاء.» — [stats.example — ${differing.title}](${differing.url})`);
-    const agrees = await runHands({ steps: webQuestion('كم عدد سكان مصر؟')!, next: 0, lang: 'ar' },
+    expect(text(differs)).toContain(`**مصدر ثانٍ يختلف:** «${differing.text}» — [stats.example — ${differing.title}](${differing.url})`);
+    const plan: HandsPlan = { steps: webQuestion('كم عدد سكان مصر؟')!, next: 0, lang: 'ar' };
+    const agrees = await runHands(plan,
       io(by(first, agreeing), [{ title: first.title, url: first.url }, { title: agreeing.title, url: agreeing.url }]));
     expect(agrees).toMatchObject({ kind: 'done', status: 'completed' });
     expect(text(agrees)).toContain(`**مصدر ثانٍ يؤكد:** [facts.example — ${agreeing.title}](${agreeing.url})`);
     expect(text(agrees)).not.toContain('يختلف');
+    expect(plan.found?.second?.agrees).toBe(true);
+  });
+
+  it.each([
+    ['بلغ عدد سكان مصر 5 آلاف نسمة في 2024 بحسب التقديرات.', 'مصدر ثانٍ يختلف'],
+    ['بلغ عدد سكان مصر 5 ملايين نسمة عام 2010 بحسب التقديرات.', 'مصدر ثانٍ يذكر رقماً لعام آخر'],
+  ])('quotes %s under the appropriate second-source label', async (line, label) => {
+    const first = pageOf('https://ar.wikipedia.org/wiki/مصر', 'مصر - ويكيبيديا', 'بلغ عدد سكان مصر 5 ملايين نسمة في 2024 بحسب التقديرات.');
+    const other = pageOf('https://facts.example/egypt', 'إحصاءات سكان مصر - facts.example', line);
+    const plan: HandsPlan = { steps: webQuestion('كم عدد سكان مصر؟')!, next: 0, lang: 'ar' };
+    const outcome = await runHands(plan, io(by(first, other), [first, other]));
+    expect(text(outcome)).toContain(`**${label}:** «${line}» — [facts.example — ${other.title}](${other.url})`);
+    expect(text(outcome)).not.toContain('مصدر ثانٍ يؤكد');
+    expect(plan.found?.second?.agrees).toBe(false);
+  });
+
+  it.each([
+    ['بلغ عدد سكان مصر 5 ملايين نسمة في 2024 بحسب التقديرات.', 'بلغ عدد سكان مصر 5 ملايين نسمة بحسب التقديرات.', 'لم يذكر المصدر الثاني الفترة.'],
+    ['بلغ عدد سكان مصر 5 ملايين نسمة بحسب التقديرات.', 'بلغ عدد سكان مصر 5 ملايين نسمة في 2024 بحسب التقديرات.', 'لم يذكر المصدر الأول الفترة.'],
+  ])('qualifies agreement when one source omits the period (%s)', async (firstLine, otherLine, note) => {
+    const first = pageOf('https://ar.wikipedia.org/wiki/مصر', 'مصر - ويكيبيديا', firstLine);
+    const other = pageOf('https://facts.example/egypt', 'إحصاءات سكان مصر - facts.example', otherLine);
+    const plan: HandsPlan = { steps: webQuestion('كم عدد سكان مصر؟')!, next: 0, lang: 'ar' };
+    const outcome = await runHands(plan, io(by(first, other), [first, other]));
+    expect(text(outcome)).toContain(`**مصدر ثانٍ يذكر رقماً موافقاً:** [facts.example — ${other.title}](${other.url}) ${note}`);
+    expect(text(outcome)).not.toContain('مصدر ثانٍ يؤكد');
+    expect(plan.found?.second?.agrees).toBe(false);
+  });
+
+  it.each([
+    ['بلغ عدد سكان مصر 5 آلاف نسمة.', '**مصدر ثانٍ يختلف:**'],
+    ['يشير التقدير إلى عام 2024.', 'لم أتحقق من هذا الرقم في مصدر ثانٍ.'],
+  ])('rechecks a saved agreement before displaying %s', async (line, note) => {
+    const steps = webQuestion('كم عدد سكان مصر؟')!;
+    const plan: HandsPlan = {
+      steps, next: steps.length, results: [], lang: 'ar',
+      found: {
+        url: 'https://first.example/egypt', title: 'سكان مصر', lines: ['بلغ عدد سكان مصر 5 ملايين نسمة.'],
+        second: { url: 'https://second.example/egypt', title: 'تقديرات سكان مصر', line, agrees: true },
+      },
+    };
+    const outcome = await runHands(plan, io({}, []));
+    expect(text(outcome)).toContain(note);
+    expect(text(outcome)).not.toContain('مصدر ثانٍ يؤكد');
+  });
+
+  it('compares a lone year as a date for a date question', async () => {
+    const steps = webQuestion('متى تأسست الجامعة؟')!;
+    const plan: HandsPlan = {
+      steps, next: steps.length, results: [], lang: 'ar',
+      found: {
+        url: 'https://first.example/university', title: 'الجامعة', lines: ['تأسست الجامعة عام 1952.'],
+        second: { url: 'https://second.example/university', title: 'تاريخ الجامعة', line: 'تأسست الجامعة في ١٩٥٢.', agrees: false },
+      },
+    };
+    const outcome = await runHands(plan, io({}, []));
+    expect(text(outcome)).toContain('**مصدر ثانٍ يؤكد:** [second.example — تاريخ الجامعة]');
   });
 
   it('writes the second source in English for an English question', async () => {
     const first = pageOf('https://en.wikipedia.org/wiki/Egypt', 'Egypt - Wikipedia', 'Egypt is a country in North Africa. The population of Egypt is about 105 million people as of 2024. Its capital is Cairo.');
     // A second source must be about the same subject: its title carries the question's words («How many people live in Egypt?»).
-    const differing = pageOf('https://stats.example/egypt', 'How many people live in Egypt? - stats.example', 'The population of Egypt reached 104.5 million people in mid-2024 according to the statistics agency.');
+    const differing = pageOf('https://stats.example/egypt', 'How many people live in Egypt? - stats.example', 'The population of Egypt reached 104.5 million people in 2024.');
     const outcome = await runHands({ steps: webQuestion('How many people live in Egypt?')!, next: 0, lang: 'en' },
       io(by(first, differing), [{ title: first.title, url: first.url }, { title: differing.title, url: differing.url }]));
     expect(outcome).toMatchObject({ kind: 'done', status: 'completed' });
