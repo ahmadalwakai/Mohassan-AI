@@ -69,19 +69,24 @@ Before export, record four increasing UTC timestamps that define three consecuti
 
 The existing source cache helper downloads only the two requested archives and verifies both SHA-256 pins. CLINC150 is CC BY 3.0. MASSIVE **1.0** is CC BY 4.0. The trainer reads the official training partitions, selects guarded weak supervision for `none` and `reminder`, and caps public fitting rows by language using the real fitting support. The public rows never supply calibration or development outcomes. Record the actual retrieval date of the fresh cache. Source pins and license information were retrieved on 2026-11-27. [CLINC publisher license](https://github.com/clinc/oos-eval/blob/828f8093932c8fe6ca7936c3d2e52903b1c523de/LICENSE) · [MASSIVE publisher notice](https://github.com/alexa/massive/blob/main/NOTICE.md) · [Pinned archive URLs and hashes](../packages/scratch-classifiers/data/sources.json)
 
-### Run from the branch checkout in PowerShell 7
+### Run from the branch checkout in PowerShell 7.2 or later
 
-Use Node 24 and Python 3.12. Start in the existing repository. The commands create a separate worktree so they leave local edits in place. The four UTC timestamps and the owner's local snapshot path are the run-specific inputs. Keep scripts, cutoffs and receipts fixed for this candidate before examining results.
+Use Node 24 and Python 3.12. Start in the existing repository. The commands create a separate sparse worktree to leave local edits in place and keep benchmark case payloads out of the checkout. The one exception is the published exclusion fingerprint file required by the guard. The four UTC timestamps and the owner's local snapshot path are the run-specific inputs. Keep scripts, cutoffs and receipts fixed for this candidate before examining results.
 
 ```powershell
 git fetch origin refs/heads/model/remaining-model-trial:refs/remotes/origin/model/remaining-model-trial
 if ($LASTEXITCODE -ne 0) { throw 'Trial branch fetch failed.' }
 $trialCheckout = Join-Path (Split-Path -Parent (Get-Location).Path) 'Mohassan-AI-remaining-model-trial'
 if (Test-Path $trialCheckout) { throw 'Choose a fresh worktree directory.' }
-git worktree add --detach $trialCheckout refs/remotes/origin/model/remaining-model-trial
+git worktree add --detach --no-checkout $trialCheckout refs/remotes/origin/model/remaining-model-trial
 if ($LASTEXITCODE -ne 0) { throw 'Trial worktree setup failed.' }
+git -C $trialCheckout sparse-checkout set --no-cone '/*' '!*holdout*' '!*sealed*' `
+    '/tests/fixtures/agent-capability-bench/v2/exclusion/sealed.jsonl'
+if ($LASTEXITCODE -ne 0) { throw 'Trial sparse checkout setup failed.' }
+git -C $trialCheckout checkout --detach refs/remotes/origin/model/remaining-model-trial
+if ($LASTEXITCODE -ne 0) { throw 'Trial revision checkout failed.' }
 Set-Location $trialCheckout
-npm ci
+npm.cmd ci
 if ($LASTEXITCODE -ne 0) { throw 'Dependency install failed.' }
 py -3.12 -m venv .data/monitor-trial-venv
 if ($LASTEXITCODE -ne 0) { throw 'Python environment setup failed.' }
