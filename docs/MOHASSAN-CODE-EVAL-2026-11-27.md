@@ -5,6 +5,7 @@
 ## طريقة القياس
 
 - قورنت نقطة البداية `2b4d2ab` بفرع `feat/mohassan-code-eval` بمشغّل واحد. ثُبّتت الطلبات وشروط النجاح قبل التنفيذ. بصمة Git لملفها هي `ef9f1d6bac99680f0dfaa6c5ba11ba3a08e4d1a7`.
+- تقدّم الفرع المستهدف إلى `90814c0` أثناء العمل. أُعيد القياس بعد استيعاب التحديثات في فرع التقييم مع الإبقاء على الطلبات المثبّتة. كانت نتيجة الفرع قبل التحديث وبعده 45/46.
 - يُنشئ المشغّل خمسة مستودعات Git نظيفة في مجلده المؤقت، ويسجّلها من خلال واجهة البرمجة نفسها التي يعتمد عليها المشروع التجريبي. العيوب هي استيراد ناقص، ومعرّف به خطأ إملائي، وقاعدة ESLint قابلة للإصلاح، وتوكيد يكشف خللاً في المنطق، وخطأ `TS2322` في ملف `.tsx`. تُنفّذ كل حالة في محادثة جديدة بقاعدة بيانات في الذاكرة. [المشاريع](../scripts/mohassan-code/fixtures.ts)
 - يتحقّق المشغّل من غياب نموذج المحادثة ومن أن عدد استدعاءاته صفر، ويوقف استخدام المصنّفات المدرَّبة في مسار الاختبار. تعتمد حالة سؤال الويب على صفحة محلية ثابتة. يستخدم طلب العضو جلسة عضو فعلية ويتحقّق المشغّل أيضًا من رفض وصوله المباشر إلى واجهة البرمجة.
 - يعيد بديل بيئة العزل استخدام مخرجات أوامر مسجّلة على Linux باستخدام Node `24.22.3` وTypeScript `5.9.3` وESLint `9.39.5`. يُطابق التسجيل محتوى الملفات ونطاق الأمر. هذا القياس يتحقّق من ردود ومسارات المحادثة بناءً على تلك المخرجات. تشغّل تجربة المالك الأوامر في Windows AppContainer. [التسجيلات](../scripts/mohassan-code/suite-sandbox-recordings.json)
@@ -83,18 +84,22 @@
 ## الفحوص
 
 - `npm run typecheck` — نجح فحص الأنواع في المستودع وتطبيق الويب.
-- `npx vitest run tests/mohassan-code-eval.test.ts` — نجحت الاختبارات الستة.
-- `npm exec -- vitest run tests/assistant-no-model-coding.test.ts tests/assistant-no-model-code-read.test.ts packages/coding/src/test-report.test.ts` — نجح 37 اختبارًا في ثلاثة ملفات.
+- نجح 74 اختبارًا في ستة ملفات بعد تحديث قاعدة الفرع.
+
+  ```bash
+  npm exec -- vitest run tests/mohassan-code-eval.test.ts tests/assistant-code-change-view.test.ts tests/assistant-coding-outcome-report.test.ts tests/assistant-no-model-coding.test.ts tests/assistant-no-model-code-read.test.ts packages/coding/src/test-report.test.ts
+  ```
+
 - من نسخة البداية المنفصلة `mohassan-eval-base`، خرج الأمر التالي بالرمز 0 وسجّل 45/46.
 
   ```bash
   npx tsx ../Mohassan-AI/scripts/mohassan-code/measure-no-model-coding.ts . ../mohassan-eval-base.json --set=suite > ../mohassan-eval-base.log 2>&1
   ```
 
-- من نسخة الفرع `Mohassan-AI`، خرج الأمر التالي بالرمز 0 وسجّل 45/46.
+- من نسخة الفرع `Mohassan-AI` بعد تحديث قاعدته، خرج الأمر التالي بالرمز 0 وسجّل 45/46.
 
   ```bash
-  npx tsx scripts/mohassan-code/measure-no-model-coding.ts . ../mohassan-eval-branch.json --set=suite > ../mohassan-eval-branch.log 2>&1
+  npx tsx scripts/mohassan-code/measure-no-model-coding.ts . ../mohassan-eval-current.json --set=suite > ../mohassan-eval-current.log 2>&1
   ```
 
 لتشغيل المالك بعد الدمج، يُنفّذ الأمر التالي من نسخة Windows ذات التبعيات المثبّتة. يُنتظر التحقق من تشغيل الأوامر في AppContainer، بما في ذلك تحميل أدوات ESLint وTypeScript، وتشخيصات الملف `.tsx`، ونقاط المراجعة للنسخ المعزولة.
