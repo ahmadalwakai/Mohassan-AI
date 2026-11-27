@@ -76,6 +76,7 @@ describe('durable smart monitor runtime', () => {
   let store: ReturnType<typeof createMonitorStore>;
   let metrics: MetricsStore;
   let clock: number;
+  const sessions = new Map([[owner, randomUUID()], [member, randomUUID()]]);
   const now = () => new Date(clock);
   const observe = (value: number) => ({ value, excerpt: `Price ${value}`, url: source.url, observedAt: now().toISOString() });
   const value = (number: number): MonitorReadResult => ({ kind: 'value', observation: observe(number) });
@@ -87,6 +88,10 @@ describe('durable smart monitor runtime', () => {
     registerMonitorMetrics(database.db, event => metrics.recordMonitor(event));
   };
   const runtime = (read: Parameters<typeof createMonitorRuntime>[1]['read']) => createMonitorRuntime(database.db, { read, store }, { now });
+  const registerPush = (userId: string, tokenByte: string) => database.db.transaction().execute(tx =>
+    registerIosPushDevice(tx, userId, sessions.get(userId)!, {
+      platform: 'ios', environment: 'sandbox', token: tokenByte.repeat(32), appVersion: '15',
+    }));
 
   async function proposal(userId = member, spec = pageSpec(now()), conversationId = userId === member ? memberConversation : ownerConversation) {
     return store.propose(userId, { conversationId, spec, observation: observe(3.75), offer: 'explicit' });
@@ -109,6 +114,8 @@ describe('durable smart monitor runtime', () => {
       { id: owner, name: 'Fixture Owner', email: 'fixture-owner@example.test' },
       { id: member, name: 'Fixture Member', email: 'fixture-member@example.test' },
     ]).execute();
+    const expiresAt = new Date(Date.now() + hour);
+    await database.db.insertInto('session').values([...sessions].map(([userId, id]) => ({ id, userId, token: randomUUID(), expiresAt }))).execute();
     await database.db.insertInto('workspace_owner').values({ id: 1, owner_id: owner }).execute();
     await database.db.insertInto('workspace_members').values({ user_id: member, role: 'member' }).execute();
   });
@@ -139,7 +146,7 @@ describe('durable smart monitor runtime', () => {
     await runtime(read).runOnce();
     expect(read).not.toHaveBeenCalled();
     await store.approve(member, proposed.id);
-    await registerIosPushDevice(database.db, member, { platform: 'ios', environment: 'sandbox', token: 'aa'.repeat(32), appVersion: '15' });
+    await registerPush(member, 'aa');
     await database.close();
     await open();
     clock = baseline + 4 * hour;
@@ -231,8 +238,8 @@ describe('durable smart monitor runtime', () => {
     const memberBrowser = browserDevice('member-fairness-fixture');
     await subscribePushDevice(database.db, owner, ownerBrowser);
     await subscribePushDevice(database.db, member, memberBrowser);
-    await registerIosPushDevice(database.db, owner, { platform: 'ios', environment: 'sandbox', token: 'bb'.repeat(32), appVersion: '15' });
-    await registerIosPushDevice(database.db, member, { platform: 'ios', environment: 'sandbox', token: 'cc'.repeat(32), appVersion: '15' });
+    await registerPush(owner, 'bb');
+    await registerPush(member, 'cc');
     for (let index = 0; index < 20; index++) {
       const runId = randomUUID();
       const startedAt = new Date(baseline - minute + index * 1000);

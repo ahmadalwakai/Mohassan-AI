@@ -7,6 +7,7 @@ import {
 } from '@mohassan/contracts';
 import type { PushSender, WebPushPayload } from './web-push.js';
 import { backgroundKinds, backgroundPayload, type BackgroundNotificationEvent, type BackgroundOutcome } from './background-notification-payload.js';
+import { liveApnsRegistration } from './ios-push-devices.js';
 import { memberReminderDeliveryAllowed } from './member-deletion.js';
 import { hideNotificationTitleByDefault, notificationPresenceMs, updateNotificationPresence } from './notification-security.js';
 import { monitorMetricTransaction } from './ops/metrics/monitor-events.js';
@@ -195,6 +196,7 @@ export async function recordBackgroundRunOutcome(db: Database, event: {
   const availableAt = new Date(now.getTime() + PRIORITY_WINDOW_MS);
   // The event, final reply and terminal run state commit together. One APNs row
   // per registration preserves accepted deliveries while other devices retry.
+  // Lock each selected device so a session cascade cannot race the delivery FK.
   await sql`WITH event AS (
     INSERT INTO chat_notifications
       (task_id, user_id, conversation_id, kind, started_at, happened_at, available_at, delivery,
@@ -206,7 +208,9 @@ export async function recordBackgroundRunOutcome(db: Database, event: {
   )
     INSERT INTO background_apns_deliveries (event_id, registration_id, next_at)
     SELECT event.task_id, device.registration_id, ${availableAt}
-    FROM event JOIN ios_push_devices AS device ON event.user_id = device.user_id`.execute(db);
+    FROM event JOIN ios_push_devices AS device ON event.user_id = device.user_id
+    WHERE ${liveApnsRegistration}
+    FOR KEY SHARE OF device`.execute(db);
 }
 
 function events(db: Database) {

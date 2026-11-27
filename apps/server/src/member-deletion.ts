@@ -110,6 +110,7 @@ async function requestMemberDeletion(db: Kysely<any>, userId: string, sessionId:
     await tx.updateTable('conversation_shares').set({ revoked_at: row.rows[0].requested_at })
       .where('sharer_id', '=', userId).where('revoked_at', 'is', null).execute();
     await tx.deleteFrom('push_subscriptions').where('user_id', '=', userId).execute();
+    await tx.deleteFrom('ios_push_devices').where('user_id', '=', userId).execute();
     await tx.updateTable('chat_notifications').set({ delivery: 'suppressed' }).where('user_id', '=', userId)
       .where('conversation_id', 'is not', null).where('delivery', 'in', ['pending', 'push'])
       // The scheduler pauses queued reminders and resumes them if deletion is canceled.

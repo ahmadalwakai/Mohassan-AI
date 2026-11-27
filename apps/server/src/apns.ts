@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { connect, constants, sensitiveHeaders, type ClientHttp2Session } from 'node:http2';
 import type { Kysely } from 'kysely';
 import type { IosPushEnvironment, IosPushPayload } from '@mohassan/contracts';
-import { currentApnsDevice, expireIosPushDevice, type IosPushDevice } from './ios-push-devices.js';
+import { currentApnsDevice, expireIosPushDevice, lockLiveApnsSession, type IosPushDevice } from './ios-push-devices.js';
 
 export { currentApnsDevice, listApnsDevices } from './ios-push-devices.js';
 export type { IosPushDevice } from './ios-push-devices.js';
@@ -142,7 +142,7 @@ export function createApnsSender(config: ApnsConfig, options: {
 export async function sendToApnsDevice(db: Kysely<any>, send: ApnsSender, device: IosPushDevice,
   payload: IosPushPayload, deliveryId: string) {
   const registered = await currentApnsDevice(db, device.user_id, device.registration_id);
-  if (!registered) return 'expired';
+  if (!registered || !await lockLiveApnsSession(db, registered)) return 'expired';
   const result = await send(registered, payload, deliveryId);
   if (result === 'expired') await expireIosPushDevice(db, registered);
   return result;

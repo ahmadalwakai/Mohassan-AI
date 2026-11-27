@@ -50,9 +50,16 @@ export interface PushDevice {
   lastSuccessAt: string | null;
   failureCount: number;
 }
+export interface IosNotificationDevice {
+  id: string;
+  label: string;
+  registeredAt: string;
+  lastDeliveryAt: string | null;
+}
 export interface NotificationSettingsResponse {
   preferences: NotificationPreferences;
   devices: PushDevice[];
+  iosDevices: IosNotificationDevice[];
   publicKey: string | null;
 }
 export interface PushSubscribeResponse { device: PushDevice }

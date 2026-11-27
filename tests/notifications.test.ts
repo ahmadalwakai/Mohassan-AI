@@ -146,6 +146,7 @@ describe('authenticated notifications', () => {
     expect((await settings('')).statusCode).toBe(401);
     const memberSettings = (await settings(memberCookie)).json();
     expect(memberSettings.devices).toEqual([memberDevice]);
+    expect(memberSettings.iosDevices).toEqual([]);
     expect(JSON.stringify(memberSettings)).not.toContain(memberInput.endpoint);
     expect(JSON.stringify(memberSettings)).not.toContain(memberInput.keys.auth);
     expect((await settings(ownerCookie)).json().devices.map((device: PushDevice) => device.id)).toEqual([ownerDevice.id]);
