@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { requestTerms, skillStems } from '../../../../packages/skills/src/stems.js';
 import { buildFrame } from './mind/frame.js';
 import { matchText } from './mind/normalize.js';
+import { orderReaderMatches, READER_MATCH_WINDOW } from './skill-reader-routing.js';
 
 /**
  * Model-free reading of the owner's active instruction skills.
@@ -32,7 +33,7 @@ export interface SkillReaderDeps {
  * `personal`: a how-to about the owner's own project, store or team that their memory and documents did not answer.
  */
 export type SkillReadMode = 'advice' | 'writing' | 'fallback' | 'personal';
-export interface SkillMatch { skill: SkillReaderCandidate; score: number; terms: string[] }
+export interface SkillMatch { skill: SkillReaderCandidate; score: number; terms: string[]; genericFallback?: true }
 export interface SkillReadResult { text: string; skill: SkillReaderCandidate; related: SkillReaderCandidate[]; terms: string[]; score: number; lang: 'ar' | 'en' }
 export type SkillReader = (ownerId: string, request: string, options: { mode: SkillReadMode; signal?: AbortSignal }) => Promise<SkillReadResult | null>;
 
@@ -135,7 +136,7 @@ export function matchSkills(request: string, candidates: readonly SkillReaderCan
     const total = Math.log(1 + index.size);
     const rarity = (stem: string) => total > 0 ? Math.log(1 + index.size / Math.max(1, index.frequency(stem) || 1)) / total : 1;
     const positions = index.shortlist(terms.flatMap(term => term.variants));
-    return scoreSkills(terms, positions.map(position => ({ skill: index.skills[position], ...index.entries[position] })), rarity);
+    return orderReaderMatches(request, scoreSkills(terms, positions.map(position => ({ skill: index.skills[position], ...index.entries[position] })), rarity), index.skills, MIN_SKILL_SCORE);
   }
   const pool = candidates.slice(0, MAX_CANDIDATES);
   if (!pool.length) return [];
@@ -146,7 +147,7 @@ export function matchSkills(request: string, candidates: readonly SkillReaderCan
   for (const entry of indexed) for (const stem of new Set([...entry.title, ...entry.body])) frequency.set(stem, (frequency.get(stem) ?? 0) + 1);
   const total = Math.log(1 + pool.length);
   const rarity = (stem: string) => total > 0 ? Math.log(1 + pool.length / Math.max(1, frequency.get(stem) ?? 1)) / total : 1;
-  return scoreSkills(terms, indexed, rarity);
+  return orderReaderMatches(request, scoreSkills(terms, indexed, rarity), pool, MIN_SKILL_SCORE);
 }
 
 // A request that only asks what something is, who, when, where or how much is better answered from sources; a skill is a method.
@@ -359,8 +360,11 @@ export function createSkillReader(deps: SkillReaderDeps): SkillReader {
     const wanted: 'ar' | 'en' = ARABIC.test(request) ? 'ar' : 'en';
     // The best skill that still passes the gate, unless a close one (within 80% of its score) is written in the request's language.
     let chosen: { match: SkillMatch; body: string } | null = null;
-    for (const match of matches.slice(0, 3)) {
-      if (chosen && match.score < chosen.match.score * 0.8) break;
+    // If topic filtering displaced an original top match, try it only when the new window has no verified body.
+    const shortlist = matches.filter((match, position) => position < READER_MATCH_WINDOW || match.genericFallback);
+    for (const [position, match] of shortlist.entries()) {
+      if (chosen && position >= READER_MATCH_WINDOW) break;
+      if (chosen && match.score < chosen.match.score * 0.8) continue;
       const body = await withinTime(deps.instructions(ownerId, match.skill.id).catch(() => null), options.signal);
       if (options.signal?.aborted) return null;
       if (!body?.trim()) continue;

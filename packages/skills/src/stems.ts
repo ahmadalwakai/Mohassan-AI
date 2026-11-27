@@ -64,12 +64,13 @@ const words = (text: string) => foldText(text).replace(/[_-]+/gu, ' ').match(/[\
  * A function word, bare or behind a clitic: «وكل», «لكل», «فما», «وبعد» name no topic. «وكل كم» in the backup skill's description
  * matched «وكل الملفات» in a ransomware request and took it (skills-pilot/tests/heldout-2.json, 2026-11-22). «واي» stays: «واي فاي».
  */
-function functionWord(word: string): boolean {
-  if (STOP_WORDS.has(word)) return true;
+export function functionWord(word: string, extraStopWords?: ReadonlySet<string>): boolean {
+  const stop = (form: string) => STOP_WORDS.has(form) || extraStopWords?.has(form) === true;
+  if (stop(word)) return true;
   if (!ARABIC.test(word)) return false;
   return CLITICS.some(clitic => {
     const rest = word.slice(clitic.length);
-    return word.startsWith(clitic) && rest.length >= 2 && rest !== 'اي' && STOP_WORDS.has(rest);
+    return word.startsWith(clitic) && rest.length >= 2 && rest !== 'اي' && stop(rest);
   });
 }
 
