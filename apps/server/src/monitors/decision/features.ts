@@ -1,7 +1,7 @@
-import { redactCredentialText } from '@mohassan/cognitive';
 import { z } from 'zod';
 import { monitorDecisionLabels } from '../../../../../packages/model-relations/src/monitor-decision.js';
 import { featureIndices } from '../../../../../packages/scratch-classifiers/src/features.js';
+import { containsSensitiveCredentialText, redactSensitiveCredentialText } from '../../sensitive-credential-text.js';
 import { monitorTrainingTextsAllowed } from './exclusion.js';
 import { MONITOR_CONTEXT_FEATURES, monitorContextFeatures, type MonitorContextFrame } from './frame.js';
 
@@ -24,7 +24,7 @@ export type MonitorDecisionSnapshot = z.infer<typeof MonitorDecisionSnapshotSche
 export type MonitorProposalDecisionSnapshot = MonitorDecisionSnapshot;
 
 function textForHashing(text: string) {
-  return redactCredentialText(text.slice(0, 8_000).normalize('NFKC'))
+  return redactSensitiveCredentialText(text.normalize('NFKC')).slice(0, 8_000)
     .replace(/(?:\b[a-z][a-z0-9+.-]*:\/\/|\bwww\.)[^\s<>«»"'`]+/giu, ' url ')
     .replace(/[^\s@<>«»"'`]+@[^\s@<>«»"'`]+/gu, ' email ')
     .replace(/\p{N}+/gu, '0');
@@ -46,7 +46,8 @@ export function monitorDecisionFeatures(frame: MonitorContextFrame): MonitorDeci
 export function monitorProposalDecisionSnapshot(frame: MonitorContextFrame,
   baseline: { decision: MonitorDecisionSnapshot['reasonerDecision']; score: number },
   monitorDecision: MonitorDecisionSnapshot['monitorDecision'], guardTexts: readonly string[] = []): MonitorDecisionSnapshot | undefined {
-  const benchmarkInputs = [...guardTexts, frame.current.text, ...frame.history.map(turn => turn.text), frame.assistantAnswer?.text ?? ''];
-  if (!monitorTrainingTextsAllowed(benchmarkInputs)) return;
+  const recordingInputs = [...guardTexts, frame.current.text, ...frame.history.map(turn => turn.text), frame.assistantAnswer?.text ?? ''];
+  if (recordingInputs.some(text => containsSensitiveCredentialText(text.normalize('NFKC')))
+      || !monitorTrainingTextsAllowed(recordingInputs)) return;
   return { ...monitorDecisionFeatures(frame), monitorDecision, reasonerDecision: baseline.decision, reasonerScore: baseline.score };
 }

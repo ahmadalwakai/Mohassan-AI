@@ -49,14 +49,21 @@ export function registerMonitorAlertFeedbackRoute(app: FastifyInstance, db: Kyse
   });
 }
 
-async function listAlerts(db: Kysely<any>, userId: string, filter: { conversationId: string } | { monitorIds: string[] }) {
+type ConversationAlertFilter = { conversationId: string; messageIds: readonly string[]; monitorIds: readonly string[] };
+
+async function listAlerts(db: Kysely<any>, userId: string, filter: ConversationAlertFilter | { monitorIds: readonly string[] }) {
+  const messageIds = 'messageIds' in filter ? filter.messageIds : [];
+  const { monitorIds } = filter;
+  if (!messageIds.length && !monitorIds.length) return [];
   let query = db.selectFrom('chat_notifications as n')
     .leftJoin('monitor_alert_feedback as f', join => join.onRef('f.user_id', '=', 'n.user_id').onRef('f.alert_id', '=', 'n.task_id'))
     .select(['n.monitor_id', 'n.task_id', 'n.happened_at', 'f.rating', 'f.reason', 'f.updated_at'])
-    .where('n.user_id', '=', userId).where('n.monitor_id', 'is not', null);
+    .where('n.user_id', '=', userId).where('n.monitor_id', 'is not', null)
+    .where(eb => eb.or([
+      ...(messageIds.length ? [eb('n.task_id', 'in', messageIds)] : []),
+      ...(monitorIds.length ? [eb('n.monitor_id', 'in', monitorIds)] : []),
+    ]));
   if ('conversationId' in filter) query = query.where('n.conversation_id', '=', filter.conversationId);
-  else if (filter.monitorIds.length) query = query.where('n.monitor_id', 'in', filter.monitorIds);
-  else return [];
   const rows = await query.orderBy('n.happened_at').orderBy('n.task_id').execute();
   return rows.map(row => {
     const alert: MonitorAlert = { id: row.task_id, happenedAt: new Date(row.happened_at).toISOString(),
@@ -65,8 +72,8 @@ async function listAlerts(db: Kysely<any>, userId: string, filter: { conversatio
   });
 }
 
-export async function conversationMonitorAlerts(db: Kysely<any>, userId: string, conversationId: string) {
-  return listAlerts(db, userId, { conversationId });
+export async function conversationMonitorAlerts(db: Kysely<any>, userId: string, filter: ConversationAlertFilter) {
+  return listAlerts(db, userId, filter);
 }
 
 export function addMonitorCardAlerts(cards: MonitorCard[], rows: Awaited<ReturnType<typeof listAlerts>>) {

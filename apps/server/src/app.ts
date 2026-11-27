@@ -356,7 +356,7 @@ export async function createApplication(config: AppConfig) {
     benchmarkMaintenanceRun = Promise.all([skillBenchmarks.recoverExpired(),skillForge.recoverExpired()]).then(() => undefined).catch(() => console.error(JSON.stringify({level:'error',event:'skill_maintenance_failed'}))).finally(() => { benchmarkMaintenanceRun = null; });
   }, 10000);
   benchmarkMaintenance.unref();
-  const windows=await registerWindowsRoutes(app,{db:database.db,owner,config:{webOrigin:config.webOrigin,production:config.production,windowsEnabled:config.windowsEnabled}});
+  const windows=await registerWindowsRoutes(app,{db:database.db,owner,lockOwnerAccess:lockOwnerToolAccess,config:{webOrigin:config.webOrigin,production:config.production,windowsEnabled:config.windowsEnabled}});
   // The desktop engine acts on this computer's own session; it never exists on the cloud server.
   const desktop=config.desktop?.enabled&&!config.production?new DesktopEngine({dataDir:config.desktop.dataDir??resolve('.data/desktop'),...(config.desktop.projectsRoot?{projectsRoot:config.desktop.projectsRoot}:{}),...(config.desktop.roots?.length?{roots:config.desktop.roots}:{}),...(config.desktop.screenshotsDir?{screenshotsDir:config.desktop.screenshotsDir}:{})}):null;
   await registerDesktopRoutes(app,{owner,engine:desktop});

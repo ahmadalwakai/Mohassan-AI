@@ -76,6 +76,10 @@ const fixture = String.raw`
       send({ kind: 'result', requestId, result: { value: 'x'.repeat(4096) } });
       return;
     }
+    if (mode === 'over-budget-incomplete-frame') {
+      process.stdout.write(' '.repeat(4096));
+      return;
+    }
     if (request.operation === 'generate') {
       if (request.input.messages) {
         if (mode === 'token-frame') { send({ kind: 'token', requestId, token: 5, index: 0 }); return; }
@@ -231,6 +235,14 @@ describe('permanent model worker supervision', () => {
     await ready(worker);
     await expect(classify(worker, mode)).rejects.toMatchObject({ code });
     expect(worker.status).toMatchObject({ state: 'degraded', code });
+  });
+
+  it('applies the advertised output budget before a frame is complete', async () => {
+    const worker = newWorker({ restartMinMs: 1_000, restartMaxMs: 1_000 });
+    worker.start();
+    await ready(worker);
+    await expect(classify(worker, 'over-budget-incomplete-frame', 500))
+      .rejects.toMatchObject({ code: 'resource_exhaustion' });
   });
 
   it('rejects a generation result inconsistent with its stream', async () => {

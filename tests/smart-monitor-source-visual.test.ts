@@ -3,16 +3,18 @@ import type { AddressInfo } from 'node:net';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SafeNetwork } from '@mohassan/browser';
+import { BrowserEngine, SafeNetwork } from '@mohassan/browser';
 import type { MonitorSpec } from '@mohassan/contracts';
 import { createDatabase, migrate } from '@mohassan/database';
 import type { ImageReading, ReadLine } from '@mohassan/vision';
 import type { Kysely } from 'kysely';
+import type { Page } from 'playwright';
 import { PNG } from 'pngjs';
 import { describe, expect, it, vi } from 'vitest';
 import { createMonitorReader } from '../apps/server/src/monitors/sources.js';
-import { nextMonitorBudgetDay } from '../apps/server/src/monitors/schedule.js';
+import { MONITOR_LIMITS, nextMonitorBudgetDay } from '../apps/server/src/monitors/schedule.js';
 import { migrateMonitorVisualBudget } from '../apps/server/src/monitors/sources/migration.js';
+import { renderMonitorRegions } from '../apps/server/src/monitors/sources/visual-browser.js';
 import { MONITOR_VISUAL_DAILY_LIMIT, reserveMonitorVisualRead } from '../apps/server/src/monitors/sources/visual-budget.js';
 import { createVisualMonitorReader, type VisualRenderResult } from '../apps/server/src/monitors/sources/visual.js';
 
@@ -84,6 +86,31 @@ describe('visual monitor safety and admission', () => {
     expect(read).not.toHaveBeenCalled();
   });
 
+  it('shares in-flight render slots between scheduled and preview visual reads', async () => {
+    const limit = MONITOR_LIMITS.concurrentReads;
+    let releaseRender!: (result: VisualRenderResult) => void;
+    let notifyReadersReady!: () => void;
+    const renderReady = new Promise<VisualRenderResult>(resolve => { releaseRender = resolve; });
+    const readersReady = new Promise<void>(resolve => { notifyReadersReady = resolve; });
+    const render = vi.fn(() => {
+      if (render.mock.calls.length === limit) notifyReadersReady();
+      return renderReady;
+    });
+    const reserve = vi.fn(async () => null);
+    const read = vi.fn(async () => reading(['15', 0.98]));
+    const visual = createVisualMonitorReader({ network: new SafeNetwork(), imageReader: { available: true, read },
+      reserveDaily: reserve, render, clock: () => at });
+    const scheduled = Array.from({ length: limit }, () => visual(spec(), url, options));
+    await readersReady;
+    const preview = visual(spec(), url, { ...options, preview: true });
+    releaseRender({ kind: 'regions', regions: [region] });
+    await Promise.all(scheduled);
+    expect(await preview).toEqual({ kind: 'deferred', at: at + MONITOR_LIMITS.pollMs });
+    expect(render).toHaveBeenCalledTimes(limit);
+    expect(reserve).toHaveBeenCalledTimes(limit);
+    expect(await visual(spec(), url, options)).toMatchObject({ kind: 'value' });
+  });
+
   it('shares the daily browser allowance and restarts it at the next UTC day', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'monitor-visual-budget-'));
     const database = await createDatabase({ dataDir: directory });
@@ -99,6 +126,30 @@ describe('visual monitor safety and admission', () => {
     } finally {
       await database.close();
       await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('passes the checked region dimensions directly to the browser capture', async () => {
+    const clip = { x: 12, y: 18, width: 120, height: 50 };
+    const screenshot = vi.fn(async () => Buffer.from('fixture'));
+    const element = { boundingBox: async () => clip, scrollIntoViewIfNeeded: async () => {},
+      evaluate: async () => true, screenshot: vi.fn(async () => Buffer.from('fixture')) };
+    const page = { evaluate: async () => '<main><canvas id="score"></canvas></main>', url: () => url,
+      viewportSize: () => ({ width: 1100, height: 760 }), screenshot,
+      evaluateHandle: async () => ({ async getProperty(name: string) {
+        if (name === 'descriptions') return { jsonValue: async () => [{ tag: 'canvas', domId: 'score', name: 'Score', context: '' }] };
+        return { getProperties: async () => new Map([['0', { asElement: () => element }]]) };
+      } }) } as unknown as Page;
+    const open = vi.spyOn(BrowserEngine.prototype, 'open').mockResolvedValueOnce(undefined);
+    const inspect = vi.spyOn(BrowserEngine.prototype, 'inspect').mockImplementationOnce(async (_id, _url, read) => read(page, 200));
+    try {
+      const result = await renderMonitorRegions({ spec: spec(), url, network: new SafeNetwork(),
+        signal: new AbortController().signal, at: new Date(at).toISOString() });
+      expect(result.kind).toBe('regions');
+      expect(screenshot).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ clip }));
+    } finally {
+      open.mockRestore();
+      inspect.mockRestore();
     }
   });
 });

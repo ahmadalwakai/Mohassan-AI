@@ -189,18 +189,21 @@ export async function renderMonitorRegions(request: VisualRenderRequest): Promis
         signal.throwIfAborted();
         const node = handles.get(String(index))?.asElement();
         if (!node || !key) continue;
-        const box = await node.boundingBox();
-        // Chromium can round a fractional crop out by one CSS pixel.
-        if (!box || Math.ceil(box.width) + 1 > MAX_REGION_WIDTH || Math.ceil(box.height) + 1 > MAX_REGION_HEIGHT) continue;
         try {
           await node.scrollIntoViewIfNeeded({ timeout: 2_000 });
+          const clip = await node.boundingBox();
+          const viewport = page.viewportSize();
+          // Keep the entire crop in the viewport and allow for subpixel rounding.
+          if (!clip || !viewport || Math.ceil(clip.width) + 1 > MAX_REGION_WIDTH ||
+              Math.ceil(clip.height) + 1 > MAX_REGION_HEIGHT || clip.x < 0 || clip.y < 0 ||
+              clip.x + clip.width > viewport.width || clip.y + clip.height > viewport.height) continue;
           const uncovered = await node.evaluate(element => {
             const { left, top, width, height } = element.getBoundingClientRect();
             return [0.1, 0.5, 0.9].every(x => [0.1, 0.5, 0.9].every(y =>
               element.contains(document.elementFromPoint(left + width * x, top + height * y))));
           });
           if (!uncovered) continue;
-          const image = await node.screenshot({ type: 'png', timeout: 2_000, scale: 'css' });
+          const image = await page.screenshot({ clip, type: 'png', timeout: 2_000, scale: 'css' });
           if (image.byteLength <= MAX_IMAGE_BYTES) regions.push({ key, label, image });
         } catch { signal.throwIfAborted(); }
       }

@@ -50,6 +50,7 @@ export async function windowsMigration(db:Kysely<any>) {
 export interface WindowsRouteContext {
   db:Kysely<any>;
   owner(request:FastifyRequest):Promise<WindowsSession>;
+  lockOwnerAccess(connection:Kysely<any>, ownerId:string):Promise<boolean>;
   config:{webOrigin:string;production:boolean;windowsEnabled?:boolean};
 }
 /** Called by the shared auth sign-out route; no credential is retained in these rows. */
@@ -72,7 +73,7 @@ export async function revokeWindowsSession(db:Kysely<any>,sessionId:string) {
     for(const grant of grants)await transaction.insertInto('windows_audit').values({id:randomUUID(),owner_id:grant.owner_id,device_id:grant.device_id,type:'session_revoked',detail:JSON.stringify({grantId:grant.id})}).execute();
   });
 }
-export async function registerWindowsRoutes(app:FastifyInstance,{db,owner,config}:WindowsRouteContext) {
+export async function registerWindowsRoutes(app:FastifyInstance,{db,owner,lockOwnerAccess,config}:WindowsRouteContext) {
   const enabled=config.windowsEnabled??!config.production;
   const sessions = createWindowsSessionScope();
   const audit=async(connection:Kysely<any>,ownerId:string,deviceId:string|null,type:string,detail:Record<string,unknown>={})=>connection.insertInto('windows_audit').values({id:randomUUID(),owner_id:ownerId,device_id:deviceId,type,detail:JSON.stringify(detail)}).execute();
@@ -98,9 +99,17 @@ export async function registerWindowsRoutes(app:FastifyInstance,{db,owner,config
   async function authenticateDevice(request:FastifyRequest,connection:Kysely<any>) {
     const match=/^Bearer ([a-f0-9-]{36})\.([A-Za-z0-9_-]{43})$/.exec(String(request.headers.authorization??''));
     if(!match)throw fault('WINDOWS_DEVICE_UNAUTHORIZED','مفتاح الجهاز غير صالح.',401);
-    const device=await connection.selectFrom('windows_devices').selectAll().where('id','=',match[1]!).forUpdate().executeTakeFirst();
-    if(!device||device.revoked_at||!equal(device.key_hash,hash(match[2]!)))throw fault('WINDOWS_DEVICE_UNAUTHORIZED','أُلغي ربط الجهاز أو لم تصح هويته.',401);
-    return device;
+    const credential = hash(match[2]!);
+    function check<T extends Record<string, unknown>>(device: T | undefined): T {
+      if (!device || device.revoked_at || typeof device.key_hash !== 'string' || !equal(device.key_hash, credential)) throw fault('WINDOWS_DEVICE_UNAUTHORIZED','أُلغي ربط الجهاز أو لم تصح هويته.',401);
+      return device;
+    }
+    const query = connection.selectFrom('windows_devices').where('id', '=', match[1]!);
+    const candidate = check(await query.select(['owner_id', 'revoked_at', 'key_hash']).executeTakeFirst());
+    // Match queue admission's account-before-device lock order.
+    const ownerAccess = await lockOwnerAccess(connection, candidate.owner_id);
+    const device = check(await query.selectAll().forUpdate().executeTakeFirst());
+    return { device, ownerAccess: ownerAccess && device.owner_id === candidate.owner_id };
   }
   function grantDto(grant:any){return {id:grant.id,scope:grant.scope,targetKey:grant.target_key,approvalNonce:grant.approval_nonce,expiresAt:new Date(grant.expires_at).toISOString()};}
   async function sessionGrant(sessionBinding:string,ownerId:string,device:any,connection:Kysely<any>=db) {
@@ -174,7 +183,7 @@ export async function registerWindowsRoutes(app:FastifyInstance,{db,owner,config
       const query=transaction.selectFrom('windows_pairings').selectAll().where('code_hash','=',hash(input.code));
       const candidate=await query.executeTakeFirst();
       const invalid=()=>fault('WINDOWS_PAIRING_INVALID','رمز الربط غير صالح أو انتهت مدته.',401);
-      if(!candidate||!validPair(candidate)||!await boundSessionIsLive(transaction,candidate.owner_id,candidate.session_binding))throw invalid();
+      if(!candidate||!validPair(candidate)||!await lockOwnerAccess(transaction,candidate.owner_id)||!await boundSessionIsLive(transaction,candidate.owner_id,candidate.session_binding))throw invalid();
       // Lock the session before the pairing row, as creation does. Recheck single use after locking.
       const pair=await query.forUpdate().executeTakeFirst();
       if(!pair||!validPair(pair))throw invalid();
@@ -190,12 +199,16 @@ export async function registerWindowsRoutes(app:FastifyInstance,{db,owner,config
     await companion(request);const input=Poll.parse(request.body);
     if(Math.abs(Date.now()-instant(input.sentAt))>5000)throw fault('WINDOWS_POLL_STALE','انتهت صلاحية طلب المرافق.');
     return db.transaction().execute(async transaction=>{
-      const device=await authenticateDevice(request,transaction);
+      const { device, ownerAccess } = await authenticateDevice(request, transaction);
       const nonce=await transaction.insertInto('windows_poll_nonces').values({device_id:device.id,nonce:input.nonce}).onConflict(conflict=>conflict.doNothing()).returning('nonce').executeTakeFirst();
       if(!nonce)throw fault('WINDOWS_POLL_REPLAY','تكرر طلب المرافق.');
       const state=input.state;
       if(!state.safeDesktop||!state.localView||!state.target||state.approvalNonce===device.stopped_nonce)await revokeGrants(transaction,device,'LOCAL_STOP_OR_UNSAFE_DESKTOP');
       let grant:any=await transaction.selectFrom('windows_grants').selectAll().where('device_id','=',device.id).where('revoked_at','is',null).orderBy('created_at','desc').executeTakeFirst();
+      if(grant&&!ownerAccess) {
+        await revokeGrants(transaction,device,'OWNER_ACCESS_REVOKED');
+        grant=null;
+      }
       if(!active(grant)||grant.approval_nonce!==state.approvalNonce||grant.target_key!==state.target?.key||grant.scope==='control'&&!state.localControl)grant=null;
       if(grant&&!await boundSessionIsLive(transaction,device.owner_id,grant.session_binding)) {
         await revokeGrants(transaction,device,'SESSION_REVOKED');

@@ -142,7 +142,7 @@ interface SummaryCounts {
 }
 
 interface ModelRunner {
-  run(modelId: string, input: unknown): Promise<ModelRunResult>;
+  run(modelId: string, input: unknown, signal?: AbortSignal): Promise<ModelRunResult>;
 }
 
 type Decode = (output: unknown) => string | null | undefined;
@@ -273,9 +273,11 @@ export class ModelRelationsManager {
       disagreementRate: counts.compared ? counts.disagreements / counts.compared : null })) };
   }
 
-  async inspect(turn: TurnObservation, review = this.options.judge): Promise<TurnDecisionLog> {
+  async inspect(turn: TurnObservation, review = this.options.judge, signal?: AbortSignal): Promise<TurnDecisionLog> {
     const started = performance.now();
-    const deadline = { at: started + this.maxTurnMs, expired: false };
+    const cancellation = signal && new AbortController();
+    const deadline = { at: started + this.maxTurnMs, expired: false, cancellation,
+      signal: signal && cancellation && AbortSignal.any([signal, cancellation.signal]) };
     const stages: StageObservation[] = [];
     const { baseline } = turn;
     const request = turn.text.slice(0, 8000);
@@ -366,7 +368,7 @@ export class ModelRelationsManager {
       : undefined) ?? baseline.answer;
 
     const judgeStage = stage('reply-judge', baseline.judge, judgeLabels);
-    if (review && answer && question && !deadline.expired && performance.now() < deadline.at) {
+    if (review && answer && question && !deadline.expired && !deadline.signal?.aborted && performance.now() < deadline.at) {
       const judging = performance.now();
       const context = { previous, status: baseline.status, evidence };
       try {
@@ -388,22 +390,31 @@ export class ModelRelationsManager {
   }
 
   private async ask(decision: StageObservation, id: string, input: unknown, decode: Decode,
-    value: (text: string) => DecisionValue, deadline: { at: number; expired: boolean }): Promise<string | undefined> {
+    value: (text: string) => DecisionValue,
+    deadline: { at: number; expired: boolean; cancellation?: AbortController; signal?: AbortSignal }): Promise<string | undefined> {
     const started = performance.now();
-    const attempted = started < deadline.at && !deadline.expired;
+    const attempted = started < deadline.at && !deadline.expired && !deadline.signal?.aborted;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
     let outcome: Outcome;
     let result: string | null | undefined;
     try {
       if (!attempted) outcome = 'timeout';
       else {
         const timeout = new Promise<ModelRunResult>(resolve => {
-          timer = setTimeout(() => {
+          const expire = () => {
             deadline.expired = true;
             resolve({ ok: false, reason: 'timeout', elapsedMs: performance.now() - started });
+          };
+          onAbort = expire;
+          deadline.signal?.addEventListener('abort', onAbort, { once: true });
+          timer = setTimeout(() => {
+            expire();
+            deadline.cancellation?.abort();
           }, Math.ceil(deadline.at - started));
         });
-        const run = await Promise.race([this.runtime.run(id, input), timeout]);
+        const running = deadline.signal ? this.runtime.run(id, input, deadline.signal) : this.runtime.run(id, input);
+        const run = await Promise.race([running, timeout]);
         if (deadline.expired || performance.now() >= deadline.at) outcome = 'timeout';
         else if (!run.ok) outcome = run.reason;
         else {
@@ -411,8 +422,11 @@ export class ModelRelationsManager {
           outcome = result === null ? 'abstained' : result === undefined ? 'invalid-output' : 'ok';
         }
       }
-    } catch { outcome = 'unhealthy'; }
-    finally { clearTimeout(timer); }
+    } catch { outcome = deadline.signal?.aborted ? 'timeout' : 'unhealthy'; }
+    finally {
+      clearTimeout(timer);
+      if (onAbort) deadline.signal?.removeEventListener('abort', onAbort);
+    }
     this.record(decision, id, outcome, attempted, performance.now() - started, result == null ? undefined : value(result));
     return result ?? undefined;
   }

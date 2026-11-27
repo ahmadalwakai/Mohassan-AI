@@ -99,6 +99,31 @@ describe('chat requests with an Idempotency-Key', () => {
     expect((await post(endpoint, body, key)).statusCode).toBe(404);
   });
 
+  it('keeps only the conversation reference for a reply with a council record', async () => {
+    const { id } = (await post('/api/chat/conversations', {})).json();
+    const key = 'phone-council-record';
+    const response = { id, messages: [{ role: 'assistant', council: { reason: 'Private fixture note' } }] };
+    expect(await control.once(OWNER, 'fixture', key, {}, async () => response)).toEqual(response);
+
+    const receipt = await database.db.selectFrom('chat_request_keys').select('response')
+      .where('owner_id', '=', OWNER).where('request_key', '=', key).executeTakeFirstOrThrow();
+    expect(receipt.response).toEqual({ replayConversationId: id });
+  });
+
+  it('rebuilds a reply from current conversation data when an older receipt cached a council record', async () => {
+    const { id } = (await post('/api/chat/conversations', {})).json();
+    const key = 'phone-older-council-record';
+    await control.once(OWNER, 'fixture', key, {}, async () => ({ id }));
+    await database.db.updateTable('chat_request_keys').set({
+      response: JSON.stringify({ id, messages: [{ role: 'assistant', council: { reason: 'Private fixture note' } }] }),
+    }).where('owner_id', '=', OWNER).where('request_key', '=', key).execute();
+
+    const originalWork = async () => { throw new Error('A replay must not run the original work.'); };
+    expect(await control.once(OWNER, 'fixture', key, {}, originalWork)).toEqual(
+      await control.detail(OWNER, id),
+    );
+  });
+
   it('refuses the same key for a different body', async () => {
     await post('/api/chat/conversations', { goal: 'احسب 1 + 1' }, 'phone-create-0002');
     const reused = await post('/api/chat/conversations', { goal: 'احسب 9 + 9' }, 'phone-create-0002');

@@ -46,6 +46,14 @@ describe('public PDF monitor', () => {
     expect(evaluateMonitor(main, provisional.state, after).trigger?.excerpt).toContain('الصنوبر');
   });
 
+  it('redacts known credential fields from stored PDF change evidence', async () => {
+    const bytes = await writeMonitorPdfFixture(['Current public schedule\nAuthorization: example-field\nOpen on Monday']);
+    const result = observed(await readPdfMonitor(spec({ kind: 'main' }), options, transport(bytes), clock));
+    const retained = result.blocks?.map(block => block.text).join(' ');
+    expect(retained).toContain('Open on Monday');
+    expect(retained?.includes('example-field')).toBe(false);
+  });
+
   it('reads wrapped phrases and tracks additions independently of list numbering', async () => {
     const original = await writeMonitorPdfFixture(['Shift list\n1. Morning shift\n2. Evening shift', 'تقرير العمل']);
     const revision = await writeMonitorPdfFixture(['Shift list\n1. Evening shift\n2. Morning shift\n3. Night shift', 'تقرير\nالعمل متاح']);
@@ -94,6 +102,17 @@ describe('public PDF monitor', () => {
     network.request.mockResolvedValueOnce({ url, body: Buffer.alloc(0), status: 302, headers: { location: 'https://files.example/rev.pdf?token=fixture' } });
     await expect(readPdfMonitor(main, options, network, clock)).rejects.toMatchObject({ code: 'MONITOR_URL_DENIED' });
     expect(network.request).toHaveBeenCalledTimes(5);
+  });
+
+  it('excludes privacy-filtered validators from PDF revalidation and storage', async () => {
+    const bytes = await writeMonitorPdfFixture(['Current public schedule']);
+    const etag = '"Authorization: example-field"';
+    const main = spec({ kind: 'main' });
+    const network = transport(bytes, 200, { 'content-type': 'application/pdf', etag });
+    const result = await readPdfMonitor(main, { ...options, cache: { url, etag } }, network, clock);
+    expect(result.kind).toBe('value');
+    expect('cache' in result && result.cache?.etag !== undefined).toBe(false);
+    expect(Object.hasOwn(network.request.mock.calls[0][1]?.headers ?? {}, 'if-none-match')).toBe(false);
   });
 
   it('refuses encrypted, truncated, malformed, and many-page PDFs without a value or cache', async () => {

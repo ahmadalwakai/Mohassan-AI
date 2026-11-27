@@ -74,4 +74,18 @@ describe('judge shadow', () => {
     expect(line.findings.every(finding => !finding.excerpt && !finding.detail)).toBe(true);
     expect([line.lead, line.best].every(quote => !quote?.text)).toBe(true);
   });
+
+  it.each([
+    ['link', (label: string) => `https://example.test/confirmation?token=${label}`],
+    ['json', (label: string) => JSON.stringify({ access_token: label })],
+  ] as const)('keeps only the verdict when a copied %s contains a credential field', async (name, format) => {
+    const fixture = 'fictional-diagnostic-label';
+    const shadow = createJudgeShadow({ logFile: join(directory, `copied-${name}.jsonl`) });
+    const verdict = shadow.observe({ conversationId: 'c6', runId: 'r1', question: 'Can you read this?', reply: format(fixture) });
+    expect(verdict).not.toBeNull();
+    await shadow.flush();
+    const raw = await readFile(shadow.logFile, 'utf8');
+    expect(raw.includes(fixture)).toBe(false);
+    expect(JSON.parse(raw)).toMatchObject({ decision: verdict!.decision, textKept: false, reply: '' });
+  });
 });

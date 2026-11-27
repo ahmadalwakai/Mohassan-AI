@@ -65,6 +65,7 @@ async function fixture(options: { expireLeaseInQueue?: boolean } = {}): Promise<
   } });
   const app = Fastify({ logger: false });
   const native = await registerWindowsRoutes(app, { db: windowsDb, owner: async () => ({ id: OWNER, sessionId: SESSION_ID }),
+    lockOwnerAccess: async (_tx, id) => id === OWNER,
     config: { webOrigin: 'http://127.0.0.1:3000', production: false, windowsEnabled: true } });
   await app.ready();
   const tools = createAssistantTools({ memory: { search: unused, create: unused }, coding: { available: false, workspace: unused },

@@ -106,6 +106,28 @@ describe('owner model council over signed-in sessions', () => {
     expect(mockGenerate).not.toHaveBeenCalled();
   });
 
+  it('publishes the pipeline reply when the owner grant ends before council publication', async () => {
+    const baseline = await sendNew(goal, memberCookie);
+    const { id } = await application.database.db.selectFrom('user').select('id').where('email', '=', member.email).executeTakeFirstOrThrow();
+    const setRole = (role: 'owner' | 'member') => application.database.db.updateTable('workspace_members')
+      .set({ role }).where('user_id', '=', id).execute();
+    await setRole('owner');
+    try {
+      mockGenerate.mockImplementationOnce(async () => {
+        await setRole('member');
+        return body;
+      });
+      const conversation = await sendNew(goal, memberCookie);
+      expect(mockGenerate).toHaveBeenCalledOnce();
+      const reply = conversation.messages.at(-1);
+      expect(reply).toMatchObject({ role: 'assistant', text: baseline.messages.at(-1)?.text });
+      expect(reply).not.toHaveProperty('experiment');
+      expect(reply).not.toHaveProperty('council');
+    } finally {
+      await setRole('member');
+    }
+  });
+
   it('serves the models page to the owner only', async () => {
     const ownerList = await application.app.inject({ url: '/api/models', headers: headers(ownerCookie) });
     expect(ownerList.statusCode).toBe(200);

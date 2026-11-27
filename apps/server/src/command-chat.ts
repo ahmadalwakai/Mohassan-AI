@@ -1118,7 +1118,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       ...(version ? { version } : {}),
       ...(olderMessages ? { olderMessages } : {}),
       ...backgroundRunView(lastRun, row.active_run_id),
-      ...(monitor ? await monitor.view(ownerId, id) : {}),
+      ...(monitor ? await monitor.view(ownerId, id, messages.filter(message => message.role === 'assistant').map(message => message.id)) : {}),
       // The latest run as the runtime committed it (assistant/agent-run.ts); its row status is the authority for the verdict.
       run: lastRun ? projectRunView({ runId: lastRun.id, status: lastRun.status, ledger: lastRun.state?.agentRun, createdAt: lastRun.created_at, updatedAt: lastRun.updated_at,
         // Model calls are counted in the ledger; only a run recorded before ledgers existed is counted from its receipts.
@@ -1525,15 +1525,12 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           pipeline: { text, status }, evidence: judgeEvidence(source), baseline, v5MayAnswer,
           history: config.v5Chat ? await v5Turns(id, runId, source) ?? [] : [],
           search: (question, signal) => councilSearch(source.ownerId, request, state, question, signal),
+          scrub: value => vault.scrub(id, clean(value)),
           signal: source.controller.signal,
         });
       } catch {
         // A council failure never costs the owner the pipeline's reply.
         council = undefined;
-      }
-      if (council?.changed) {
-        text = council.text;
-        status = council.status;
       }
     }
     const modelReply = v5Reply ?? (council?.changed && council.chosen === 'chat-v5' ? vault.scrub(id, clean(council.text)).trim() : undefined);
@@ -1555,6 +1552,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (current.active_run_id !== runId || current.status !== 'running') throw new RunEnded();
       // Owner-only at the fenced publication boundary: v5's text and the council's record are kept for an owner account only.
       const owner = Boolean((modelReply || council) && source && await config.accountFullAccess?.(source.ownerId, tx));
+      const chosenCouncil = owner && council?.changed ? council : undefined;
       const experiment = modelReply && owner ? 'v5' as const : undefined;
       const councilRecord = council && owner ? council.council : undefined;
       if (campaignEnd && campaignTask) await appendCampaignEvent(tx, { conversationId: id, runId, taskId: campaignTask }, campaignEnd);
@@ -1563,7 +1561,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // the matching state, review event and terminal status together.
       // Native memory handlers explicitly require their current review without
       // changing historical advisory contract hashes or generic chat policy.
-      let finalText = text, finalStatus = experiment ? 'completed' as const : status;
+      let finalText = chosenCouncil?.text ?? text, finalStatus = experiment ? 'completed' as const : chosenCouncil?.status ?? status;
       const monitorOffer = preparedMonitor ?? blockedMonitor;
       const monitorError = monitor && source && monitorOffer ? await monitor.publish(tx, source.ownerId, id, monitorOffer) : null;
       if (preparedMonitor && monitorError) { finalText = monitorError; finalStatus = 'partial'; }
@@ -1605,7 +1603,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           criterionLabels: Object.fromEntries((state.supervision?.contract.criteria ?? []).map(item => [item.id, criterionLabel(ledger, item.id, item.description)])) }).status;
       });
       if (blockedMonitor && !monitorError) finalText += `\n\n${blockedMonitor.text}`;
-      if (!experiment && !council?.changed && monitor?.v2 && !preparedMonitor && finalStatus === 'completed' && !judged.withheld && !memoryPublication && !state.questionAnswer && source?.request) finalText += await monitor.publishAnswerOffer(tx, { ownerId: source.ownerId, conversationId: id, runId, text: source.request, pages: [...(source.readPages ?? []), ...(source.page ? [source.page] : [])] }, finalText);
+      if (!experiment && !chosenCouncil && monitor?.v2 && !preparedMonitor && finalStatus === 'completed' && !judged.withheld && !memoryPublication && !state.questionAnswer && source?.request) finalText += await monitor.publishAnswerOffer(tx, { ownerId: source.ownerId, conversationId: id, runId, text: source.request, pages: [...(source.readPages ?? []), ...(source.page ? [source.page] : [])] }, finalText);
       await addMessage(tx, id, 'assistant', experiment ? `${modelReply}${V5_CHAT_FOOTER}` : finalText, experiment, councilRecord);
       if (state.completionReview) await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId,
         kind: 'task_review', message: 'مراجعة شروط المهمة المعلنة؛ لا تعني تصديق كل عبارة في الجواب.',

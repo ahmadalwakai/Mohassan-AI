@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
-import { BrowserError, publicSearchText, safeResumeUrl, searchRetryAfter, type SafeNetwork } from '@mohassan/browser';
+import { BrowserError, safeResumeUrl, searchRetryAfter, type SafeNetwork } from '@mohassan/browser';
 import type { MonitorSpec } from '@mohassan/contracts';
 import { extractPdfText, LearningContentError, PDF_LIMITS } from '@mohassan/learning';
 import { isWritingPdf } from '../../assistant/writing/pdf-source.js';
+import { monitorContainsCredentials, redactMonitorEvidence } from '../credential-privacy.js';
 import type { MonitorObservation } from '../evaluation.js';
 import { pageNumbers } from '../page-values-v2.js';
 import { cleanMonitorText, display, hasPhrase, labelNeedles, matchMonitorText, phraseIndex } from '../page.js';
@@ -29,6 +30,14 @@ function publicUrl(network: Transport, input: string): string {
   const url = network.validate(input).href;
   if (!safeResumeUrl(url)) throw new BrowserError('MONITOR_URL_DENIED', 'The PDF address contains private access material.');
   return url;
+}
+
+function cacheEtag(value: string | undefined): string | undefined {
+  if (value && value.length <= 512 && /^(?:W\/)?"[^"\r\n]*"$/u.test(value) && !monitorContainsCredentials(value)) return value;
+}
+
+function cacheModified(value: string | undefined): string | undefined {
+  if (value && value.length <= 64 && Number.isFinite(Date.parse(value)) && !monitorContainsCredentials(value)) return value;
 }
 
 function numericCandidates(lines: string[], spec: PdfSpec, url: string, observedAt: string): MonitorPageCandidate[] {
@@ -78,7 +87,7 @@ function readNumber(lines: string[], spec: PdfSpec, url: string, at: string, pre
 }
 
 function observe(text: string, spec: PdfSpec, url: string, at: string, previous?: MonitorPageAnchor): MonitorReadResult {
-  const lines = text.split('\n').map(line => publicSearchText(cleanMonitorText(line)));
+  const lines = text.split('\n').map(line => redactMonitorEvidence(cleanMonitorText(line)));
   const { read, source } = spec;
   let watched = lines;
   if (source.anchor && (read.kind !== 'number' || read.label && labelText(source.anchor) !== labelText(read.label))) {
@@ -132,9 +141,11 @@ export async function readPdfMonitor(spec: PdfSpec, options: MonitorReadOptions,
   let target = publicUrl(network, spec.source.url);
   for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects++) {
     const previous = options.cache?.url === target ? options.cache : undefined;
+    const etag = cacheEtag(previous?.etag);
+    const lastModified = cacheModified(previous?.lastModified);
     const headers = { accept: 'application/pdf, application/octet-stream;q=0.9',
-      ...(previous?.etag && { 'if-none-match': previous.etag }),
-      ...(previous?.lastModified && { 'if-modified-since': previous.lastModified }) };
+      ...(etag && { 'if-none-match': etag }),
+      ...(lastModified && { 'if-modified-since': lastModified }) };
     let response;
     try {
       response = await network.request(target, { method: 'GET', signal, headers, maxBytes: PDF_LIMITS.bytes, allowAttachment: true });
@@ -153,7 +164,9 @@ export async function readPdfMonitor(spec: PdfSpec, options: MonitorReadOptions,
     if ((response.status === 429 || response.status === 503) && response.headers['retry-after']) {
       await options.extendHost?.(new URL(target).hostname, searchRetryAfter(response.headers['retry-after'], clock()));
     }
-    if (response.status === 304 && previous && (previous.etag || previous.lastModified)) return { kind: 'unchanged', cache: previous };
+    if (response.status === 304 && previous && (etag || lastModified)) {
+      return { kind: 'unchanged', cache: { ...previous, etag, lastModified } };
+    }
     if (response.status !== 200 || response.body.byteLength > PDF_LIMITS.bytes || !isWritingPdf(response)) {
       return { kind: 'unreachable', url: target };
     }
@@ -176,9 +189,10 @@ export async function readPdfMonitor(spec: PdfSpec, options: MonitorReadOptions,
     const cache: MonitorSourceCache = { url: target, ...result.cache };
     // A choice still needs a full read until the approved candidate has become the baseline.
     if (result.kind === 'value') {
-      const { etag, 'last-modified': modified } = response.headers;
-      if (etag && etag.length <= 512 && /^(?:W\/)?"[^"\r\n]*"$/u.test(etag)) cache.etag = etag;
-      if (modified && modified.length <= 64 && Number.isFinite(Date.parse(modified))) cache.lastModified = modified;
+      const nextEtag = cacheEtag(response.headers.etag);
+      const nextModified = cacheModified(response.headers['last-modified']);
+      if (nextEtag) cache.etag = nextEtag;
+      if (nextModified) cache.lastModified = nextModified;
     }
     return { ...result, cache };
   }

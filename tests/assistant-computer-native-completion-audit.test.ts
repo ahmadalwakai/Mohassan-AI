@@ -42,6 +42,7 @@ async function fixture(input: Partial<Decision>): Promise<Fixture> {
     scope: 'control', target_key: targetKey, approval_nonce: epoch, expires_at: new Date(Date.now() + 30000) }).execute();
   const app = Fastify({ logger: false });
   const native = await registerWindowsRoutes(app, { db: database.db, owner: async () => ({ id: OWNER, sessionId: SESSION_ID }),
+    lockOwnerAccess: async (_tx, id) => id === OWNER,
     config: { webOrigin: 'http://127.0.0.1:3000', production: false, windowsEnabled: true } });
   await app.ready();
   const commandsRead: string[] = [];

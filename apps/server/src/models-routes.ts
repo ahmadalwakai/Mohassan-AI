@@ -7,6 +7,7 @@ import { ModelListSchema, ModelRunRequestSchema, ModelRunResponseSchema, type Mo
 import { modelRegistry, resolveModelInRoots, type ModelEntry } from '../../../packages/model-relations/src/registry.js';
 import type { ModelRunResult } from '../../../packages/model-relations/src/runtime.js';
 import { readerPrompt } from './assistant/model-council.js';
+import { modelUploadBytes } from './model-upload.js';
 
 /**
  * The owner's models page: lists every registered model with where it is used, and runs one on the owner's input.
@@ -27,6 +28,7 @@ const MEASURED: Record<string, string> = {
   'router-b0': '72.1٪ مقابل 45.9٪ للقواعد على المجموعة المختومة',
 };
 const MAX_OUTPUT = 20_000;
+const V5_WORKER_UNAVAILABLE = 'عامل v5 المقيم غير مهيأ على هذا الخادم.';
 
 export interface ModelsRoutesOptions {
   owner(request: { headers: Record<string, unknown> }): Promise<{ id: string }>;
@@ -41,7 +43,8 @@ export interface ModelsRoutesOptions {
   councilLive: boolean;
 }
 
-export function inputOf(entry: ModelEntry): { input: ModelInputKind; unavailable?: string } {
+export function inputOf(entry: ModelEntry, v5Live = false): { input: ModelInputKind; unavailable?: string } {
+  if (entry.id === 'chat-v5' && !v5Live) return { input: 'none', unavailable: V5_WORKER_UNAVAILABLE };
   if (OCR.has(entry.id)) return { input: 'image' };
   if (GENERATION.has(entry.id)) return { input: 'text' };
   if (READING.has(entry.id)) return { input: 'reading' };
@@ -73,7 +76,7 @@ function shorten(text: string, max: number): string {
 export async function listModels(options: Pick<ModelsRoutesOptions, 'roots' | 'imageReaderLive' | 'v5Live' | 'councilLive'>): Promise<ModelInfo[]> {
   return Promise.all(modelRegistry.map(async entry => {
     const resolved = await resolveModelInRoots(entry, options.roots, process.env, false);
-    const { input, unavailable } = inputOf(entry);
+    const { input, unavailable } = inputOf(entry, options.v5Live);
     const present = resolved.state !== 'absent';
     const uses: ModelUse[] = [];
     if ((entry.id === 'ocr' && options.imageReaderLive) || (entry.id === 'chat-v5' && options.v5Live)) uses.push('chat');
@@ -109,7 +112,7 @@ export async function registerModelsRoutes(app: FastifyInstance, options: Models
     const entry = modelRegistry.find(item => item.id === id);
     if (!entry) return reply.code(404).send({ error: { code: 'MODEL_UNKNOWN', message: 'لا يوجد نموذج بهذا المعرّف.' } });
     const body = ModelRunRequestSchema.parse(request.body ?? {});
-    const { input, unavailable } = inputOf(entry);
+    const { input, unavailable } = inputOf(entry, options.v5 !== undefined);
     if (input === 'none') return reply.code(409).send({ error: { code: 'MODEL_NOT_RUNNABLE', message: unavailable ?? 'لا يمكن تشغيله من هذه الصفحة.' } });
     const started = performance.now();
     const respond = (result: ModelRunResult | { ok: true; output: unknown; elapsedMs: number }): ModelRunResponse => {
@@ -121,12 +124,13 @@ export async function registerModelsRoutes(app: FastifyInstance, options: Models
     };
 
     if (input === 'image') {
-      if (!body.image) return reply.code(400).send({ error: { code: 'MODEL_INPUT', message: 'أرفق صورة PNG أو JPEG أو WebP.' } });
+      const bytes = body.image && modelUploadBytes(body.image);
+      if (!body.image || !bytes) return reply.code(400).send({ error: { code: 'MODEL_INPUT', message: 'أرفق صورة PNG أو JPEG أو WebP تطابق نوع الملف المعلن.' } });
       const directory = await mkdtemp(join(tmpdir(), 'mohassan-model-page-'));
       try {
         const extension = body.image.mimeType === 'image/png' ? 'png' : body.image.mimeType === 'image/jpeg' ? 'jpg' : 'webp';
         const path = join(directory, `input.${extension}`);
-        await writeFile(path, Buffer.from(body.image.data, 'base64'), { mode: 0o600 });
+        await writeFile(path, bytes, { mode: 0o600 });
         return respond(await options.runner.run(id, { path }));
       } finally {
         await rm(directory, { recursive: true, force: true });

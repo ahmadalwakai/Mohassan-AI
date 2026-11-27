@@ -2,6 +2,7 @@ import { performance } from 'node:perf_hooks';
 import type { ModelCouncil, ModelCouncilMember } from '@mohassan/contracts';
 import { ModelRelationsManager, type TurnDecisionLog, type TurnObservation } from '../../../../packages/model-relations/src/manager.js';
 import type { ModelRunResult } from '../../../../packages/model-relations/src/runtime.js';
+import { redactSensitiveCredentialText } from '../sensitive-credential-text.js';
 import { comparable, judge, type JudgeDecision, type JudgeEvidence } from './judge.js';
 
 /**
@@ -24,7 +25,7 @@ export type CouncilStatus = 'completed' | 'partial' | 'blocked';
 export type CouncilHistory = readonly { role: 'user' | 'assistant'; content: string }[];
 
 export interface CouncilRunner {
-  run(modelId: string, input: unknown): Promise<ModelRunResult>;
+  run(modelId: string, input: unknown, signal?: AbortSignal): Promise<ModelRunResult>;
 }
 
 export interface CouncilTurn {
@@ -41,6 +42,8 @@ export interface CouncilTurn {
   v5MayAnswer: boolean;
   /** This turn's public web search (the chat's engine, page reader and public-query guard); overrides `options.search`. */
   search?: (question: string, signal: AbortSignal) => Promise<CouncilSearchResult>;
+  /** Redacts credentials held for this conversation before making diagnostic excerpts. */
+  scrub?: (text: string) => string;
   signal: AbortSignal;
 }
 
@@ -204,22 +207,25 @@ function outputText(output: unknown): string | undefined {
 
 type Settled<T> = { status: 'ok'; value: T; ms: number } | { status: 'timeout' | 'failed'; ms: number };
 
-async function capped<T>(work: () => Promise<T>, ms: number, signal: AbortSignal): Promise<Settled<T>> {
+async function capped<T>(work: (signal: AbortSignal) => Promise<T>, ms: number, parent: AbortSignal): Promise<Settled<T>> {
   const started = performance.now();
-  if (signal.aborted || ms <= 0) return { status: 'timeout', ms: 0 };
+  if (parent.aborted || ms <= 0) return { status: 'timeout', ms: 0 };
+  const controller = new AbortController();
+  const signal = AbortSignal.any([parent, controller.signal]);
+  const timeout = Symbol();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let onAbort: (() => void) | undefined;
-  const stop = new Promise<'timeout'>(resolve => {
-    timer = setTimeout(() => resolve('timeout'), ms);
-    onAbort = () => resolve('timeout');
+  const stop = new Promise<typeof timeout>(resolve => {
+    timer = setTimeout(() => controller.abort(), ms);
+    onAbort = () => resolve(timeout);
     signal.addEventListener('abort', onAbort, { once: true });
   });
   try {
-    const value = await Promise.race([work(), stop]);
+    const value = await Promise.race([work(signal), stop]);
     const elapsed = Math.round(performance.now() - started);
-    return value === 'timeout' ? { status: 'timeout', ms: elapsed } : { status: 'ok', value: value as T, ms: elapsed };
+    return signal.aborted || value === timeout ? { status: 'timeout', ms: elapsed } : { status: 'ok', value: value as T, ms: elapsed };
   } catch {
-    return { status: 'failed', ms: Math.round(performance.now() - started) };
+    return { status: signal.aborted ? 'timeout' : 'failed', ms: Math.round(performance.now() - started) };
   } finally {
     clearTimeout(timer);
     if (onAbort) signal.removeEventListener('abort', onAbort);
@@ -315,6 +321,7 @@ export function createModelCouncil(options: ModelCouncilOptions) {
     const deadline = started + budgetMs;
     const left = (cap: number) => Math.min(cap, Math.floor(deadline - performance.now()));
     const ar = arabic(turn.question);
+    const scrub = turn.scrub ?? redactSensitiveCredentialText;
     const members: ModelCouncilMember[] = [];
     const pipelineText = turn.pipeline.text.trim();
     const judgeOf = (reply: string, status: string, evidence: readonly JudgeEvidence[]): JudgeDecision | undefined => {
@@ -326,9 +333,9 @@ export function createModelCouncil(options: ModelCouncilOptions) {
       && judgeOf(pipelineText, turn.pipeline.status, turn.evidence) !== 'withhold';
 
     // Understanding: the organizer's own stage models, bounded by its turn budget.
-    const understood = await capped(() => organizer.inspect({
+    const understood = await capped(signal => organizer.inspect({
       id: `council:${Date.now()}`, text: turn.question, previousText: turn.previous, baseline: turn.baseline,
-    }), left(caps.understanding + 1_000), turn.signal);
+    }, undefined, signal), left(caps.understanding + 1_000), turn.signal);
     if (understood.status === 'ok') members.push(...understandingMembers(understood.value));
 
     // The web, when needed: nothing was read, the pipeline has no answer that stands, and the request is a web question.
@@ -336,14 +343,14 @@ export function createModelCouncil(options: ModelCouncilOptions) {
     const search = turn.search ?? options.search;
     if (search && !evidence.length && !pipelineStands && turn.baseline.refusal === 'allow'
         && wantsWeb(turn.baseline, understood.status === 'ok' ? understood.value : undefined)) {
-      const searched = await capped(() => search(turn.question, turn.signal), left(caps.search), turn.signal);
+      const searched = await capped(signal => search(turn.question, signal), left(caps.search), turn.signal);
       const pages = searched.status === 'ok' ? searched.value.pages.filter(page => page.text.trim()) : [];
       members.push({
         model: WEB_SEARCH, label: label(WEB_SEARCH), round: 'search',
         outcome: searched.status === 'timeout' ? 'timeout' : pages.length ? 'ok' : 'failed',
-        ...(pages.length ? { output: short(pages.map(page => page.title || page.url || '').filter(Boolean).join(' · ')) } : {}),
+        ...(pages.length ? { output: short(pages.map(page => scrub(page.title || page.url || '')).filter(Boolean).join(' · ')) } : {}),
         elapsedMs: Math.min(600_000, searched.ms),
-        note: (pages.length ? `قرأ ${pages.length} صفحة لأن المحرك لم يقرأ أي صفحة ولم يجد جواباً`
+        note: scrub(pages.length ? `قرأ ${pages.length} صفحة لأن المحرك لم يقرأ أي صفحة ولم يجد جواباً`
           : searched.status === 'ok' ? searched.value.note ?? 'لم يجد صفحة مقروءة' : searched.status === 'timeout' ? 'انتهى وقت البحث' : 'تعذر البحث').slice(0, 240),
       });
       if (pages.length) evidence = pages;
@@ -356,32 +363,34 @@ export function createModelCouncil(options: ModelCouncilOptions) {
         note: turn.pipeline.status === 'completed' ? 'أكمل الجواب' : turn.pipeline.status === 'partial' ? 'جواب ناقص' : 'لم يجد جواباً' });
     }
     if (options.v5 && turn.history.at(-1)?.role === 'user') {
-      const spoken = await capped(() => options.v5!(turn.history, turn.signal), left(caps.v5), turn.signal);
+      const spoken = await capped(signal => options.v5!(turn.history, signal), left(caps.v5), turn.signal);
       const text = spoken.status === 'ok' ? spoken.value?.trim() : undefined;
       candidates.push({ model: V5, text: text ?? '', reply: text ?? '', ms: spoken.ms, agreements: 0, note: MEASURED[V5],
         outcome: spoken.status === 'timeout' ? 'timeout' : text ? 'ok' : 'failed' });
     }
     const passage = evidence.length ? selectPassage(turn.question, evidence) : null;
     if (passage) {
-      const read = await capped(() => options.runner.run(READER, { prompt: readerPrompt(turn.question, passage.text), maxNewTokens: 20 }),
+      const read = await capped(signal => options.runner.run(READER, { prompt: readerPrompt(turn.question, scrub(passage.text)), maxNewTokens: 20 }, signal),
         left(caps.reader), turn.signal);
       const raw = read.status === 'ok' && read.value.ok ? outputText(read.value.output) : undefined;
-      const answer = raw?.split('\n')[0]?.trim() ?? '';
+      const answer = raw === undefined ? '' : scrub(raw).split('\n')[0]?.trim() ?? '';
       const abstained = Boolean(raw !== undefined && (!answer || ABSTAIN.test(answer)));
-      const source = passage.title || passage.url ? `\n\n${ar ? 'المصدر' : 'Source'}: ${[passage.title, passage.url].filter(Boolean).join(' — ')}` : '';
+      const title = passage.title && scrub(passage.title);
+      const url = passage.url && scrub(passage.url);
+      const source = title || url ? `\n\n${ar ? 'المصدر' : 'Source'}: ${[title, url].filter(Boolean).join(' — ')}` : '';
       const footer = ar ? `\n\n— جواب «${label(READER)}» (${MEASURED[READER]})` : '\n\n— Answer from the reading model v3 (experimental; F1 18% Arabic, 26% English on XQuAD)';
       candidates.push({ model: READER, text: abstained ? '' : answer, reply: `${answer}${source}${footer}`, ms: read.ms, agreements: 0,
-        note: `${MEASURED[READER]}؛ قرأ فقرة من: ${passage.title || passage.url || 'صفحة'}`.slice(0, 240),
+        note: `${MEASURED[READER]}؛ قرأ فقرة من: ${title || url || 'صفحة'}`.slice(0, 240),
         outcome: read.status === 'timeout' ? 'timeout' : read.status === 'ok' && read.value.ok ? abstained ? 'abstained' : 'ok' : 'failed' });
     } else if (!evidence.length) {
-      const spoken = await capped(() => options.runner.run(V4, { text: turn.question, maxNewTokens: 48 }), left(caps.v4), turn.signal);
+      const spoken = await capped(signal => options.runner.run(V4, { text: turn.question, maxNewTokens: 48 }, signal), left(caps.v4), turn.signal);
       const raw = spoken.status === 'ok' && spoken.value.ok ? outputText(spoken.value.output) : undefined;
-      const text = raw?.split(/\n\s*\n/u)[0]?.trim() ?? '';
+      const text = raw === undefined ? '' : scrub(raw).split(/\n\s*\n/u)[0]?.trim() ?? '';
       candidates.push({ model: V4, text, reply: text, ms: spoken.ms, agreements: 0, note: MEASURED[V4],
         outcome: spoken.status === 'timeout' ? 'timeout' : text ? 'ok' : 'failed' });
     }
     if (!ar && /\d/u.test(turn.question) && turn.baseline.refusal === 'allow') {
-      const solved = await capped(() => options.runner.run(ARITHMETIC, { text: turn.question }), left(caps.arithmetic), turn.signal);
+      const solved = await capped(signal => options.runner.run(ARITHMETIC, { text: turn.question }, signal), left(caps.arithmetic), turn.signal);
       const output = solved.status === 'ok' && solved.value.ok ? solved.value.output as { value?: unknown; expression?: unknown } | null : undefined;
       const value = typeof output?.value === 'string' ? output.value : undefined;
       const expression = typeof output?.expression === 'string' ? output.expression : undefined;
@@ -401,7 +410,7 @@ export function createModelCouncil(options: ModelCouncilOptions) {
     }
     for (const candidate of candidates) {
       if (candidate.outcome !== 'ok' || !candidate.text) continue;
-      candidate.agreements = candidates.filter(other => other !== candidate && other.outcome === 'ok' && other.text
+      candidate.agreements = candidates.filter(other => other !== candidate && other.outcome === 'ok' && other.judge !== 'withhold' && other.text
         && (states(other.text, candidate.text) || states(candidate.text, other.text))).length;
     }
 
@@ -412,7 +421,7 @@ export function createModelCouncil(options: ModelCouncilOptions) {
     for (const candidate of candidates) {
       members.push({
         model: candidate.model, label: label(candidate.model), round: 'answer', outcome: candidate.outcome,
-        ...(candidate.text ? { output: short(candidate.text) } : {}),
+        ...(candidate.text ? { output: short(scrub(candidate.text)) } : {}),
         ...(candidate.inEvidence !== undefined ? { inEvidence: candidate.inEvidence } : {}),
         ...(candidate.outcome === 'ok' && candidate.text ? { agreements: Math.min(16, candidate.agreements) } : {}),
         ...(candidate.judge ? { judge: candidate.judge } : {}),
