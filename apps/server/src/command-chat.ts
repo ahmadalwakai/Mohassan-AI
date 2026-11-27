@@ -1,5 +1,6 @@
 import { cacheChatResponse, commitChatRequest, replayChatResponse, scrubChatRequestResponses, withChatRequest } from './chat-request-ledger.js';
 import { cleanRejectedChatCreate } from './rejected-chat-create.js';
+import { listConversationRows } from './conversation-paging.js';
 import { createHash, randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import type { ImageReading } from '@mohassan/vision';
@@ -1143,12 +1144,12 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     };
   }
 
-  async function list(ownerId: string) {
+  async function list(ownerId: string, query?: unknown) {
     await recoverExpired();
-    const rows = await db.selectFrom('chat_conversations').select(['id', 'title', 'status', 'updated_at','browser_account']).where('owner_id', '=', ownerId).orderBy('updated_at', 'desc').limit(60).execute();
+    const { rows, nextCursor } = await listConversationRows(db, ownerId, query);
     // `requestKeys` tells a client that the changing routes honour an Idempotency-Key, so a resend after a lost reply runs once.
     const capabilities = await capabilitiesFor(ownerId);
-    return { configured: capabilities.chatModel, capabilities, requestKeys: true as const,
+    return { configured: capabilities.chatModel, capabilities, requestKeys: true as const, ...(nextCursor !== undefined ? { nextCursor } : {}),
       conversations: rows.map((row) => ({ id: row.id, title: row.title, status: row.status, browserAccount:row.browser_account??null, updatedAt: iso(row.updated_at) })) };
   }
 
@@ -4715,7 +4716,7 @@ export async function registerCommandChatRoutes(app: FastifyInstance, { control,
     const key = z.string().min(8).max(128).regex(/^[a-zA-Z0-9_-]+$/).parse(header);
     return control.once(ownerId, scope, key, request.body ?? null, () => run(ownerId));
   };
-  app.get('/api/chat/conversations', async (request) => control.list((await owner(request)).id));
+  app.get('/api/chat/conversations', async (request) => control.list((await owner(request)).id, request.query));
   app.post('/api/chat/conversations', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request) => keyed(request, 'create', ownerId => control.create(ownerId, request.body ?? {})));
   // Images the owner attaches to a message. The bytes stay in this database and are read by the own model only.
   app.post('/api/chat/images', { bodyLimit: 7_500_000, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request) => control.uploadImage((await owner(request)).id, request.body));

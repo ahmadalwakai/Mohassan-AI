@@ -8,7 +8,7 @@ const validationMessage = 'تحقق من الحقول المطلوبة وطول 
 
 test('a default conversation can be created through the legacy strict API contract', async ({ page }) => {
   const attempts: unknown[] = [];
-  await page.route('**/api/chat/conversations', async route => {
+  await page.route(url => url.pathname === '/api/chat/conversations', async route => {
     if (route.request().method() !== 'POST') return route.continue();
     const body: unknown = route.request().postDataJSON();
     attempts.push(body);
@@ -35,7 +35,7 @@ test('a failed create keeps the draft, while a successful retry with a failed hi
   let attempts = 0;
   let failHistory = false;
   let successfulId: string | undefined;
-  await page.route('**/api/chat/conversations', async route => {
+  await page.route(url => url.pathname === '/api/chat/conversations', async route => {
     if (route.request().method() === 'GET') {
       if (!failHistory) return route.continue();
       failHistory = false;
@@ -60,7 +60,7 @@ test('a failed create keeps the draft, while a successful retry with a failed hi
   await expect(composer).toHaveValue(goal);
   await expect(page.getByRole('button', { name: 'إرسال', exact: true })).toBeEnabled();
 
-  const failedRefresh = page.waitForResponse(response => response.url().endsWith('/api/chat/conversations') && response.request().method() === 'GET' && response.status() === 503);
+  const failedRefresh = page.waitForResponse(response => new URL(response.url()).pathname === '/api/chat/conversations' && response.request().method() === 'GET' && response.status() === 503);
   await composer.press('Enter');
   await failedRefresh;
   await expect(page.getByRole('log').getByText(goal, { exact: true })).toBeVisible();

@@ -81,7 +81,7 @@ test('rates the same monitor alert in the conversation and monitor card', async 
     alerts: [alert],
   };
 
-  await page.route('**/api/chat/conversations', async route => {
+  await page.route(url => url.pathname === '/api/chat/conversations', async route => {
     const response = await route.fetch();
     const history = await response.json();
     await route.fulfill({ response, json: {
