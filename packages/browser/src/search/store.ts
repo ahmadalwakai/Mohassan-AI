@@ -4,7 +4,9 @@ import { z } from 'zod';
 import type { SearchOutcome } from './engine.js';
 
 export const SEARCH_POLICY_VERSION = 'owner-sql-public-web-v5';
-export const PROVIDER_INTERVALS: Readonly<Record<string, number>> = Object.freeze({ 'Bing RSS': 1000, 'DuckDuckGo HTML': 1000, Wikipedia: 1000, 'Stack Exchange': 1000, Crossref: 1000, 'Hacker News': 1000, arXiv: 3000 });
+// GDELT DOC permits one request per five seconds, per its HTTP 429 response (checked 2026-11-27).
+// https://blog.gdeltproject.org/ukraine-api-rate-limiting-web-ngrams-3-0/
+export const PROVIDER_INTERVALS: Readonly<Record<string, number>> = Object.freeze({ 'Bing RSS': 1000, 'DuckDuckGo HTML': 1000, Wikipedia: 1000, 'Stack Exchange': 1000, Crossref: 1000, 'Hacker News': 1000, arXiv: 3000, 'GDELT DOC 2.0': 5000 });
 export const searchHash = (text: string) => createHash('sha256').update(text).digest('hex');
 export const searchOwner = (ownerId: string) => z.string().min(1).max(200).parse(ownerId);
 const hash = z.string().regex(/^[a-f0-9]{64}$/);

@@ -53,7 +53,7 @@ describe('shared arXiv admission',()=>{
 });
 
 describe('shared documented-provider admission',()=>{
-  it.each(['Wikipedia','Stack Exchange','Crossref','Hacker News'])('serializes %s across engine instances and retains successful response cooldown',async name=>{
+  it.each(['Wikipedia','Stack Exchange','Crossref','Hacker News','GDELT DOC 2.0'])('serializes %s across engine instances and retains successful response cooldown',async name=>{
     await reset();await database.db.deleteFrom('search_provider_queries').execute();
     let began!:()=>void,release!:()=>void;
     const started=new Promise<void>(resolve=>{began=resolve;}),held=new Promise<void>(resolve=>{release=resolve;});

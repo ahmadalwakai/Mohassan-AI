@@ -1,5 +1,7 @@
 import type { SearchHit } from '../research.js';
 import { webFreshnessText } from './freshness.js';
+import { asNewsHit, hasNewsWording, rankNewsHits } from './sources/news-ranking.js';
+import { isNewsProvider } from './sources/news.js';
 export { webFreshnessText } from './freshness.js';
 
 const normalizeWord = (word:string) => word.normalize('NFKC').toLowerCase().replace(/[أإآٱ]/gu,'ا').replace(/[\u0640\p{M}\p{Cf}]/gu,'').replace(/^ال(?=\p{L}{3})/u,'');
@@ -116,6 +118,14 @@ export function localSearchSnippet(query: ReturnType<typeof compileQuery>, title
 export type RankedHit = SearchHit & { providers: string[]; relevance: 'lexical'; score: number };
 /** Intent-specific source ordering, then BM25 + reciprocal rank fusion; never arrival time. */
 export function rankResults(query: ReturnType<typeof compileQuery>, results: readonly { provider: string; hits: SearchHit[] }[], limit: number): RankedHit[] {
+  const hasNewsProvider = results.some(row => isNewsProvider(row.provider));
+  if (hasNewsProvider && hasNewsWording(query.question)) return rankNewsHits(results, limit);
+  if (hasNewsProvider && results.some(row => row.hits.some(asNewsHit))) {
+    const news = rankNewsHits(results, limit);
+    const others = rankResults(query, results.map(row => ({ ...row, hits: row.hits.filter(hit => !asNewsHit(hit)) })), limit);
+    const urls = new Set(others.map(hit => hit.url));
+    return [...others, ...news.filter(hit => !urls.has(hit.url))].slice(0, limit);
+  }
   const docs = new Map<string, { hit: SearchHit; providers: Set<string>; rrf: number }>();
   const descriptionScore = (hit:SearchHit) => { const title=new Set(searchTokens(hit.title)),snippet=new Set(searchTokens(hit.snippet));return query.tokens.reduce((score,term)=>score+(title.has(term)?2:snippet.has(term)?1:0),0); };
   for (const result of [...results].sort((a, b) => a.provider.localeCompare(b.provider))) {
