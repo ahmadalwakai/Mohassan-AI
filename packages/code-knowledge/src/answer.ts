@@ -10,6 +10,7 @@ const namedComparison = /(?:\b(?:difference|comparison) between\s+|^compar(?:e|i
 const comparisonSeparator = /\s+(?:vs\.?|versus|compared (?:to|with))\s+/iu;
 const remedy = /\b(?:instead|correct|avoid|should|caused by|occurs when|to (?:fix|resolve|prevent))\b/iu;
 const requestedVersion = /\b(python|node(?:[. -]?js)?|typescript)\s+v?(\d+(?:\.\d+){0,2})(?![\w.])/iu;
+const asksForDefinition = /^\s*(?:what (?:is|are|does|do)\b|ما (?:هو|هي)\s|ماذا\s)/iu;
 const diagnosticOutput = /^(?:\s*(?:\/\/|#|\*)\s*)?(?:Uncaught )?(?:[\w]*(?:Error|Exception|Warning):[^\r\n]+|Traceback \(most recent call last\):)/gmu;
 const proceduralContext = /\b(?:when|while|after|before|without)\b/iu;
 const ecosystems = [
@@ -49,7 +50,7 @@ function hasBothSides(passage: Passage, question: string): boolean {
   });
 }
 
-function selectSentences(text: string, terms: ReadonlySet<string>, signatures: ReadonlySet<string>, hit: SearchHit): string[] {
+function selectSentences(text: string, terms: ReadonlySet<string>, signatures: ReadonlySet<string>, hit: SearchHit, allowFirstSentence: boolean): string[] {
   const ranked = [...text.matchAll(sentencePattern)]
     .map(([match], position) => {
       const sentence = match.trim();
@@ -57,7 +58,8 @@ function selectSentences(text: string, terms: ReadonlySet<string>, signatures: R
       const fix = hit.matchedError && remedy.test(sentence) ? 3 : 0;
       return { sentence, position, score: overlap(sentence, terms) + diagnostic + fix };
     })
-    .filter(({ sentence, score }) => score > 0 && sentence.length > 12 && sentence.length <= 600)
+    .filter(({ sentence, score, position }) => (score > 0 || (allowFirstSentence && position === 0))
+      && sentence.length > 12 && sentence.length <= 600)
     .sort((left, right) => right.score - left.score || left.position - right.position)
     .slice(0, 3);
   return ranked.sort((left, right) => left.position - right.position).map(({ sentence }) => sentence);
@@ -88,9 +90,11 @@ function citationFor(passage: Passage, source: SourceCard): Citation {
     url: passage.url,
     questionUrl: passage.questionUrl,
     sourceTitle: source.title,
+    sourceKind: source.kind,
     sourceUrl: source.url,
     version: source.version,
     fingerprint: source.fingerprint,
+    retrievedOn: source.retrievedOn,
     license: passage.license ?? source.license,
     licenseUrl: passage.licenseUrl ?? source.licenseUrl,
     attribution: passage.attribution ?? [],
@@ -107,7 +111,7 @@ export class CodeKnowledge {
     this.sources = new Map(corpus.sources.map(source => [source.id, source]));
   }
 
-  answer(question: string, options: { mode?: 'error' } = {}): CodeAnswer {
+  answer(question: string, options: { mode?: 'error'; snippets?: 'omit' | 'require' } = {}): CodeAnswer {
     if (!question.trim() || question.length > MAX_QUESTION_LENGTH) {
       return { status: 'abstained', intent: options.mode ?? 'concept', reason: 'unsupported-request' };
     }
@@ -131,16 +135,29 @@ export class CodeKnowledge {
       : undefined;
     const accepts = (passage: Passage) => requestedEcosystems.every(({ tag }) => passage.tags.some(value => tag.test(value)));
     const excerpts: Excerpt[] = [];
-    for (const hit of this.index.search(question, 40, accepts)) {
+    const hits = this.index.search(question, 40, accepts);
+    // Reference introductions and API sections with only the requested symbol
+    // as their heading are better evidence for definitions than usage examples.
+    const isDefinition = (hit: SearchHit) => {
+      const title = hit.passage.title.replace(/\(\)$/u, '').replace('.prototype.', '.');
+      return [...hit.exactSymbols.filter(symbol => strongSymbols.has(symbol)), ...hit.foldedSymbols]
+        .some(symbol => symbol.replace('.prototype.', '.') === title);
+    };
+    const definition = intent === 'concept' && asksForDefinition.test(question);
+    const ranked = definition
+      ? [...hits].sort((left, right) => Number(isDefinition(right)) - Number(isDefinition(left)))
+      : hits;
+    for (const hit of ranked) {
       const { passage } = hit;
       const source = this.sources.get(passage.sourceId);
       const strongSymbolMatch = hit.exactSymbols.some(symbol => strongSymbols.has(symbol)) || hit.foldedSymbols.length > 0;
       if (!source || !versionMatches(source) || !eligible(hit, intent, signatures, strongSymbolMatch)) continue;
-      if (intent === 'comparison' && !hasBothSides(passage, question)) continue;
+      const code = options.snippets === 'omit' ? [] : selectCode(passage, terms, hit, signatures);
+      if (intent === 'comparison' && !hasBothSides({ ...passage, code }, question)) continue;
       if (excerpts.some(excerpt => excerpt.citation.url === passage.url)) continue;
-      const sentences = selectSentences(passage.text, terms, signatures, hit);
-      const code = selectCode(passage, terms, hit, signatures);
-      if (sentences.length === 0 || code.length === 0) continue;
+      const sentences = selectSentences(passage.text, terms, signatures, hit, definition && isDefinition(hit));
+      if (!sentences.length || (!code.length && options.snippets === 'require')) continue;
+      if (intent === 'error' && options.snippets !== 'omit' && passage.code.length && !code.length) continue;
       const evidence = [...sentences, ...code.map(block => block.text)].join('\n');
       if (!hit.matchedError && !strongSymbolMatch) {
         if (overlap(evidence, topicTerms) < Math.max(1, Math.ceil(0.6 * topicTerms.size))) continue;

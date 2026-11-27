@@ -1,6 +1,6 @@
-# Offline programming knowledge evaluation
+# Historical PR #45 offline programming knowledge evaluation
 
-The 15 public held-out questions produced **1 scripted correct answer, 7 wrong answers, and 7 abstentions**. The implementation is available through the local CLI and shadow adapter. Source activation requires a separate owner decision. [Source decision](CODE-KNOWLEDGE-DECISION.md)
+The 15 public held-out questions produced **1 scripted correct answer, 7 wrong answers, and 7 abstentions**. These results describe the pre-port CLI and shadow adapter, including the historical import rules. The production port uses a different bundled corpus and answer path. [Source decision](CODE-KNOWLEDGE-DECISION.md)
 
 ## Corpus
 

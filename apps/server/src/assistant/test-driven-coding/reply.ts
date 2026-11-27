@@ -7,6 +7,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import type { BrainState } from '../brain.js';
+import { formatTestDrivenCodingEvidence, type TestDrivenCodingEvidence } from './evidence.js';
 import { parseTestDrivenCodingRequest, testDrivenCodingEnabled, type TestDrivenCodingRequest } from './request.js';
 
 const worker = fileURLToPath(new URL('./worker.py', import.meta.url));
@@ -44,6 +45,10 @@ export interface CodingVerification {
   exampleTimeout?: true;
 }
 type Reply = { status: 'completed' | 'blocked'; text: string; verification: CodingVerification };
+type WorkerRequest = ({ mode: 'solve' } & TestDrivenCodingRequest) | {
+  mode: 'verify'; source: string; assertions: string;
+};
+const verifiedSchema = z.strictObject({ status: z.literal('passed') });
 
 export function publishTestDrivenCoding(state: Pick<BrainState, 'codingVerification'>, reply: Reply,
   finish: (text: string, status: Reply['status']) => Promise<void>): Promise<void> {
@@ -103,7 +108,7 @@ export async function initializeTestDrivenCoding(): Promise<string | null> {
   return interpreter.validated;
 }
 
-function runWorker(python: string, request: TestDrivenCodingRequest, cwd: string, signal: AbortSignal, timeout: number): Promise<Result> {
+function runWorker(python: string, request: WorkerRequest, cwd: string, signal: AbortSignal, timeout: number): Promise<Result> {
   return new Promise(resolve => {
     const child = execFile(python, [...pythonArgs, worker], {
       cwd,
@@ -122,7 +127,10 @@ function runWorker(python: string, request: TestDrivenCodingRequest, cwd: string
         return;
       }
       try {
-        const parsed = resultSchema.safeParse(JSON.parse(stdout));
+        const raw: unknown = JSON.parse(stdout);
+        if (request.mode === 'verify' && verifiedSchema.safeParse(raw).success) return resolve({ status: 'passed', source: request.source });
+        const parsed = resultSchema.safeParse(raw);
+        if (request.mode === 'verify' && parsed.success && parsed.data.status === 'passed') return resolve({ status: 'worker-error', reason: 'invalid-worker-response' });
         resolve(parsed.success ? parsed.data : { status: 'worker-error', reason: 'invalid-worker-response' });
       } catch {
         resolve({ status: 'worker-error', reason: 'invalid-worker-response' });
@@ -130,12 +138,13 @@ function runWorker(python: string, request: TestDrivenCodingRequest, cwd: string
     });
     // A failed spawn or cancelled worker can close stdin before consuming the request.
     child.stdin?.on('error', () => {});
-    child.stdin?.end(JSON.stringify({ mode: 'solve', ...request }));
+    child.stdin?.end(JSON.stringify(request));
   });
 }
 
 export async function answerTestDrivenCoding(
   text: string, options: { accountId: string; authorized: boolean; signal: AbortSignal; originalHash: string | undefined; scrub: (text: string) => string },
+  evidence?: TestDrivenCodingEvidence,
 ): Promise<Reply> {
   const request = parseTestDrivenCodingRequest(text);
   const ar = /\p{Script=Arabic}/u.test(request?.description ?? text);
@@ -181,13 +190,25 @@ export async function answerTestDrivenCoding(
     if (!python) return unavailableReply('worker-start-failed');
     cwd = await mkdtemp(join(tmpdir(), 'mohassan-python-'));
     const deadline = performance.now() + workerWallMs;
-    result = await runWorker(python, request, cwd, options.signal, workerWallMs);
+    const source = evidence?.code.text;
+    if (evidence && source?.endsWith('\n') && !source.includes('```') && evidence.code.language === 'python') {
+      const cited = formatTestDrivenCodingEvidence({ ...evidence, code: { ...evidence.code, text: source } });
+      const checked = await runWorker(python, { mode: 'verify', assertions: request.assertions, source }, cwd, options.signal, workerWallMs);
+      if (options.signal.aborted) return unavailableReply('cancelled');
+      if (checked.status === 'passed' && options.scrub(cited) === cited) {
+        return { status: 'completed', text: cited, verification: { reason: 'passed' } };
+      }
+    }
+    const solveBudget = evidence ? Math.floor(deadline - performance.now()) : workerWallMs;
+    if (solveBudget <= 0) return limitReply({ reason: 'worker-wall-time' });
+    const solveRequest = { mode: 'solve', ...request } as const;
+    result = await runWorker(python, solveRequest, cwd, options.signal, solveBudget);
     const remaining = Math.floor(deadline - performance.now());
     // A diagnostic fallback can fail after a search timeout. All attempts share the same wall deadline.
     if (result.status === 'failed' && result.searchLimit === 'search-cpu-time' && !result.exampleTimeout
       && ['assertion-failed', 'assertion-error', 'no-candidate-passed'].includes(result.reason) && !options.signal.aborted && remaining > 0) {
       retriedLimit = result.searchLimit;
-      result = await runWorker(python, request, cwd, options.signal, remaining);
+      result = await runWorker(python, solveRequest, cwd, options.signal, remaining);
     }
   } catch {
     return unavailableReply(options.signal.aborted ? 'cancelled' : cwd ? 'worker-start-failed' : 'workspace-unavailable');

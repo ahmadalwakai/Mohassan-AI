@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  CodeKnowledge, classifyQuestion, createCodeKnowledgeShadow, formatAnswer, readCorpus, validateCorpus, writeCorpus,
+  CodeKnowledge, classifyQuestion, createCodeKnowledgeShadow, formatAnswer, readBundledCorpus, readCorpus, validateCorpus, writeCorpus,
   type CodeKnowledgeShadowEvent, type Corpus, type Passage, type SourceCard,
 } from '../packages/code-knowledge/src/index.js';
 
@@ -59,6 +59,45 @@ const diagnostics: Passage = {
 const corpus: Corpus = { sources: [mdn], passages: [array, diagnostics] };
 
 describe('offline programming answers', () => {
+  it('retrieves a pinned primary definition from the bundled corpus', async () => {
+    // https://github.com/mdn/content/blob/72813e874d34cf328f39ab025448d9e06d921254/files/en-us/web/javascript/reference/global_objects/promise/allsettled/index.md
+    // Retrieved 2026-11-27.
+    const bundled = await readBundledCorpus();
+    expect(bundled.sources.every(source => source.kind === 'documentation' && Boolean(source.retrievedOn))).toBe(true);
+    expect(bundled.passages.filter(passage => passage.sourceId === 'mdn').every(passage => !passage.code.length)).toBe(true);
+    const answer = new CodeKnowledge(bundled).answer('What does Promise.allSettled() return?');
+    expect(answer.status).toBe('answered');
+    if (answer.status !== 'answered') return;
+    expect(answer.excerpts[0].citation).toMatchObject({
+      url: expect.stringContaining('https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/allSettled'),
+      version: 'MDN content 72813e874d34cf328f39ab025448d9e06d921254',
+      license: 'CC-BY-SA-2.5',
+    });
+    expect(formatAnswer(answer)).toContain('an array of objects');
+  });
+
+  it('prefers exact reference definitions over examples or category introductions', async () => {
+    // https://docs.python.org/release/3.13.9/library/functions.html#all
+    // https://github.com/mdn/content/blob/72813e874d34cf328f39ab025448d9e06d921254/files/en-us/web/javascript/reference/global_objects/array/map/index.md
+    // Retrieved 2026-11-27.
+    const answerer = new CodeKnowledge(await readBundledCorpus());
+    const python = answerer.answer('What does the Python built-in all() function do?', { snippets: 'omit' });
+    expect(python).toMatchObject({
+      status: 'answered',
+      excerpts: [{ citation: { url: 'https://docs.python.org/release/3.13.9/library/functions.html#all' }, code: [] }],
+    });
+    expect(formatAnswer(python)).toContain('Return True if all elements of the iterable are true');
+    const question = 'What does Array.prototype.map() do in JavaScript?';
+    expect(answerer.answer(question, { snippets: 'omit' })).toMatchObject({
+      status: 'answered',
+      excerpts: [{
+        citation: { url: 'https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map' },
+        code: [],
+      }],
+    });
+    expect(answerer.answer(question, { snippets: 'require' }).status).toBe('abstained');
+  });
+
   it.each([
     ['How do I flatten an array?', 'how-to'],
     ['Why do I get TypeError: x is not a function?', 'error'],
@@ -90,6 +129,7 @@ describe('offline programming answers', () => {
     expect(rendered).toContain(array.url);
     expect(rendered).toContain(mdn.url);
     expect(rendered).toContain(mdn.licenseUrl);
+    expect(rendered).toContain('Selected passages rendered as plain text');
     expect(rendered).toContain(cc0.licenseUrl);
     expect(rendered).toContain('MDN contributors');
     expect(rendered).toContain('Version test snapshot');

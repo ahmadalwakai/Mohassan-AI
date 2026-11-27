@@ -11,7 +11,7 @@ import type { Corpus } from '../../packages/code-knowledge/src/types.js';
 const usage = `Usage: npx tsx scripts/code-knowledge/import.ts --output <corpus.json> [options]
   --docs mdn,python,node,typescript  Official sources, or "none" (default: all four)
   --stack-site stackoverflow|unix|dba|devops
-                                     Include a Stack Exchange archive (repeatable)
+                                     Include pre-2022-11-30 posts from a Stack Exchange archive (repeatable)
   --stack-cache <directory>          Retain checked archives for later imports
   --seven-zip <executable>           7-Zip command for archive imports (default: 7zz)
   --stack-posts <Posts.xml> --stack-users <Users.xml> --stack-version <version>

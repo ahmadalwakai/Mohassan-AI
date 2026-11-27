@@ -2,10 +2,12 @@ import type { CodeAnswer, CodeBlock } from './types.js';
 
 const labels = {
   en: {
+    extracted: 'Selected passages rendered as plain text with formatting and some sections omitted.',
     abstained: 'I could not find enough evidence in the offline programming sources to answer.',
     version: 'Version', credit: 'Attribution', excerpt: 'Excerpts from', codeLicense: 'Code license', question: 'Original question', snapshot: 'Source snapshot',
   },
   ar: {
+    extracted: 'مقتطفات مختارة بنص عادي مع حذف التنسيق وبعض الأقسام.',
     abstained: 'لم أجد أدلة كافية في مصادر البرمجة المحلية للإجابة.',
     version: 'الإصدار', credit: 'نسبة المحتوى إلى أصحابه', excerpt: 'مقتطفات من', codeLicense: 'ترخيص الشفرة', question: 'السؤال الأصلي', snapshot: 'نسخة المصدر',
   },
@@ -36,6 +38,7 @@ export function formatAnswer(answer: CodeAnswer, locale: keyof typeof labels = '
       `${label.excerpt} ${link(citation.title, citation.url)} (${escapeMarkdown(citation.sourceTitle)})`,
       citation.questionUrl ? link(label.question, citation.questionUrl) : undefined,
       `${label.version} ${escapeMarkdown(citation.version)} · ${link(label.snapshot, citation.sourceUrl)} · ${link(citation.license, citation.licenseUrl)}`,
+      citation.sourceKind === 'documentation' ? label.extracted : undefined,
       credit.length ? `${label.credit} ${credit.join(', ')}` : undefined,
     ];
     const snippets = code.flatMap(block => [

@@ -22,6 +22,16 @@ export const stackTags = [
 
 type XmlStream = () => Readable;
 type Row = Record<string, string>;
+
+// Bound optional archive imports to revisions before the public ChatGPT release.
+// https://openai.com/index/chatgpt/ (retrieved 2026-11-27)
+const publicChatGptRelease = '2022-11-30';
+
+function historicalPost(row: Row): boolean {
+  const beforeRelease = (timestamp: string) => /^\d{4}-\d{2}-\d{2}(?:T|$)/u.test(timestamp)
+    && timestamp.slice(0, 10) < publicChatGptRelease;
+  return beforeRelease(row.CreationDate ?? '') && (row.LastEditDate === undefined || beforeRelease(row.LastEditDate));
+}
 type PostLicense = { license: string; licenseUrl: string };
 type PostOwner = { userId?: number; displayName?: string };
 interface Question {
@@ -174,7 +184,7 @@ export async function importStackExchange(options: StackImportOptions): Promise<
   const usersHash = createHash('sha256');
   const questions = new Map<number, Question>();
   for await (const row of xmlRows(posts, 'posts', postsHash)) {
-    if (row.PostTypeId !== '1' || (options.since && row.CreationDate < options.since)) continue;
+    if (row.PostTypeId !== '1' || !historicalPost(row) || (options.since && row.CreationDate < options.since)) continue;
     const tags = selectTags(row.Tags ?? '');
     const id = Number(row.Id);
     if (!tags.length || !Number.isSafeInteger(id) || id < 1) continue;
@@ -188,7 +198,7 @@ export async function importStackExchange(options: StackImportOptions): Promise<
   const selected: Candidate[] = [];
   const secondPostsHash = createHash('sha256');
   for await (const row of xmlRows(posts, 'posts', secondPostsHash)) {
-    if (row.PostTypeId !== '2') continue;
+    if (row.PostTypeId !== '2' || !historicalPost(row)) continue;
     const question = questions.get(Number(row.ParentId));
     const id = Number(row.Id);
     const score = Number(row.Score);
@@ -253,7 +263,8 @@ export async function importStackExchange(options: StackImportOptions): Promise<
   return {
     sources: [{
       id: sourceId, title: metadata.title, kind: 'qa', url: options.sourceUrl ?? base + '/help/data-dumps',
-      license: 'CC BY-SA (post-specific)', licenseUrl: base + '/help/licensing', version, fingerprint: 'sha256:' + fingerprint,
+      license: 'CC BY-SA (post-specific)', licenseUrl: base + '/help/licensing', version,
+      retrievedOn: new Date().toISOString().slice(0, 10), fingerprint: 'sha256:' + fingerprint,
     }],
     passages,
   };

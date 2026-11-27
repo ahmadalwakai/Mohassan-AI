@@ -24,7 +24,7 @@ import { arabicBase, arabicStem, foldText } from '@mohassan/skills';
 
 // Programming senses selected from the Arabeyes Technical Computing Dictionary,
 // v3.0.20160902 (FreeBSD Documentation License, reproduced above).
-// https://www.arabeyes.org/techdict/archive/arabdict-20160902.pdf
+// https://www.arabeyes.org/techdict/archive/arabdict-20160902.pdf (retrieved 2026-11-27)
 // SHA-256: 2418421fe5f210cae97bd8b34b1e4b221f4fb88235f0ec43cae08c23f043570e
 // English headwords are shortened for retrieval where the dictionary qualifies the sense.
 const ARABEYES: Readonly<Record<string, string>> = {
@@ -70,7 +70,7 @@ const ARABEYES: Readonly<Record<string, string>> = {
 };
 
 // Language labels and aliases from Wikidata (CC0).
-// https://www.wikidata.org/wiki/Wikidata:Licensing
+// https://www.wikidata.org/wiki/Wikidata:Licensing (revisions below retrieved 2026-11-27)
 const LANGUAGE_NAMES: Readonly<Record<string, string>> = {
   // https://www.wikidata.org/wiki/Q2005 (revision 2566877768)
   'جافا سكريبت': 'JavaScript',
@@ -86,6 +86,7 @@ const LANGUAGE_NAMES: Readonly<Record<string, string>> = {
 
 // Term pairs from "Rendering Lists" by the React documentation contributors (CC BY 4.0).
 // https://github.com/reactjs/ar.react.dev/blob/2da48d6c96d6e5ae6aa6618e074504efc2717d30/src/content/learn/rendering-lists.md
+// Retrieved 2026-11-27.
 // https://creativecommons.org/licenses/by/4.0/
 const REACT_TERMS: Readonly<Record<string, string>> = {
   'دوال': 'function',

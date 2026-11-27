@@ -12,6 +12,7 @@ export interface SourceCard {
   licenseUrl: string;
   version: string;
   fingerprint: string;
+  retrievedOn?: string;
   copyrightNotice?: string;
 }
 
@@ -53,9 +54,11 @@ export interface Citation {
   url: string;
   questionUrl?: string;
   sourceTitle: string;
+  sourceKind?: SourceCard['kind'];
   sourceUrl: string;
   version: string;
   fingerprint: string;
+  retrievedOn?: string;
   license: string;
   licenseUrl: string;
   attribution: readonly Attribution[];

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Attribution, CodeBlock, Corpus, Passage, SourceCard } from '../types.js';
 import { htmlSection, markdownSections, pythonSections } from './snippets.js';
 
+// Source versions and licenses are pinned to the primary URLs in definitions below.
 const mdnCommit = '72813e874d34cf328f39ab025448d9e06d921254';
 const typescriptCommit = 'cf57c7ec6762f3cae3a9ebc973e63851d88cb2a8';
 const pythonVersion = '3.13.9';
@@ -16,7 +17,6 @@ export type OfficialSource = typeof officialSources[number];
 interface Page {
   path: string;
   symbol?: string;
-  modernMdn?: boolean;
 }
 
 const javascriptRef = 'web/javascript/reference/';
@@ -34,7 +34,7 @@ const mdnGlobals: Page[] = [
     ['object/groupby', 'Object.groupBy'], ['object/hasown', 'Object.hasOwn'],
     ['string/includes', 'String.prototype.includes'], ['string/replaceall', 'String.prototype.replaceAll'],
     ['map', 'Map'], ['set', 'Set'],
-  ].map(([slug, symbol]) => ({ path: mdnBuiltins + slug + '/index.md', symbol, modernMdn: true })),
+  ].map(([slug, symbol]) => ({ path: mdnBuiltins + slug + '/index.md', symbol })),
   ...[
     ['array', 'Array'], ['array/map', 'Array.prototype.map'], ['array/filter', 'Array.prototype.filter'],
     ['array/foreach', 'Array.prototype.forEach'], ['array/reduce', 'Array.prototype.reduce'],
@@ -55,15 +55,14 @@ const mdnPages: readonly Page[] = [
     'operators/spread_syntax', 'operators/destructuring', 'statements/async_function',
     'statements/import', 'statements/export', 'statements/const', 'errors/not_a_function', 'errors/not_defined',
     'errors/no_properties', 'errors/json_bad_parse', 'errors/invalid_const_assignment',
-  ].map(slug => ({ path: 'files/en-us/' + javascriptRef + slug + '/index.md',
-    modernMdn: !slug.startsWith('errors/') && !['operators/destructuring', 'statements/const'].includes(slug) })),
+  ].map(slug => ({ path: 'files/en-us/' + javascriptRef + slug + '/index.md' })),
   ...['closures', 'using_promises', 'modules', 'working_with_objects', 'iterators_and_generators']
-    .map(slug => ({ path: 'files/en-us/web/javascript/guide/' + slug + '/index.md', modernMdn: slug === 'using_promises' || slug === 'modules' })),
+    .map(slug => ({ path: 'files/en-us/web/javascript/guide/' + slug + '/index.md' })),
   ...[
     ['window/structuredclone', 'structuredClone'], ['window/fetch', 'fetch'], ['fetch_api/using_fetch', 'Fetch'],
     ['urlsearchparams', 'URLSearchParams'], ['url', 'URL'], ['abortcontroller', 'AbortController'],
     ['abortsignal', 'AbortSignal'], ['response/json', 'Response.json'],
-  ].map(([slug, symbol]) => ({ path: 'files/en-us/web/api/' + slug + '/index.md', symbol, modernMdn: true })),
+  ].map(([slug, symbol]) => ({ path: 'files/en-us/web/api/' + slug + '/index.md', symbol })),
 ];
 
 const pythonPages: readonly Page[] = [
@@ -148,10 +147,18 @@ const definitions: Record<OfficialSource, Definition> = {
   },
 };
 
-const modernMdnCodeLicense = { license: 'CC0-1.0', licenseUrl: 'https://creativecommons.org/publicdomain/zero/1.0/' };
+function pythonLicense(licenseHtml: string, anchor: 'psf-license' | 'bsd0'): string {
+  const html = licenseHtml.split('<span id="' + anchor + '"></span>')[1]?.split('</section>')[0];
+  const notice = html && htmlSection(html).code[0]?.text.trim();
+  if (!notice) throw new Error('Python documentation lost the ' + anchor + ' license notice');
+  return notice;
+}
 
 function codeLicense(source: OfficialSource, licensedFiles: readonly string[]): Pick<CodeBlock, 'license' | 'licenseUrl' | 'copyrightNotice'> {
-  if (source === 'python') return { license: '0BSD', licenseUrl: pythonBase + 'license.html#bsd0' };
+  if (source === 'python') return {
+    license: '0BSD', licenseUrl: pythonBase + 'license.html#bsd0',
+    copyrightNotice: pythonLicense(licensedFiles[0], 'bsd0'),
+  };
   if (source === 'typescript') return {
     license: 'MIT', licenseUrl: 'https://github.com/microsoft/TypeScript-Website/blob/' + typescriptCommit + '/LICENSE-CODE',
     copyrightNotice: licensedFiles[1].trim(),
@@ -161,32 +168,19 @@ function codeLicense(source: OfficialSource, licensedFiles: readonly string[]): 
 
 function copyrightNotice(source: OfficialSource, licensedFiles: readonly string[]): string | undefined {
   if (source === 'node') {
-    const notice = licensedFiles[0].match(/"""\r?\n([\s\S]*?)\r?\n"""/)?.[1];
-    if (!notice) throw new Error('Node.js documentation lost its MIT license notice');
-    return notice;
+    const notices = [...licensedFiles[0].matchAll(/"""\r?\n([\s\S]*?)\r?\n"""/g)].slice(0, 2).map(match => match[1]);
+    if (!notices[0]?.startsWith('Copyright Node.js contributors.')
+      || !notices[1]?.startsWith('Copyright Joyent, Inc. and other Node contributors.')) {
+      throw new Error('Node.js documentation lost its MIT license notices');
+    }
+    return notices.join('\n\n');
   }
-  if (source === 'python') {
-    const html = licensedFiles[0].split('<span id="psf-license"></span>')[1]?.split('</section>')[0];
-    const notice = html && htmlSection(html).code[0]?.text.trim();
-    if (!notice) throw new Error('Python documentation lost its PSF license notice');
-    return notice;
-  }
+  if (source === 'python') return pythonLicense(licensedFiles[0], 'psf-license');
   return undefined;
 }
 
 function fragment(url: string, anchor?: string): string {
   return anchor ? url + '#' + encodeURIComponent(anchor) : url;
-}
-
-function isModernMdnExample(page: Page, block: CodeBlock): boolean {
-  if (!page.modernMdn || !/^(?:js|javascript)(?:-nolint)?$/.test(block.language ?? '')) return false;
-  const feature = page.symbol?.split('.').at(-1);
-  if (feature) return new RegExp('\\b' + feature + '\\b').test(block.text);
-  if (page.path.includes('nullish_coalescing')) return block.text.includes('??');
-  if (page.path.includes('optional_chaining')) return block.text.includes('?.');
-  if (page.path.includes('spread_syntax')) return /\.\.\.[a-zA-Z_\[{]/.test(block.text);
-  if (page.path.includes('using_promises')) return /\b(?:Promise|async|await)\b/.test(block.text);
-  return /\b(?:import|export|async|await)\s/.test(block.text);
 }
 
 function parseMarkdown(source: 'mdn' | 'typescript', page: Page, raw: string, license: ReturnType<typeof codeLicense>): Passage[] {
@@ -195,9 +189,9 @@ function parseMarkdown(source: 'mdn' | 'typescript', page: Page, raw: string, li
       const role = /^\s*\/\/\s*@errors:\s+\d/m.test(block.text) ? 'failure' : block.role;
       return { ...block, ...license, role };
     }
-    // MDN licenses older examples under MIT with historical author/date requirements.
-    // Keep examples only when the block itself uses the reviewed post-August-2010 feature.
-    return isModernMdnExample(page, block) ? { ...block, ...modernMdnCodeLicense } : undefined;
+    // The MDN migration obscures the snippet dates needed to establish MIT or CC0.
+    // https://developer.mozilla.org/en-US/docs/MDN/Writing_guidelines/Attrib_copyright_license (retrieved 2026-11-27)
+    return undefined;
   });
   const path = source === 'mdn' ? frontmatter.slug : frontmatter.permalink;
   if (!path || (source === 'mdn' ? !path.startsWith('Web/') : !path.startsWith('/docs/'))) {
@@ -205,7 +199,7 @@ function parseMarkdown(source: 'mdn' | 'typescript', page: Page, raw: string, li
   }
   const url = source === 'mdn' ? 'https://developer.mozilla.org/en-US/docs/' + path : 'https://www.typescriptlang.org' + path;
   const attribution: Attribution[] = source === 'mdn'
-    ? [{ name: 'MDN contributors', url: url + '/contributors.txt' }]
+    ? [{ name: 'Mozilla Contributors', url: url + '/contributors.txt' }]
     : [{ name: 'Microsoft and TypeScript contributors', url: definitions.typescript.card.url }];
   const tags = source === 'mdn' ? (path.startsWith('Web/API/') ? ['javascript', 'web-api'] : ['javascript']) : ['typescript'];
   return sections.flatMap((section, index) => {
@@ -275,8 +269,12 @@ export async function downloadText(url: string): Promise<string> {
 export async function importOfficial(
   source: OfficialSource,
   getText: (url: string) => Promise<string> = downloadText,
+  options: { selectPage?: (path: string) => boolean; retrievedOn?: string } = {},
 ): Promise<Corpus> {
   const { card, base, pages, licenses } = definitions[source];
+  const selectPage = options.selectPage;
+  const selected = selectPage ? pages.filter(({ path }) => selectPage(path)) : pages;
+  if (!selected.length) throw new Error('No selected pages for ' + source);
   const licenseText = await Promise.all(licenses.map(async license => {
     const text = await getText(license.url);
     if (!text.includes(license.contains)) throw new Error('License check failed for ' + license.url);
@@ -288,8 +286,8 @@ export async function importOfficial(
   const addDigest = (path: string, body: string) => fingerprint.update(JSON.stringify([path, createHash('sha256').update(body).digest('hex')]) + '\n');
   licenses.forEach(({ url }, index) => addDigest(url, licenseText[index]));
   const passages: Passage[] = [];
-  for (let start = 0; start < pages.length; start += 6) {
-    const batch = await Promise.all(pages.slice(start, start + 6).map(async page => {
+  for (let start = 0; start < selected.length; start += 6) {
+    const batch = await Promise.all(selected.slice(start, start + 6).map(async page => {
       const url = base + encodeURI(page.path);
       const raw = await getText(url);
       const parsed = source === 'node' ? parseNode(page, raw)
@@ -304,7 +302,12 @@ export async function importOfficial(
     }
   }
   return {
-    sources: [{ ...card, ...(notice ? { copyrightNotice: notice } : {}), fingerprint: 'sha256:' + fingerprint.digest('hex') }],
+    sources: [{
+      ...card,
+      retrievedOn: options.retrievedOn ?? new Date().toISOString().slice(0, 10),
+      ...(notice ? { copyrightNotice: notice } : {}),
+      fingerprint: 'sha256:' + fingerprint.digest('hex'),
+    }],
     passages,
   };
 }

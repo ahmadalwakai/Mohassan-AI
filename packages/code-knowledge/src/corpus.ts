@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { z } from 'zod';
+import { fileURLToPath } from 'node:url';
 import type { Corpus } from './types.js';
 
 const nonempty = z.string().refine(value => Boolean(value.trim()));
@@ -30,6 +31,7 @@ const sourceSchema = z.object({
   license: nonempty,
   licenseUrl: https,
   version: nonempty,
+  retrievedOn: z.iso.date().optional(),
   fingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
 }).strict();
 const attributionSchema = z.object({ name: nonempty, url: https.optional() }).strict();
@@ -88,6 +90,10 @@ export async function readCorpus(path: string): Promise<Corpus> {
     throw new Error('Invalid code knowledge corpus JSON');
   }
   return validateCorpus(raw);
+}
+
+export function readBundledCorpus(): Promise<Corpus> {
+  return readCorpus(fileURLToPath(new URL('../data/corpus.json', import.meta.url)));
 }
 
 export async function writeCorpus(path: string, corpus: Corpus): Promise<void> {

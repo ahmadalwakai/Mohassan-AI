@@ -48,9 +48,12 @@ describe('official programming documentation extraction', () => {
   it('reads root-level Node.js error records and keeps the MIT notice', async () => {
     const body = '<p>Node.js could not resolve a module.</p><pre><code class="language-mjs">import "./module.js";\n</code></pre>';
     const corpus = validateCorpus(await importOfficial('node', async url => url.endsWith('/LICENSE')
-      ? 'Node.js license\n"""\nCopyright Node.js contributors.\nPermission is hereby granted.\n"""'
+      ? 'Node.js license\n"""\nCopyright Node.js contributors.\nPermission is hereby granted.\n"""\n'
+        + '"""\nCopyright Joyent, Inc. and other Node contributors.\nPermission is hereby granted.\n"""'
       : JSON.stringify({ type: 'module', miscs: [{ textRaw: 'Node.js errors', miscs: [{ textRaw: '`ERR_MODULE_NOT_FOUND`', desc: body }] }] })));
-    expect(corpus.sources[0]).toMatchObject({ license: 'MIT', copyrightNotice: 'Copyright Node.js contributors.\nPermission is hereby granted.' });
+    expect(corpus.sources[0]).toMatchObject({ license: 'MIT' });
+    expect(corpus.sources[0].copyrightNotice).toBe('Copyright Node.js contributors.\nPermission is hereby granted.\n\n'
+      + 'Copyright Joyent, Inc. and other Node contributors.\nPermission is hereby granted.');
     expect(corpus.passages).toContainEqual(expect.objectContaining({
       url: 'https://nodejs.org/download/release/v22.21.1/docs/api/errors.html#err_module_not_found',
       symbols: ['ERR_MODULE_NOT_FOUND'],
@@ -75,7 +78,7 @@ describe('official programming documentation extraction', () => {
     });
   });
 
-  it('checks MDN code provenance per block and fingerprints the input bytes', async () => {
+  it('keeps attributed MDN prose, skips code with unknown provenance, and fingerprints input bytes', async () => {
     function content(mark: string) {
       return async (url: string) => url.endsWith('/LICENSE.md') ? 'CC-BY-SA 2.5' : [
         '---', 'title: Page', 'slug: Web/API/Page', '---', '',
@@ -84,18 +87,25 @@ describe('official programming documentation extraction', () => {
         '```js', 'old_examples();', '```',
       ].join('\n');
     }
-    const one = await importOfficial('mdn', content('one'));
-    const two = await importOfficial('mdn', content('two'));
+    const options = {
+      selectPage: (path: string) => path.endsWith('/promise/all/index.md'),
+      retrievedOn: '2026-11-27',
+    };
+    const one = validateCorpus(await importOfficial('mdn', content('one'), options));
+    const two = await importOfficial('mdn', content('two'), options);
+    expect(one.sources[0].retrievedOn).toBe(options.retrievedOn);
     expect(one.sources[0].fingerprint).toMatch(/^sha256:[a-f\d]{64}$/);
     expect(one.sources[0].fingerprint).not.toBe(two.sources[0].fingerprint);
     expect(one.passages).toContainEqual(expect.objectContaining({
       symbols: ['Promise.all'],
-      url: 'https://developer.mozilla.org/en-US/docs/Web/API/Page#return_value',
-      code: [{ text: 'Promise.all(values);\n', language: 'js', role: undefined,
-        license: 'CC0-1.0', licenseUrl: 'https://creativecommons.org/publicdomain/zero/1.0/' }],
+      url: 'https://developer.mozilla.org/en-US/docs/Web/API/Page',
+      text: 'A paragraph one.',
+      code: [],
+      attribution: [{ name: 'Mozilla Contributors', url: 'https://developer.mozilla.org/en-US/docs/Web/API/Page/contributors.txt' }],
     }));
-    expect(one.passages.filter(passage => passage.symbols?.includes('Array.prototype.map')).every(passage => !passage.code.length)).toBe(true);
-    expect(one.passages.flatMap(passage => passage.code).some(code => code.text.includes('old_examples'))).toBe(false);
+    expect(one.passages).toHaveLength(1);
+    expect(() => validateCorpus({ ...one, sources: [{ ...one.sources[0], retrievedOn: '2026-02-30' }] })).toThrow(/retrievedOn/u);
+    await expect(importOfficial('mdn', content('unused'), { selectPage: () => false })).rejects.toThrow('No selected pages');
   });
 });
 
@@ -104,14 +114,17 @@ describe('Stack Exchange dump import', () => {
   const body = '&lt;p&gt;Original prose.&lt;/p&gt;&lt;pre&gt;&lt;code&gt;&amp;lt;tag&amp;gt;&#xA;&lt;/code&gt;&lt;/pre&gt;';
   const posts = [
     '<?xml version="1.0" encoding="utf-8"?>', '<posts>',
-    '<row Id="1" PostTypeId="1" AcceptedAnswerId="3" OwnerUserId="10" Tags="|typescript|unrelated|" Title="Original question" ContentLicense="CC BY-SA 4.0" LastEditDate="2020-01-01" />',
-    '<row Id="2" PostTypeId="1" Tags="&lt;sql&gt;" OwnerUserId="10" Title="Other question" ContentLicense="CC BY-SA 2.5" />',
-    '<row Id="3" PostTypeId="2" ParentId="1" OwnerUserId="11" LastEditorUserId="12" LastEditDate="2023-01-01" ContentLicense="CC BY-SA 4.0" Score="1" Body="' + body + '" />',
-    '<row Id="4" PostTypeId="2" ParentId="1" OwnerUserId="11" ContentLicense="CC BY-SA 4.0" Score="2" Body="' + body + '" />',
-    '<row Id="5" PostTypeId="2" ParentId="2" OwnerDisplayName="Anonymous &amp; public" ContentLicense="CC BY-SA 3.0" Score="22" Body="' + body + '" />',
-    '<row Id="6" PostTypeId="2" ParentId="1" OwnerUserId="11" Score="25" Body="' + body + '" />',
-    '<row Id="7" PostTypeId="1" Tags="|unrelated|" OwnerUserId="10" Title="Unrelated" ContentLicense="CC BY-SA 4.0" />',
-    '<row Id="8" PostTypeId="2" ParentId="7" OwnerUserId="11" ContentLicense="CC BY-SA 4.0" Score="35" Body="' + body + '" />',
+    '<row Id="1" CreationDate="2019-05-01T12:00:00.000" PostTypeId="1" AcceptedAnswerId="3" OwnerUserId="10" Tags="|typescript|unrelated|" Title="Original question" ContentLicense="CC BY-SA 4.0" LastEditDate="2020-01-01" />',
+    '<row Id="2" CreationDate="2019-05-01T12:00:00.000" PostTypeId="1" Tags="&lt;sql&gt;" OwnerUserId="10" Title="Other question" ContentLicense="CC BY-SA 2.5" />',
+    '<row Id="3" CreationDate="2019-05-01T12:00:00.000" PostTypeId="2" ParentId="1" OwnerUserId="11" LastEditorUserId="12" LastEditDate="2022-01-01" ContentLicense="CC BY-SA 4.0" Score="1" Body="' + body + '" />',
+    '<row Id="4" CreationDate="2019-05-01T12:00:00.000" PostTypeId="2" ParentId="1" OwnerUserId="11" ContentLicense="CC BY-SA 4.0" Score="2" Body="' + body + '" />',
+    '<row Id="5" CreationDate="2019-05-01T12:00:00.000" PostTypeId="2" ParentId="2" OwnerDisplayName="Anonymous &amp; public" ContentLicense="CC BY-SA 3.0" Score="22" Body="' + body + '" />',
+    '<row Id="6" CreationDate="2019-05-01T12:00:00.000" PostTypeId="2" ParentId="1" OwnerUserId="11" Score="25" Body="' + body + '" />',
+    '<row Id="7" CreationDate="2019-05-01T12:00:00.000" PostTypeId="1" Tags="|unrelated|" OwnerUserId="10" Title="Unrelated" ContentLicense="CC BY-SA 4.0" />',
+    '<row Id="8" CreationDate="2019-05-01T12:00:00.000" PostTypeId="2" ParentId="7" OwnerUserId="11" ContentLicense="CC BY-SA 4.0" Score="35" Body="' + body + '" />',
+    '<row Id="9" CreationDate="2022-11-30T12:00:00.000" PostTypeId="2" ParentId="1" OwnerUserId="11" ContentLicense="CC BY-SA 4.0" Score="99" Body="' + body + '" />',
+    '<row Id="10" CreationDate="2020-01-01" LastEditDate="2023-01-01" PostTypeId="2" ParentId="1" OwnerUserId="11" ContentLicense="CC BY-SA 4.0" Score="99" Body="' + body + '" />',
+    '<row Id="11" PostTypeId="2" ParentId="1" OwnerUserId="11" ContentLicense="CC BY-SA 4.0" Score="99" Body="' + body + '" />',
     '</posts>',
   ].join('\n');
   const users = '<users>\n<row Id="10" DisplayName="Question author" AboutMe="Line one\nLine two" />\n'
@@ -124,7 +137,7 @@ describe('Stack Exchange dump import', () => {
   };
   const input = { site: 'stackoverflow' as const, version: 'test snapshot', posts: stream(posts), users: stream(users) };
 
-  it('imports accepted or high-score programming answers with exact code and per-post attribution', async () => {
+  it('imports dated historical programming answers with exact code and per-post attribution', async () => {
     const corpus = validateCorpus(await importStackExchange(input));
     expect(corpus.passages.map(passage => passage.id)).toEqual(['stack-exchange:stackoverflow:3', 'stack-exchange:stackoverflow:5']);
     expect(corpus.passages[0]).toMatchObject({
