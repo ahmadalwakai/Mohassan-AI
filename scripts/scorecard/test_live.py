@@ -1,5 +1,6 @@
 from pathlib import Path
 from types import SimpleNamespace
+from hashlib import sha256
 
 import pytest
 
@@ -36,7 +37,7 @@ def test_native_scores_keep_area_and_language_and_only_use_observed_samples(tmp_
     assert result['sources'] == list(source['commands'].values())
 
 
-def test_game_plan_profiles_and_private_command_redaction():
+def test_arm_profiles_and_private_command_redaction():
     baseline, production = live.default_arms(Path(__file__).resolve().parents[2])
     assert baseline['switches']['MOHASSAN_MODEL_RELATIONS'] == 'off'
     assert baseline['switches']['MOHASSAN_SCRATCH_CLASSIFIERS'] == '0'
@@ -80,3 +81,31 @@ def test_no_model_baseline_rejects_live_switch(tmp_path):
     baseline['switches']['MOHASSAN_MIND'] = '1'
     with live.development_modules(root) as (coordinator, bench), pytest.raises(ValueError, match='fixed off'):
         live._run_one(root, tmp_path, baseline, coordinator, bench, 1, False, {})
+
+
+def test_model_artifact_pins_match_across_successful_workers(tmp_path):
+    checkpoint = {"registryVersion": "fixture", "sha256": {"checkpoint": sha256(b'fixture model').hexdigest()}}
+    changed = {"registryVersion": "fixture", "sha256": {"checkpoint": sha256(b'changed model').hexdigest()}}
+    successful = {"scorecard": {"succeeded": 1, "pinnedArtifacts": checkpoint}}
+    versions = {"v1": {"scores": [successful]}, "v2": {"scores": [successful]}}
+    assert live._model_pins(versions, 'fixture-version', tmp_path) == checkpoint
+    versions["v2"]["scores"] = [{"scorecard": {"succeeded": 1, "pinnedArtifacts": changed}}]
+    with pytest.raises(ValueError, match='inconsistent artifact pins'):
+        live._model_pins(versions, 'fixture-version', tmp_path)
+    with pytest.raises(ValueError, match='No successful product council call'):
+        live._model_pins({"v1": {"scores": [{"scorecard": {"succeeded": 0}}]}}, 'fixture-version', tmp_path)
+
+
+def test_model_python_keeps_virtualenv_symlink(tmp_path, monkeypatch):
+    root = Path(__file__).resolve().parents[2]
+    executable = tmp_path / 'python-real'
+    executable.touch()
+    venv_python = tmp_path / 'env' / 'bin' / 'python'
+    venv_python.parent.mkdir(parents=True)
+    venv_python.symlink_to(executable)
+    calls = []
+    monkeypatch.setattr(live, '_run_one', lambda *args: (calls.append(args[-1]), {}, None))
+    monkeypatch.setattr(live, 'normalize_development', lambda *_: {})
+    arm = {'id': 'model', 'commit': 'a' * 40, 'model_version': 'fixture-version'}
+    live.run_development(root, tmp_path / 'out', [arm], python=venv_python)
+    assert calls == [{'EXECUTOR_PYTHON': str(venv_python)}]

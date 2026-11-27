@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { createModelCouncil } from '../../apps/server/src/assistant/model-council.js';
-import { getModelEntry, modelRegistry, modelRoots, resolveModelInRoots } from '../../packages/model-relations/src/registry.js';
+import { getModelEntry, modelRegistry, modelRoots, resolveModel, resolveModelInRoots } from '../../packages/model-relations/src/registry.js';
 import { createModelRuntime } from '../../packages/model-relations/src/runtime.js';
 
 const protectedPaths = ['/artifacts/brain-lab/holdout-v1', '/artifacts/chat-training/conversation-v1/holdout'];
@@ -55,6 +55,7 @@ async function artifactSize(selectedId: string | null, roots: string[], env: Nod
   const files = new Set<string>();
   for (const entry of entries.values()) {
     if (entry.runtime === 'gpu' || entry.resources.gpu) throw new Error('The development scorecard requires CPU models');
+    if (entry.artifacts.some(artifact => artifact.workerConfigField)) throw new Error('Use native model artifacts without a worker override');
     for (const root of roots) for (const artifact of entry.artifacts) {
       await assertLocalPath(resolve(root, artifact.path));
       if (artifact.pin) await assertLocalPath(resolve(root, artifact.pin.reference));
@@ -126,7 +127,24 @@ export async function createDevelopmentModels(selectedId: string | null) {
   if (env.EXECUTOR_PYTHON) await assertLocalPath(env.EXECUTOR_PYTHON);
   if (selectedId && !getModelEntry(selectedId)) throw new Error(`Unknown registered model ${selectedId}`);
   const diskBytes = await artifactSize(selectedId, roots, env);
-  const runtime = selectedId ? createModelRuntime({ artifactRoots: roots, env }) : null;
+  let pinnedArtifacts: { registryVersion: string; sha256: Record<string, string> } | undefined;
+  let invalidPin = false;
+  let recordedPins = false;
+  const runtime = selectedId ? createModelRuntime({ artifactRoots: roots, env, async resolve(...args) {
+    const resolved = await resolveModel(...args);
+    if (args[3] && resolved.entry.id === selectedId && resolved.state !== 'absent') {
+      const sha256: Record<string, string> = {};
+      for (const artifact of resolved.artifacts) if (artifact.present) {
+        if (!artifact.sha256 || artifact.matchesPin === false) { invalidPin = true; break; }
+        sha256[artifact.role] = artifact.sha256;
+      }
+      const snapshot = { registryVersion: resolved.entry.version, sha256 };
+      if (pinnedArtifacts && JSON.stringify(pinnedArtifacts) !== JSON.stringify(snapshot)) invalidPin = true;
+      if (invalidPin) throw new Error('The selected model artifacts failed integrity verification');
+      pinnedArtifacts = snapshot;
+    }
+    return resolved;
+  } }) : null;
   let attempts = 0;
   let succeeded = 0;
   const council = runtime && createModelCouncil({ runner: {
@@ -141,7 +159,12 @@ export async function createDevelopmentModels(selectedId: string | null) {
   return {
     council: council || undefined, diskBytes,
     childCpuMs: childCpuSampler(),
-    sample: async () => ({ attempts, succeeded, residentBytes: await residentModelBytes() }),
+    async sample() {
+      if (invalidPin) throw new Error('The selected model artifacts changed or failed verification');
+      const artifacts = !recordedPins && succeeded > 0 ? pinnedArtifacts : undefined;
+      if (artifacts) recordedPins = true;
+      return { attempts, succeeded, residentBytes: await residentModelBytes(), ...(artifacts ? { pinnedArtifacts: artifacts } : {}) };
+    },
     async close() { await runtime?.close(); },
   };
 }

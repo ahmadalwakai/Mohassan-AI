@@ -147,8 +147,9 @@ def _mind_adapter(source, replace):
         async read(url, signal) {
           const page = await web.readPage(url, signal);
           const original = fixture.pages?.find(item => new URL(item.url).href === new URL(url).href);
-          return { url, status: page === 'disallowed' ? 403 : page?.status ?? 404,
-            text: page && page !== 'disallowed' ? page.text : '', html: original?.html ?? '', headers: {} };
+          const visible = page && page !== 'disallowed' ? page : null;
+          return { url, status: page === 'disallowed' ? 403 : visible?.status ?? original?.status ?? 404,
+            text: visible?.text ?? '', html: visible ? original?.html ?? '' : '', headers: {} };
         },
         async memory(query) {
           const found = await tools.memory?.search(ownerId, query);
@@ -270,8 +271,8 @@ def _run_one(root, output, arm, coordinator, bench, workers, offline, model_sett
         bench.git = original_git
         bench.hash_product = original_archive
     versions = coordinator.combine(output, source)
-    if model and not any(score["scorecard"]["succeeded"] for run in versions.values() for score in run["scores"]):
-        raise ValueError(f"No successful product council call to {model}. See {output} for native receipts.")
+    if model:
+        source["scorecard_model_artifacts"] = _model_pins(versions, model, output)
     source["commands"] = dict(sorted(recorded_commands.items()))
     source["scorecard_model_version"] = model
     source["scorecard_model_probe_sha256"] = coordinator.digest(Path(__file__).with_name("development-models.ts").read_bytes())
@@ -279,6 +280,17 @@ def _run_one(root, output, arm, coordinator, bench, workers, offline, model_sett
     coordinator.write_json(raw, {"schemaVersion": 1, "name": arm["id"], "commit": arm["commit"],
                                  "tool": coordinator.tool_hashes(), "versions": versions, "source": source})
     return source, versions, raw
+
+
+def _model_pins(versions, model, output):
+    successful = [score["scorecard"] for run in versions.values() for score in run["scores"]
+                  if score["scorecard"]["succeeded"]]
+    if not successful:
+        raise ValueError(f"No successful product council call to {model}. See {output} for native receipts.")
+    pins = [sample["pinnedArtifacts"] for sample in successful if "pinnedArtifacts" in sample]
+    if not pins or not pins[0]["sha256"] or any(value != pins[0] for value in pins):
+        raise ValueError(f"Missing or inconsistent artifact pins for {model}. See {output} for native receipts.")
+    return pins[0]
 
 
 def _now():
@@ -341,8 +353,13 @@ def run_development(root, output, arms, *, workers=1, offline=False, command=Non
             raise ValueError("Invalid development arm ID")
     if command is None:
         command = [sys.executable, "-B", "-m", "scripts.scorecard", *_public_args(sys.argv[1:])]
-    model_settings = {name: str(safe_input_path(value)) for name, value in
-                      (("MOHASSAN_MODELS_ROOT", models_root), ("EXECUTOR_PYTHON", python)) if value is not None}
+    model_settings = {}
+    if models_root is not None:
+        model_settings["MOHASSAN_MODELS_ROOT"] = str(safe_input_path(models_root))
+    if python is not None:
+        safe_input_path(python)
+        # Python discovers the venv from the lexical entry point even when that entry point is a symlink.
+        model_settings["EXECUTOR_PYTHON"] = str(Path(python).absolute())
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
     receipts = []
     with development_modules(root) as (coordinator, bench):

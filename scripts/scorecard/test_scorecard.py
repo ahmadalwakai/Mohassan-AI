@@ -35,8 +35,10 @@ def simulated_run(tmp_path, monkeypatch):
             raw.write_text("{}")
             observations.append({
                 "arm": arm["id"], "commit": arm["commit"],
+                **({"model_version": arm["model_version"]} if arm.get("model_version") else {}),
                 "cases": [{"suite_id": suite, "case_id": f"case-{language}", "family": "factual",
-                           "language": language, "correct": arm["id"] == "baseline" or language == "ar"}
+                           "language": language,
+                           "correct": arm["id"] == "baseline" or language == "ar" or bool(arm.get("model_version"))}
                           for suite in scorecard.live.SUITES["default_suites"] for language in ("ar", "en")],
                 "metrics": {"first_progress_ms": [1, 2, 3, 4], "final_answer_ms": [11, 12, 13, 14],
                             "cpu_ms_per_turn": [5] * 4, "peak_rss_bytes": 1200},
@@ -136,6 +138,27 @@ def test_failed_measurement_gets_one_history_row(simulated_run, tmp_path, monkey
     assert len(history) == 1
     assert json.loads(history[0])["status"] == "failed"
     assert not (output / "results.json").exists()
+
+
+def test_model_effect_uses_same_commit_and_switch_control(simulated_run, tmp_path):
+    checkout, _ = simulated_run
+    commit = scorecard.live.PRODUCTION_COMMIT
+    model_python = tmp_path / "venv-python"
+    model_python.symlink_to("/usr/bin/python3")
+    output = tmp_path / "model-comparison"
+    options = ["--arm", f"reader={commit}", "--model", "reader=reading-v3-last",
+               "--model-control", "reader=production", "--models-root", str(tmp_path), "--model-python", str(model_python)]
+    invoke(checkout, output, *options)
+    model = json.loads((output / "results.json").read_text())["arms"]["reader"]
+    assert model["quality"]["combined"]["overall"]["gain"] == 0
+    assert model["model_comparison"]["overall"]["gain"] == 0.5
+    assert model["model_control"] == "production"
+    assert model["own_model_justified"] is None
+    args = scorecard.arguments(["--output", str(output), *options])
+    scorecard.plan(args, checkout)
+    assert args.model_python == model_python
+    with pytest.raises(ValueError, match="same commit and brain switches"):
+        invoke(checkout, tmp_path / "unmatched", *options, "--set", "reader:MOHASSAN_TEST=1")
 
 
 def test_private_contents_do_not_enter_any_scorecard_outputs(simulated_run, tmp_path, monkeypatch):
