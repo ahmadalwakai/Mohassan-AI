@@ -1,0 +1,99 @@
+{
+  "provenance": "The page IDs, headings, anchors and paragraph excerpts were recorded from the canonical pages. The Action API envelope and wikitext heading markup were reconstructed offline from the API documentation and recorded excerpts, since the source robots files disallow the live API.",
+  "shape": "https://www.mediawiki.org/wiki/API:Parsing_wikitext/TOCData",
+  "rights": "Wikivoyage contributors, CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/)",
+  "en": {
+    "source": "https://en.wikivoyage.org/wiki/Paris",
+    "retrieved": "2026-11-27",
+    "body": {
+      "parse": {
+        "title": "Paris",
+        "pageid": 26799,
+        "wikitext": "== Get in ==\nRER line B serves central Paris and is the fastest and most economical option for most travellers. Most trains will stop at each station along the way to Paris. Express trains with fewer stops are available during off-peak hours. Gare du Nord, Châtelet-Les Halles, Saint-Michel Notre-Dame, Luxembourg, Port-Royal, Denfert-Rochereau and Cité Universitaire are always served. A full-fare single ticket is €14 and trains run every 10 minutes. Your ticket will allow you to transfer to the Métro and other RER lines to complete your journey.\n\n== Get around ==\nParis has an excellent public transport system that spans every inch of the city. It is well-known for its Métro (short for Chemin de fer métropolitain, \"Metropolitan Railway\"), RER (short for Réseau Express Régional, \"Regional Express Network,\"), and Transilien rail networks. The Métro, RER and Transilien are complemented by a large network of trams and buses.\n\n== See ==\nPlanning your visits: several sites have \"choke points\" that restrict the number of visitors that can flow through. These include: The Eiffel Tower, Sainte-Chapelle, and the catacombs. To avoid lines, you should start your day by arriving at one of these sites at least 30 minutes before opening time. Otherwise, expect a wait of at least an hour. Most museums and galleries are closed on either Monday or Tuesday. Examples: the Louvre museum is closed on Tuesdays while the Orsay Museum is closed on Mondays. Be sure to check museum closing dates to avoid disappointment! Also, most ticket counters close 30-45 min before final closing.\n\n== Do ==\nGood listings of current cultural events in Paris can be found in Pariscope or Officiel des spectacles, weekly magazines listing all concerts, art exhibitions, films, stage plays and museums. Available from all kiosks. Timeout is a good option for tourists, who don't speak French.\n\n",
+        "tocdata": {
+          "sections": [
+            {
+              "tocLevel": 1,
+              "hLevel": 2,
+              "line": "Get in",
+              "anchor": "Get_in",
+              "fromTitle": "Paris",
+              "codepointOffset": 0
+            },
+            {
+              "tocLevel": 1,
+              "hLevel": 2,
+              "line": "Get around",
+              "anchor": "Get_around",
+              "fromTitle": "Paris",
+              "codepointOffset": 552
+            },
+            {
+              "tocLevel": 1,
+              "hLevel": 2,
+              "line": "See",
+              "anchor": "See",
+              "fromTitle": "Paris",
+              "codepointOffset": 934
+            },
+            {
+              "tocLevel": 1,
+              "hLevel": 2,
+              "line": "Do",
+              "anchor": "Do",
+              "fromTitle": "Paris",
+              "codepointOffset": 1583
+            }
+          ]
+        }
+      }
+    }
+  },
+  "ar": {
+    "source": "https://incubator.wikimedia.org/wiki/Wy/ar/مصر",
+    "retrieved": "2026-11-27",
+    "body": {
+      "parse": {
+        "title": "Wy/ar/مصر",
+        "pageid": 530007,
+        "wikitext": "== وجهات للزيارة ==\nهذه بعض الأماكن التي يمكن زيارتها في مصر :\n\n== الوصول إلى مصر ==\nيمكن الوصول لمصر عن طريق العديد من المطارات الدولية التالية:\n\n== التنقلات الداخلية ==\nتوجد العديد من الرحلات الداخلية على خطوط شركة مصر للطيران تربط مابين مدن الجمهورية ، أشهر الرحلات ستكون لوجهات سياحية مثل (القاهرة - أسوان ) ، ( القاهرة - شرم الشيخ ) ،(القاهرة - الغردقة ) وتوجد رحلات أخرى لمناطق نائية على خطوط شركات أخرى مثل رحلة ( القاهرة - الخارجة )\n\n== الأنشطة ==\nللقادمين لمصر من أجل الدراسة ، هناك الكثير من الجامعات الحكومية والخاصة التي يمكنهم الالتحاق بها طبقا لشروط وزارة التعليم العالي بمصر.\n\n",
+        "tocdata": {
+          "sections": [
+            {
+              "tocLevel": 1,
+              "hLevel": 2,
+              "line": "وجهات للزيارة",
+              "anchor": "وجهات_للزيارة",
+              "fromTitle": "Wy/ar/مصر",
+              "codepointOffset": 0
+            },
+            {
+              "tocLevel": 1,
+              "hLevel": 2,
+              "line": "الوصول إلى مصر",
+              "anchor": "الوصول_إلى_مصر",
+              "fromTitle": "Wy/ar/مصر",
+              "codepointOffset": 64
+            },
+            {
+              "tocLevel": 1,
+              "hLevel": 2,
+              "line": "التنقلات الداخلية",
+              "anchor": "التنقلات_الداخلية",
+              "fromTitle": "Wy/ar/مصر",
+              "codepointOffset": 147
+            },
+            {
+              "tocLevel": 1,
+              "hLevel": 2,
+              "line": "الأنشطة",
+              "anchor": "الأنشطة",
+              "fromTitle": "Wy/ar/مصر",
+              "codepointOffset": 442
+            }
+          ]
+        }
+      }
+    }
+  }
+}
