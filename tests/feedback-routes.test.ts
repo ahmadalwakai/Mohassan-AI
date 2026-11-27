@@ -130,6 +130,16 @@ describe('answer feedback over the authenticated application', () => {
     expect(JSON.stringify(item).includes(fixtureToken)).toBe(false);
   });
 
+  it('keeps one rating event when the owner submits twice', async () => {
+    const { id, answer, submitPath } = await ownerAnswer();
+    const both = await Promise.all(['useful', 'wrong'].map(verdict =>
+      call('POST', submitPath, ownerCookie, { messageId: answer.id, verdict })));
+    expect(both.map(response => response.statusCode)).toEqual([200, 200]);
+    const events = await application.database.db.selectFrom('chat_events').select('id')
+      .where('conversation_id', '=', id).where('kind', '=', 'feedback').execute();
+    expect(events).toHaveLength(1);
+  });
+
   it('keeps review unavailable to the owner when the flag is off', async () => {
     const app = Fastify();
     try {

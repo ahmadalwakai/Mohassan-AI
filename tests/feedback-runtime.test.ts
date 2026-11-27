@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { selectFeedbackEvidence } from '../apps/server/src/feedback-selection.js';
+import { feedbackHandsReader, selectFeedbackEvidence } from '../apps/server/src/feedback-selection.js';
 import { replayNote, replayReviewedFeedback, replaySources } from '../scripts/quality/replay-feedback.js';
 
 afterEach(() => vi.unstubAllEnvs());
@@ -11,8 +11,21 @@ it('selects only already found evidence, preserving its identity and text', () =
   const selected = selectFeedbackEvidence(policy, replaySources);
   expect(selected).toHaveLength(1);
   expect(selected[0]).toBe(second);
+  const ordered = selectFeedbackEvidence({ ...policy, blocked: new Set() }, replaySources);
+  expect(ordered[0]).toBe(second);
+  expect(ordered[1]).toBe(first);
   expect(replaySources).toEqual([first, second]);
   expect(selectFeedbackEvidence(undefined, replaySources)).toBe(replaySources);
+});
+
+it('excludes a reviewed URL even when the pipeline reaches it by redirect', async () => {
+  const [first, second] = replaySources;
+  const fetch = vi.fn(async () => ({ kind: 'page' as const, page: { url: first!.url } }));
+  const read = feedbackHandsReader(fetch as unknown as NonNullable<Parameters<typeof feedbackHandsReader>[0]>,
+    { pinned: new Set(), blocked: new Set([first!.url]) });
+  await expect(read?.(second!.url)).resolves.toEqual({ kind: 'disallowed' });
+  await expect(read?.(first!.url)).resolves.toEqual({ kind: 'disallowed' });
+  expect(fetch).toHaveBeenCalledExactlyOnceWith(second!.url);
 });
 
 it('replays one reviewed exclusion through normal chat and never uses note text', async () => {

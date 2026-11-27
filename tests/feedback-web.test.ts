@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { createElement } from 'react';
+import { createElement, type ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FeedbackItem } from '@mohassan/contracts';
-import FeedbackPage from '../apps/web/app/feedback/page';
 import { FeedbackReviewItem } from '../apps/web/app/feedback/review';
 import { requestFeedbackPage, saveFeedbackReview } from '../apps/web/app/feedback/review-data';
 
@@ -27,6 +26,9 @@ afterEach(() => {
 
 describe('feedback review web page', () => {
   it('loads owner data through the authenticated server boundary and leaves denied visits without a queue', async () => {
+    // The Next entry point belongs to the web TypeScript project. Load it at runtime here.
+    const pagePath = '../apps/web/app/feedback/page';
+    const { default: FeedbackPage } = await import(pagePath) as { default: () => Promise<ReactElement> };
     vi.stubEnv('MOHASSAN_SERVER_URL', 'http://localhost:4000');
     vi.stubEnv('INTERNAL_API_SECRET', 'feedback-page-test-only');
     incoming.set('cookie', 'fixture-session=owner');

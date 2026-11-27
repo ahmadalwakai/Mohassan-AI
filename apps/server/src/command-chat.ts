@@ -4468,6 +4468,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const input = ChatFeedbackSchema.parse(raw);
     await owned(ownerId, id);
     await db.transaction().execute(async tx => {
+      if (!await tx.selectFrom('chat_conversations').select('id').where('id', '=', id).where('owner_id', '=', ownerId).forKeyShare().executeTakeFirst()) throw notFound();
       const message = await tx.selectFrom('chat_messages').select(['id', 'role']).where('id', '=', input.messageId).where('conversation_id', '=', id).forNoKeyUpdate().executeTakeFirst();
       if (!message || message.role !== 'assistant') throw new BrowserError('CHAT_FEEDBACK_TARGET', 'هذا الرد غير موجود في المحادثة.', 404);
       await tx.deleteFrom('chat_events').where('conversation_id', '=', id).where('kind', '=', 'feedback').where(sql`data->>'messageId'`, '=', input.messageId).execute();
