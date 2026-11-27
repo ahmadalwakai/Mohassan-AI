@@ -1,6 +1,7 @@
 import { performance } from 'node:perf_hooks';
 import type { ModelCouncil, ModelCouncilMember } from '@mohassan/contracts';
 import { ModelRelationsManager, type TurnDecisionLog, type TurnObservation } from '../../../../packages/model-relations/src/manager.js';
+import { modelMeasurementLabel } from '../../../../packages/model-relations/src/registry.js';
 import type { ModelRunResult } from '../../../../packages/model-relations/src/runtime.js';
 import { comparable, judge, type JudgeDecision, type JudgeEvidence } from './judge.js';
 
@@ -100,14 +101,6 @@ const LABELS: Record<string, string> = {
   'head-sufficiency': 'رأس كفاية الأدلة',
   'head-answer-sentence': 'رأس جملة الجواب',
   ocr: 'قارئ الصور',
-};
-
-/** Measured results the decision and the owner can rely on, with where they come from. */
-const MEASURED: Record<string, string> = {
-  [READER]: 'تجريبي: F1 ‏18٪ بالعربية و26٪ بالإنجليزية على XQuAD',
-  [V5]: 'لم يجتز Gate 3 ‏(0 من 20 بكل لغة)',
-  [V4]: 'لم يجتز اختبار الاستمرار الدلالي',
-  [ARITHMETIC]: 'لا يجيب إلا فوق عتبة ثقة معايرة، وبالإنجليزية فقط',
 };
 
 const STAGES: Record<string, string> = {
@@ -358,7 +351,7 @@ export function createModelCouncil(options: ModelCouncilOptions) {
     if (options.v5 && turn.history.at(-1)?.role === 'user') {
       const spoken = await capped(() => options.v5!(turn.history, turn.signal), left(caps.v5), turn.signal);
       const text = spoken.status === 'ok' ? spoken.value?.trim() : undefined;
-      candidates.push({ model: V5, text: text ?? '', reply: text ?? '', ms: spoken.ms, agreements: 0, note: MEASURED[V5],
+      candidates.push({ model: V5, text: text ?? '', reply: text ?? '', ms: spoken.ms, agreements: 0, note: modelMeasurementLabel(V5),
         outcome: spoken.status === 'timeout' ? 'timeout' : text ? 'ok' : 'failed' });
     }
     const passage = evidence.length ? selectPassage(turn.question, evidence) : null;
@@ -369,15 +362,16 @@ export function createModelCouncil(options: ModelCouncilOptions) {
       const answer = raw?.split('\n')[0]?.trim() ?? '';
       const abstained = Boolean(raw !== undefined && (!answer || ABSTAIN.test(answer)));
       const source = passage.title || passage.url ? `\n\n${ar ? 'المصدر' : 'Source'}: ${[passage.title, passage.url].filter(Boolean).join(' — ')}` : '';
-      const footer = ar ? `\n\n— جواب «${label(READER)}» (${MEASURED[READER]})` : '\n\n— Answer from the reading model v3 (experimental; F1 18% Arabic, 26% English on XQuAD)';
+      const footer = ar ? `\n\n— جواب «${label(READER)}» (تجريبي · ${modelMeasurementLabel(READER)})`
+        : `\n\n— Answer from the reading model v3 (experimental · ${modelMeasurementLabel(READER, 'en')})`;
       candidates.push({ model: READER, text: abstained ? '' : answer, reply: `${answer}${source}${footer}`, ms: read.ms, agreements: 0,
-        note: `${MEASURED[READER]}؛ قرأ فقرة من: ${passage.title || passage.url || 'صفحة'}`.slice(0, 240),
+        note: `${modelMeasurementLabel(READER)}؛ قرأ فقرة من: ${passage.title || passage.url || 'صفحة'}`.slice(0, 240),
         outcome: read.status === 'timeout' ? 'timeout' : read.status === 'ok' && read.value.ok ? abstained ? 'abstained' : 'ok' : 'failed' });
     } else if (!evidence.length) {
       const spoken = await capped(() => options.runner.run(V4, { text: turn.question, maxNewTokens: 48 }), left(caps.v4), turn.signal);
       const raw = spoken.status === 'ok' && spoken.value.ok ? outputText(spoken.value.output) : undefined;
       const text = raw?.split(/\n\s*\n/u)[0]?.trim() ?? '';
-      candidates.push({ model: V4, text, reply: text, ms: spoken.ms, agreements: 0, note: MEASURED[V4],
+      candidates.push({ model: V4, text, reply: text, ms: spoken.ms, agreements: 0, note: modelMeasurementLabel(V4),
         outcome: spoken.status === 'timeout' ? 'timeout' : text ? 'ok' : 'failed' });
     }
     if (!ar && /\d/u.test(turn.question) && turn.baseline.refusal === 'allow') {
@@ -386,7 +380,7 @@ export function createModelCouncil(options: ModelCouncilOptions) {
       const value = typeof output?.value === 'string' ? output.value : undefined;
       const expression = typeof output?.expression === 'string' ? output.expression : undefined;
       if (solved.status !== 'ok' || !solved.value.ok || value) {
-        candidates.push({ model: ARITHMETIC, text: value ?? '', ms: solved.ms, agreements: 0, note: MEASURED[ARITHMETIC],
+        candidates.push({ model: ARITHMETIC, text: value ?? '', ms: solved.ms, agreements: 0, note: modelMeasurementLabel(ARITHMETIC),
           reply: value ? `${value}${expression ? `\n\n${expression} = ${value}` : ''}\n\n— Answer from the arithmetic model (experimental)` : '',
           outcome: solved.status === 'timeout' ? 'timeout' : value ? 'ok' : 'failed' });
       }

@@ -1,9 +1,12 @@
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
-import { ModelCouncilSchema } from '@mohassan/contracts';
+import { ModelCouncilSchema, ModelListSchema } from '@mohassan/contracts';
 import {
   createModelCouncil, decide, rankHits, readerPrompt, selectPassage, states, wantsWeb,
   type Candidate, type CouncilRunner, type CouncilTurn,
 } from '../apps/server/src/assistant/model-council.js';
+import { listModels } from '../apps/server/src/models-routes.js';
+import { modelMeasurementLabel, modelRegistry } from '../packages/model-relations/src/registry.js';
 import type { ModelRunResult } from '../packages/model-relations/src/runtime.js';
 
 const page = (text: string, title = 'Paris - Encyclopedia', url = 'https://example.org/paris') => ({ kind: 'page' as const, text, title, url });
@@ -33,6 +36,15 @@ function turn(overrides: Partial<CouncilTurn> = {}): CouncilTurn {
 }
 
 describe('model council building blocks', () => {
+  it('publishes the registry measurement label for each model in the owner list', async () => {
+    const models = await listModels({ roots: [fileURLToPath(new URL('../', import.meta.url))],
+      imageReaderLive: false, v5Live: false, councilLive: false });
+    const parsed = ModelListSchema.parse({ models, council: false });
+    expect(parsed.models.map(({ id, measured }) => ({ id, measured })))
+      .toEqual(modelRegistry.map(({ id }) => ({ id, measured: modelMeasurementLabel(id) })));
+    expect(parsed.models.find(({ id }) => id === 'chat-v5')?.gates).toContain('لم يجتز Gate 3');
+  });
+
   it('picks the passage that shares the most question words', () => {
     const passage = selectPassage('What is the capital of France?', [page(`Weather in Lyon is mild in spring and autumn every year.\n${PARIS}`)]);
     expect(passage?.text).toBe(PARIS);
@@ -113,7 +125,9 @@ describe('deliberation', () => {
     expect(search).not.toHaveBeenCalled();
     const answers = outcome.council.members.filter(member => member.round === 'answer');
     expect(answers.map(member => member.model)).toEqual(['pipeline', 'chat-v5', 'reading-v3-last']);
-    expect(answers.find(member => member.model === 'reading-v3-last')).toMatchObject({ output: 'Paris', inEvidence: true, agreements: 1 });
+    expect(answers.find(member => member.model === 'chat-v5')).toMatchObject({ note: modelMeasurementLabel('chat-v5') });
+    expect(answers.find(member => member.model === 'reading-v3-last')).toMatchObject({ output: 'Paris', inEvidence: true, agreements: 1,
+      note: expect.stringContaining(modelMeasurementLabel('reading-v3-last')) });
     expect(answers.find(member => member.model === 'pipeline')).toMatchObject({ chosen: true });
     expect(ModelCouncilSchema.parse(outcome.council)).toEqual(outcome.council);
   });
@@ -129,6 +143,7 @@ describe('deliberation', () => {
     expect(outcome.text).toContain('Paris');
     expect(outcome.text).toContain('Source: Capital of France guide — https://travel.example/france-capital');
     expect(outcome.text).toContain('reading model v3');
+    expect(outcome.text).toContain(modelMeasurementLabel('reading-v3-last', 'en'));
     expect(outcome.council.members.find(member => member.round === 'search')).toMatchObject({ model: 'web-search', outcome: 'ok' });
     expect(models.calls).toContain('reading-v3-last');
     expect(models.calls).not.toContain('chat-v4');
@@ -162,6 +177,7 @@ describe('deliberation', () => {
     expect(read.council.members.find(member => member.model === 'reading-v3-last')).toMatchObject({ outcome: 'abstained' });
     expect(models.calls).not.toContain('chat-v4');
     const none = await council.deliberate(turn({ baseline: { route: 'chat', refusal: 'allow', speechAct: 'request', turnType: 'new' } }));
-    expect(none.council.members.find(member => member.model === 'chat-v4')).toMatchObject({ outcome: 'ok', output: 'Paris' });
+    expect(none.council.members.find(member => member.model === 'chat-v4')).toMatchObject({ outcome: 'ok', output: 'Paris',
+      note: modelMeasurementLabel('chat-v4') });
   });
 });

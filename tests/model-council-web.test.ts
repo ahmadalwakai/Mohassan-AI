@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { ModelCouncilSchema, type ModelInfo } from '@mohassan/contracts';
 import { CouncilPanel, ModelCouncilDetails } from '../apps/web/components/model-council';
 import { ModelCard } from '../apps/web/components/models-workspace';
+import { getModelEntry, modelMeasurementLabel } from '../packages/model-relations/src/registry';
 
 const council = ModelCouncilSchema.parse({
   version: 1, chosen: 'reading-v3-last', changed: true, elapsedMs: 4200,
@@ -43,7 +44,7 @@ describe('the model council under an owner reply', () => {
 
 describe('a model card on the models page', () => {
   const model: ModelInfo = { id: 'reading-v3-last', version: 'reading-v3-last', task: 'Historical extractive reading model', runtime: 'python-worker',
-    present: true, input: 'reading', gates: [], measured: 'F1 ‏18٪ بالعربية و26٪ بالإنجليزية على XQuAD', uses: ['council', 'page'] };
+    present: true, input: 'reading', gates: [], measured: modelMeasurementLabel('reading-v3-last'), uses: ['council', 'page'] };
 
   it('names where the model is used and offers a run when it can run', () => {
     const html = renderToStaticMarkup(createElement(ModelCard, { model, selected: false, onSelect: () => {} }));
@@ -57,5 +58,18 @@ describe('a model card on the models page', () => {
       unavailable: 'يحتاج صيغة مهام المنفّذ المحلي، والمنفّذ مقفل في الإنتاج.', uses: [] }, selected: false, onSelect: () => {} }));
     expect(html).toContain('المنفّذ مقفل في الإنتاج');
     expect(html).not.toContain('جرّبه');
+  });
+
+  it('shows the registry measurement and its source, or explicitly marks it unmeasured', () => {
+    const measured = getModelEntry('chat-v5')!;
+    const evidence = measured.measurement;
+    if (evidence === 'not measured') throw new Error('Missing v5 frozen-probe evidence');
+    const measuredHtml = renderToStaticMarkup(createElement(ModelCard, { model: { ...model, id: measured.id,
+      measured: modelMeasurementLabel(measured.id) }, selected: false, onSelect: () => {} }));
+    expect(measuredHtml).toContain(evidence.source.path);
+    for (const { numerator, denominator } of evidence.results) expect(measuredHtml).toContain(`${numerator}/${denominator}`);
+
+    const unmeasuredHtml = renderToStaticMarkup(createElement(ModelCard, { model, selected: false, onSelect: () => {} }));
+    expect(unmeasuredHtml).toContain('لا قياس موثّق ببسط ومقام لكل لغة');
   });
 });
