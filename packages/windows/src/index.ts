@@ -36,6 +36,10 @@ const validPair = (pair:any) => Boolean(pair && hasSessionBinding(pair.session_b
 function decode(value:any){return typeof value==='string'?JSON.parse(value):value;}
 
 export async function windowsMigration(db:Kysely<any>) {
+  await db.transaction().execute(migrateWindowsSchema);
+}
+
+async function migrateWindowsSchema(db:Kysely<any>) {
   await sql`CREATE TABLE IF NOT EXISTS windows_pairings(id text PRIMARY KEY,owner_id text NOT NULL,session_binding text NOT NULL,code_hash text NOT NULL UNIQUE,expires_at timestamptz NOT NULL,consumed_at timestamptz,created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`.execute(db);
   await sql`CREATE TABLE IF NOT EXISTS windows_devices(id text PRIMARY KEY,owner_id text NOT NULL,name text NOT NULL,key_hash text NOT NULL,revoked_at timestamptz,last_seen_at timestamptz,state jsonb,last_frame jsonb,stopped_nonce text,created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS windows_devices_owner_idx ON windows_devices(owner_id,created_at)`.execute(db);
