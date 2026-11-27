@@ -37,11 +37,11 @@ import type { ConversationShadow } from './assistant/conversation-state-shadow.j
 import { enterConversationTurn, useLegacyConversationLookup } from './assistant/conversation-state-chat.js';
 import { publicConversationFollowup } from './assistant/public-conversation-followup.js';
 import type { JudgeShadow } from './assistant/judge-shadow.js';
-import { judge as judgeAnswer } from './assistant/judge.js';
+import { judge as judgeAnswer, type JudgeEvidence } from './assistant/judge.js';
 import { observeImageRelations, observeModelRelations, ruleBaseline } from './assistant/model-relations-shadow.js';
 import { rankHits, type CouncilOutcome, type CouncilSearchResult, type ModelCouncilService } from './assistant/model-council.js';
 import { withArbiterExecution } from './assistant/model-relations-arbiter.js';
-import { ensureChatConversationsTable, reviewJudgedReply } from './assistant/review/publication.js';
+import { ensureChatConversationsTable, prepareJudgedReply, reviewJudgedReply } from './assistant/review/publication.js';
 import { backgroundRunView } from './assistant/long-run/view.js';
 import { continueWebSequence, joinSequence, planWebSequence, startWebSequence } from './assistant/web-sequence.js';
 import { composeLetter, unsupportedWriting, writingQuestion, writingTask } from './assistant/writer.js';
@@ -1418,17 +1418,17 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       .map(page => ({ kind: 'page' as const, url: page.url, title: page.title, text: page.text.slice(0, 200_000) }));
   }
   /** `asked`: one part of a message of several questions is judged on its own question, with the part before it as the previous turn. */
-  function judgeReply(id: string, runId: string, reply: string, status: string, allowChange = false, asked?: { question: string; previous: string | null }): { text: string; withheld: boolean } {
+  function judgeReply(id: string, runId: string, reply: string, status: string, allowChange = false, asked?: { question: string; previous: string | null }, model?: { origin: string; evidence?: readonly JudgeEvidence[]; owner: boolean }): { text: string; withheld: boolean } {
     const unchanged = { text: reply, withheld: false };
     if (!config.judgeShadow) return unchanged;
     const current = execution.getStore();
     if (!current?.request) return unchanged;
     try {
-      const evidence = judgeEvidence(current);
+      const evidence = model?.evidence ?? judgeEvidence(current);
       const applyFix = Boolean(allowChange && config.judgeFixForOwner && current.full);
       const applyWithhold = Boolean(allowChange && config.judgeWithholdForOwner && current.full);
       const verdict = config.judgeShadow.observe({ conversationId: id, runId, question: asked?.question ?? current.request, previous: asked ? asked.previous : current.previousRequest ?? null, reply, status,
-        applyFix, applyWithhold, keepText: config.judgeLogText !== 'owner' || Boolean(current.full), ...(evidence.length ? { evidence } : {}) });
+        origin: model?.origin, applyFix, applyWithhold, keepText: config.judgeLogText !== 'owner' || (model?.owner ?? Boolean(current.full)), ...(evidence.length ? { evidence } : {}) });
       if (applyWithhold && verdict?.decision === 'withhold' && verdict.withholdText?.trim()) return { text: verdict.withholdText, withheld: true };
       if (applyFix && verdict?.decision === 'fix' && verdict.fixedReply?.trim()) return { text: verdict.fixedReply, withheld: false };
     } catch { /* The judge never stops a run. */ }
@@ -1539,8 +1539,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const modelReply = v5Reply ?? (council?.changed && council.chosen === 'chat-v5' ? vault.scrub(id, clean(council.text)).trim() : undefined);
     // The judge sees the reply first: logged in shadow for everyone; for the owner's account its fix, or its fixed withhold
     // sentence, is what goes on. Memory publications keep their own stricter checks and are never changed here.
-    // A reply the council picked from a model was already judged there.
-    const judged = modelReply || council?.changed || prejudged || !config.judgeShadow ? { text, withheld: false } : await reviewJudgedReply(work => runTransaction(id, runId, work), { id, runId, clean, allowApply: !memoryPublication && state.supervision?.contract.mode !== 'enforced' }, () => judgeReply(id, runId, text, status, !memoryPublication));
+    const modelOrigin = council?.changed ? council.chosen : v5Reply ? 'chat-v5' : undefined;
+    const judged = modelOrigin || prejudged || !config.judgeShadow ? { text, withheld: false } : await reviewJudgedReply(work => runTransaction(id, runId, work), { id, runId, clean, allowApply: !memoryPublication && state.supervision?.contract.mode !== 'enforced' }, () => judgeReply(id, runId, text, status, !memoryPublication));
     text = judged.text;
     // A withheld answer is not a completed task.
     if (judged.withheld && status === 'completed') status = 'partial';
@@ -1550,6 +1550,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const campaignTask = state.campaign ? campaignTaskId(runId, state.campaign.serial) : null;
     if (campaignEnd && state.campaign) state.campaign.open = false;
     await saveState(runId, state);
+    const modelReview = modelOrigin && config.judgeShadow
+      ? await prepareJudgedReply(work => runTransaction(id, runId, work), { id, runId, clean, allowApply: false }) : undefined;
     const published = await runTransaction(id,runId,async (tx) => {
       const current = await tx.selectFrom('chat_conversations').select(['status', 'active_run_id']).where('id', '=', id).forUpdate().executeTakeFirstOrThrow();
       if (current.active_run_id !== runId || current.status !== 'running') throw new RunEnded();
@@ -1606,7 +1608,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       });
       if (blockedMonitor && !monitorError) finalText += `\n\n${blockedMonitor.text}`;
       if (!experiment && !council?.changed && monitor?.v2 && !preparedMonitor && finalStatus === 'completed' && !judged.withheld && !memoryPublication && !state.questionAnswer && source?.request) finalText += await monitor.publishAnswerOffer(tx, { ownerId: source.ownerId, conversationId: id, runId, text: source.request, pages: [...(source.readPages ?? []), ...(source.page ? [source.page] : [])] }, finalText);
-      await addMessage(tx, id, 'assistant', experiment ? `${modelReply}${V5_CHAT_FOOTER}` : finalText, experiment, councilRecord);
+      const sentText = experiment ? `${modelReply}${V5_CHAT_FOOTER}` : finalText;
+      await addMessage(tx, id, 'assistant', sentText, experiment, councilRecord);
       if (state.completionReview) await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId,
         kind: 'task_review', message: 'مراجعة شروط المهمة المعلنة؛ لا تعني تصديق كل عبارة في الجواب.',
         data: JSON.stringify({ contractHash: state.supervision?.contract.hash, review: state.completionReview }) }).execute();
@@ -1617,8 +1620,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (config.recordSkillGap && finalStatus !== 'completed') {
         await config.recordSkillGap(tx, { ownerId: execution.getStore()!.ownerId, chatRunId: runId, outcome: finalStatus, signal: state.gapSignal ?? null });
       }
-      return { text: finalText, status: finalStatus, experiment };
+      return { text: finalText, status: finalStatus, experiment, sentText, owner };
     });
+    if (modelOrigin && modelReview && (published.experiment || council?.changed))
+      modelReview(() => judgeReply(id, runId, vault.scrub(id, clean(published.sentText)), published.status, false, undefined, { origin: modelOrigin, evidence: council?.evidence, owner: published.owner }));
     if (!published.experiment) observeModelRelations(runId, state, execution.getStore(), published.text, published.status);
     const current=execution.getStore();if(current)forgetVault(id,current.token);
   }
@@ -2514,7 +2519,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const earlier = await readResponsePolicyHistory({ db, ownerId, conversationId: id, state, policy: chatResponsePolicyInput(request, state), recentLimit: HISTORY_MESSAGES + 1, scrub: text => vault.scrub(id, clean(text)) });
       const history = earlier.reverse().slice(0, -1).map((entry) => ({ role: entry.role, text: clean(entry.text) }));
       currentExecution.previousRequest = history.filter(entry => entry.role === 'user').at(-1)?.text ?? null;
-      if (config.ownModel && run.intent === 'task' && run.attempt === 1 && !state.steps)
+      if (config.ownModel && fullReach() && run.intent === 'task' && run.attempt === 1 && !state.steps)
         void config.ownModel.observe({ request: vault.scrub(id, request), earlierUserTurns: history.filter(entry => entry.role === 'user').map(entry => vault.scrub(id, entry.text)), route: state.routing?.route, signal });
       if (run.intent === 'task' && (state.routing?.route === 'clarify' || state.clarifiedRequest)
         && await pauseEverydayClarification(request, state, (status, fields, prompt) => pause(id, runId, state, status, fields, prompt),
@@ -3275,7 +3280,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
         // Every pause path saves the run state, plan included, before it stops.
         if (outcome.kind === 'paused') return;
-        if (config.ownModel && outcome.status === 'completed') outcome.text = await config.ownModel.phrase({
+        if (config.ownModel && fullReach() && outcome.status === 'completed') outcome.text = await config.ownModel.phrase({
           plan, reply: vault.scrub(id, outcome.text), status: outcome.status, evidence: judgeEvidence(currentExecution),
           question: judgedAs?.question ?? request, previous: judgedAs ? judgedAs.previous : currentExecution.previousRequest, signal,
         });

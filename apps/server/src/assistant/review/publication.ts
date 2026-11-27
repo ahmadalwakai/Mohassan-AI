@@ -73,26 +73,35 @@ async function loadLedger(tx: Kysely<any>, { id, clean }: ReviewContext): Promis
   return ledger;
 }
 
-export async function reviewJudgedReply<T extends { text: string; withheld: boolean }>(
+/** Capture the prior turns before publication so the review can run on the reply that commits. */
+export async function prepareJudgedReply(
   transaction: (work: (tx: Kysely<any>) => Promise<ConversationLedger>) => Promise<ConversationLedger>,
   context: ReviewContext,
-  judgeReply: () => T,
-): Promise<T> {
+) {
   const startedAt = performance.now();
   let ledger: ConversationLedger;
   try {
     ledger = await transaction(tx => loadLedger(tx, context));
   } catch {
     reportUnavailable();
-    return judgeReply();
+    return <T>(judgeReply: () => T) => judgeReply();
   }
   const scope: NonNullable<ReturnType<typeof activeReview.getStore>> = { context, ledger, startedAt };
-  try {
-    const judged = activeReview.run(scope, judgeReply);
-    return scope.replacement === undefined ? judged : { ...judged, text: scope.replacement };
-  } finally {
-    // The judge queues its file write. Do not retain the transcript through it.
-    scope.ledger = undefined;
-    scope.replacement = undefined;
-  }
+  return <T extends { text: string; withheld: boolean }>(judgeReply: () => T): T => {
+    try {
+      const judged = activeReview.run(scope, judgeReply);
+      return scope.replacement === undefined ? judged : { ...judged, text: scope.replacement };
+    } finally {
+      // The judge queues its file write. Do not retain the transcript through it.
+      scope.ledger = undefined;
+      scope.replacement = undefined;
+    }
+  };
+}
+
+export async function reviewJudgedReply<T extends { text: string; withheld: boolean }>(
+  transaction: Parameters<typeof prepareJudgedReply>[0], context: ReviewContext, judgeReply: () => T,
+): Promise<T> {
+  const review = await prepareJudgedReply(transaction, context);
+  return review(judgeReply);
 }

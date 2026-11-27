@@ -80,7 +80,7 @@ describe('judge shadow through the real chat controller', () => {
     const mine = (await lines()).filter(line => line.conversationId === id);
     expect(mine).toHaveLength(1);
     const line = mine[0]!;
-    expect(line).toMatchObject({ question: 'What is the capital of Japan?', previous: null, lang: 'en', status: 'completed' });
+    expect(line).toMatchObject({ question: 'What is the capital of Japan?', previous: null, lang: 'en', status: 'completed', origin: 'pipeline' });
     expect(line.reply).toBe(stored);
     // The answer came from the fixture page in the chat's own layout (English headings for an English question since 2026-11-22):
     // a sourced answer whose lead names the capital, so the judge lets it through. The page the run read is its evidence:

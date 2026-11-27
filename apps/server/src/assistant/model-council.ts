@@ -49,6 +49,8 @@ export interface CouncilOutcome {
   status: CouncilStatus;
   chosen: string;
   changed: boolean;
+  /** Evidence seen by the council, including pages it read itself. */
+  evidence?: readonly JudgeEvidence[];
   council: ModelCouncil;
 }
 
@@ -426,6 +428,7 @@ export function createModelCouncil(options: ModelCouncilOptions) {
       status: changed ? 'completed' : turn.pipeline.status,
       chosen,
       changed,
+      ...(changed && { evidence }),
       council: {
         version: 1, chosen, changed, reason: changed || decision.chosen === PIPELINE ? decision.reason
           : 'لم يكن لجواب العضو المختار نص يُرسل، فبقي رد المحرك.',
