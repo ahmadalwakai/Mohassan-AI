@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Retrieved 2026-11-27 from https://www.gov.uk/search/news-and-communications.atom; selected entries, media and full article bodies omitted. -->
+<feed xml:lang="en-US" xmlns="http://www.w3.org/2005/Atom">
+  <id>tag:www.gov.uk,2005:/search/news-and-communications</id>
+  <link rel="alternate" type="text/html" href="https://www.gov.uk"/>
+  <link rel="self" type="application/atom+xml" href="https://www.gov.uk/search/news-and-communications.atom"/>
+  <title>News and communications</title>
+  <updated>2026-11-27T00:01:05+00:00</updated>
+  <author>
+    <name>HM Government</name>
+  </author>
+  <entry>
+    <id>tag:www.gov.uk,2005:/government/news/over-half-a-million-households-to-get-help-with-water-bills</id>
+    <updated>2026-11-27T00:01:05+00:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.gov.uk/government/news/over-half-a-million-households-to-get-help-with-water-bills"/>
+    <title>Over half a million households to get help with water bills</title>
+    <summary type="html">Up to 250,000 more vulnerable households to be supported with £428 a year off their water bills</summary>
+  </entry>
+<entry>
+    <id>tag:www.gov.uk,2005:/government/news/company-director-sentenced-after-liquidators-unable-to-verify-more-than-1-million</id>
+    <updated>2026-11-26T16:33:35+00:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.gov.uk/government/news/company-director-sentenced-after-liquidators-unable-to-verify-more-than-1-million"/>
+    <title>Company director sentenced after liquidators unable to verify more than £1 million</title>
+    <summary type="html">Director sentenced for failing to provide company records</summary>
+  </entry>
+<entry>
+    <id>tag:www.gov.uk,2005:/government/speeches/international-day-for-the-elimination-of-violence-against-women-and-girls-2026-joint-statement-to-the-osce</id>
+    <updated>2026-11-26T15:37:48+00:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.gov.uk/government/speeches/international-day-for-the-elimination-of-violence-against-women-and-girls-2026-joint-statement-to-the-osce"/>
+    <title>International Day for the Elimination of Violence Against Women and Girls 2026: Joint statement to the OSCE</title>
+    <summary type="html">Speaking on behalf of 42 participating States, Ambassador Holland marks the 2026 International Day for the Elimination of Violence against Women and Girls and the beginning of the 16 Days of Activism against Gender-Based Vio…</summary>
+  </entry>
+<entry>
+    <id>tag:www.gov.uk,2005:/government/speeches/93rd-anniversary-of-the-holodomor-uk-statement-to-the-osce</id>
+    <updated>2026-11-26T15:33:48+00:00</updated>
+    <link rel="alternate" type="text/html" href="https://www.gov.uk/government/speeches/93rd-anniversary-of-the-holodomor-uk-statement-to-the-osce"/>
+    <title>93rd anniversary of the Holodomor: UK statement to the OSCE</title>
+    <summary type="html">On the 93rd anniversary of the Holodomor, the UK honours those who lost their lives and condemns Russia&amp;#39;s ongoing attacks which have disrupted food supplies within Ukraine and around the world.</summary>
+  </entry>
+</feed>
