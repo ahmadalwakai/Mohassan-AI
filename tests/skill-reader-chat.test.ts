@@ -67,6 +67,18 @@ describe('active skills in the model-free conversation', () => {
     expect(result.text).toContain('القهوة المختصة');
   });
 
+  it('uses the shared sentence budget for the matching skill instead of sending its full outline', async () => {
+    const result = await run(withSkills, 'كيف أكتب مقال سيو يتصدر جوجل؟ في جملتين.');
+    expect(result.trail.map(entry => entry.action)).toContain('skill_read');
+    expect(result.text).toContain('المصدر: مهارة');
+    expect(result.text).not.toContain('تحقق قبل التسليم');
+    const prose = result.text.split('\n').filter(line => !line.startsWith('المصدر:') && !/^\*\*.*\*\*$/u.test(line));
+    const count = prose.reduce((sum, line) => sum + [...new Intl.Segmenter('ar', { granularity: 'sentence' }).segment(line.replace(/^\d+[.)]\s*/u, ''))].length, 0);
+    expect(count).toBeGreaterThan(0);
+    expect(count).toBeLessThanOrEqual(2);
+    expect(search).not.toHaveBeenCalled();
+  });
+
   it('answers a request no other path handles from the skill that covers it', async () => {
     const result = await run(withSkills, 'راجع لي جودة الكود قبل الدمج');
     expect(result.error).toBeNull();

@@ -8,6 +8,9 @@ import {
   addEvidence, decideVerdict, enterPhase, settleStep, setStepAuthorization, startStep, tryEnterPhase,
 } from '../agent-run.js';
 import { checkPermission, consumePermission, recordDecision, requestPermission, type ActionMaterial } from '../permission-gate.js';
+import { enforceReplyConstraints } from '../reply-constraint-review.js';
+import type { ReplyRequest } from '../reply-directive.js';
+import { resolveReplyTurn } from '../reply-preferences.js';
 import { nextLongRunDueAt } from './execution-guards.js';
 import {
   initialLongRunState, LONG_RUN_ACTIVE, LONG_RUN_LIMITS, LONG_RUN_WORKER, LongRunStateSchema, restoreLongRunState, say, stepId,
@@ -84,12 +87,16 @@ function finalReply(state: LongRunState) {
     return `${headline}\n\n${say(data.language, 'عدد الفحوص', 'Checks')}: ${data.observations.length}. [${safeLabel(source.title)}](<${source.url}>).`;
   }
   const intro = say(data.language, `قرأت ${data.observations.length} من المصادر العامة.`, `I read ${data.observations.length} public sources.`);
+  const constrained = data.replyConstraints;
+  const quote = (excerpt: string) => constrained?.lang ? `${say(data.language, 'مقتطف', 'Excerpt')}: «${safeLabel(excerpt)}»` : safeLabel(excerpt);
+  const shorten = (excerpt: string, limit: number) => excerpt.length <= limit ? excerpt : `${excerpt.slice(0, limit).trimEnd()}…`;
+  if (constrained?.brief || constrained?.sentences === 1) {
+    const first = data.observations[0]!;
+    return `${quote(shorten(first.quote, 160))}\n\n${say(data.language, 'المصدر', 'Source')}: [${safeLabel(first.title)}](<${first.url}>)`;
+  }
   const length = data.background?.replyLength;
   const excerptLimit = length === 'short' ? 160 : length === 'medium' ? 360 : 700;
-  const sources = data.observations.map(item => {
-    const excerpt = item.quote.length <= excerptLimit ? item.quote : `${item.quote.slice(0, excerptLimit).trimEnd()}…`;
-    return `[${safeLabel(item.title)}](<${item.url}>) — ${safeLabel(excerpt)}`;
-  });
+  const sources = data.observations.map(item => `[${safeLabel(item.title)}](<${item.url}>) — ${quote(shorten(item.quote, excerptLimit))}`);
   if (length === 'short') return `${intro} ${sources.join(' | ')}`;
   const heading = length === 'long' ? `${say(data.language, '### المصادر', '### Sources')}\n\n` : '';
   return `${intro}\n\n${heading}${sources.map(source => `- ${source}`).join('\n')}`;
@@ -136,17 +143,18 @@ export function createLongRunRuntime(db: Kysely<any>, ports: LongRunPorts, optio
 
   async function finish(tx: Kysely<any>, row: Row, state: LongRunState, time: number, status: 'completed' | 'partial' | 'blocked', detail: string, sendNotice = true) {
     state.longRun.inFlight = null;
-    const verdict = decideVerdict(state.agentRun, { hostStatus: status, at: time });
+    const reviewed = enforceReplyConstraints(detail, state.longRun.replyConstraints);
+    const verdict = decideVerdict(state.agentRun, { hostStatus: reviewed.withheld && status === 'completed' ? 'partial' : status, at: time });
     await save(tx, row, state, time, verdict.status);
     await tx.updateTable('chat_conversations').set({ status: 'idle', active_run_id: null, approval: null, secure: null, progress: null, error: null, updated_at: new Date(time) })
       .where('id', '=', row.conversation_id).execute();
     if (!sendNotice) return;
     const completed = verdict.status === 'completed';
     if (state.longRun.background) {
-      await message(tx, row.conversation_id, detail, Math.max(time, new Date(row.created_at).getTime() + 1));
-      await notifyBackground(tx, row, state, time, completed ? 'completed' : 'failed', completed ? detail : undefined);
+      await message(tx, row.conversation_id, reviewed.text, Math.max(time, new Date(row.created_at).getTime() + 1));
+      await notifyBackground(tx, row, state, time, completed ? 'completed' : 'failed', completed ? reviewed.text : undefined);
     } else {
-      await message(tx, row.conversation_id, detail, time);
+      await message(tx, row.conversation_id, reviewed.text, time);
       await notify(tx, row, completed ? 'task_completed' : 'task_failed', time);
     }
   }
@@ -155,15 +163,17 @@ export function createLongRunRuntime(db: Kysely<any>, ports: LongRunPorts, optio
     await finish(tx, row, state, time, 'blocked', say(state.longRun.language, ar, en));
   }
 
-  async function admission(ownerId: string, conversationId: string, text: string, plan: LongRunPlan) {
+  async function admission(ownerId: string, conversationId: string, text: string, plan: LongRunPlan, framed?: ReplyRequest) {
     const time = now(), id = randomUUID();
-    const state = initialLongRunState(id, plan, time);
     await db.transaction().execute(async tx => {
       const chat = await tx.selectFrom('chat_conversations').select(['status', 'active_run_id', 'title'])
         .where('id', '=', conversationId).where('owner_id', '=', ownerId).forUpdate().executeTakeFirst();
       if (!chat) throw new BrowserError('CHAT_NOT_FOUND', 'لم يُعثر على المحادثة.', 404);
       if (!await activeAccount(ports, ownerId, tx)) throw new BrowserError('CHAT_ACCOUNT_INACTIVE', 'هذا الحساب غير نشط.', 403);
       if (chat.active_run_id) throw new BrowserError('CHAT_BUSY', say(plan.language, 'أوقف العمل الحالي قبل بدء مهمة أخرى في المحادثة.', 'Stop the current work before starting another task in this conversation.'), 409);
+      const { constraints } = await resolveReplyTurn(tx, ownerId, conversationId, framed ?? text);
+      const state = initialLongRunState(id, plan, time, constraints);
+      const { language } = state.longRun;
       // This marker delegates lease ownership to the scheduler. The legacy
       // expiry sweep leaves the outer lease alone; the checkpoint carries the
       // actual short lease and due time for takeover.
@@ -174,12 +184,13 @@ export function createLongRunRuntime(db: Kysely<any>, ports: LongRunPorts, optio
       await ports.reserveMemberRun?.(tx, ownerId, id);
       await message(tx, conversationId, text, plan.background ? time - 1 : time, 'user');
       if (plan.background) {
-        await message(tx, conversationId, say(plan.language, 'سأعمل على هذا في الخلفية وأرسل لك النتيجة عند الانتهاء.',
-          "I'll work on this in the background and notify you when it's done."), time);
+        const acknowledgement = say(language, 'سأعمل على هذا في الخلفية وأرسل لك النتيجة عند الانتهاء.',
+          "I'll work on this in the background and notify you when it's done.");
+        await message(tx, conversationId, enforceReplyConstraints(acknowledgement, constraints).text, time);
       }
       await tx.updateTable('chat_conversations').set({ status: 'running', active_run_id: id,
         ...(chat.title === 'محادثة جديدة' ? { title: text.slice(0, 100) } : {}),
-        progress: say(plan.language, 'بدأت المهمة الطويلة.', 'Long-running task started.'), error: null, updated_at: new Date(time) })
+        progress: say(language, 'بدأت المهمة الطويلة.', 'Long-running task started.'), error: null, updated_at: new Date(time) })
         .where('id', '=', conversationId).execute();
       await commitChatRequest(tx, ownerId, conversationId);
     });

@@ -1,5 +1,6 @@
 import { createUserFactMemoryReceipt, restoreUserFactMemoryReceipt, type UserFactMemoryBinding } from './user-fact-memory-receipt.js';
 import { restoreUserFactMemoryFlowState, validateUserFactMemoryReadback, type UserFactMemoryFlowResult } from './user-fact-memory-flow.js';
+import { replyConstraintsFor } from './reply-turn.js';
 import { createTaskSupervisor, observeTaskStep, reviewTaskCompletion, taskEvidenceHash, type TaskObservation, type TaskSupervisorState } from './task-supervisor.js';
 
 /** Only exact persistence of a current user's statement, never its factual truth. */
@@ -16,7 +17,8 @@ export function createUserFactMemorySupervisor(request: string, binding: UserFac
 export function completeUserFactMemory(supervision: TaskSupervisorState, input: {
   request: string; binding: UserFactMemoryBinding; result: UserFactMemoryFlowResult; startedAt: number; now?: number;
 }): { text: string; status: 'completed' | 'partial' | 'blocked' } {
-  const now = input.now ?? Date.now(), ar = /\p{Script=Arabic}/u.test(input.request);
+  const lang = replyConstraintsFor()?.lang;
+  const now = input.now ?? Date.now(), ar = lang ? lang === 'ar' : /\p{Script=Arabic}/u.test(input.request);
   const expected = createUserFactMemorySupervisor(input.request, input.binding, now);
   const receipt = createUserFactMemoryReceipt(input.request, input.binding);
   if (!expected || !receipt) return { status: 'blocked', text: ar

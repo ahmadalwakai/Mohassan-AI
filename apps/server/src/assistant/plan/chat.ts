@@ -9,6 +9,7 @@ import { evaluateLocalComputation } from '../local-computation.js';
 import { arbitrateComponent } from '../model-relations-arbiter.js';
 import { requestActionText } from '../request-context.js';
 import { requestScopeActionText } from '../request-scope.js';
+import { replyBodyFor, replyConstraintsFor } from '../reply-turn.js';
 import { compilePlan, MAX_PLAN_STEPS } from './compiler.js';
 import { executePlan } from './executor.js';
 import { createPlanTools } from './tools.js';
@@ -67,9 +68,11 @@ export async function runCompiledChatPlan(context: ChatPlanContext): Promise<boo
   const { request, config, state, now, signal } = context;
   if (planMode() !== 'on' || state.steps || state.trail.length || state.agentRun?.plan || state.dropHeld) return false;
 
-  const action = requestScopeActionText(request);
+  const replyConstraints = replyConstraintsFor(state);
+  const action = requestScopeActionText(replyBodyFor(request));
   const plan = compilePlan(action, { fullAccess: context.fullAccess, now,
     capabilities: { browser: Boolean(config.readPage), search: true, memory: Boolean(config.tools?.memory) } });
+  plan.lang = replyConstraints?.lang ?? plan.lang;
   if (plan.steps.length < 2 || plan.steps.every(step => step.tool === 'unsupported')) return false;
   // One calculation can contain punctuation and conjunctions in its operands.
   // An unknown conversion unit can absorb a real follow-up, so require a successful conversion.
@@ -111,7 +114,7 @@ export async function runCompiledChatPlan(context: ChatPlanContext): Promise<boo
   let latestSiteStep = -1;
   const runTool = createPlanTools({ request, now, signal, ownerId: context.ownerId, conversationId: context.conversationId, runId: context.runId,
     fullAccess: context.fullAccess, originalRequestHash: state.requestOriginalHash,
-    search: context.search, readPage: config.readPage, networkPolicy: config.networkPolicy, memory: config.tools?.memory,
+    search: context.search, readPage: config.readPage, networkPolicy: config.networkPolicy, memory: config.tools?.memory, replyConstraints,
     openPage: (url, openSignal) => {
       const navigation = navigationTail.then(async () => {
         openSignal.throwIfAborted();

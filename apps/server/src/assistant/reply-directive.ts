@@ -1,3 +1,6 @@
+import { matchText } from './mind/normalize.js';
+import { maskRequestLiteralData } from './request-constraints.js';
+
 /**
  * What a request asks for, told apart from how the reply should look and from a label written in front of it.
  *
@@ -8,8 +11,8 @@
  * sentences.» look like an unknown request and became part of the search for «Search the web for …. Return the page title
  * and source link.».
  *
- * `splitReplyDirective` returns the request itself (`body`), the label (set aside) and the directive (applied by the
- * handler that answers). It changes no word of the body. A label is only a short tag that names a test, a case or a note
+ * `splitReplyDirective` returns the request itself (`body`), the label (set aside) and the directive. It changes no word
+ * of the body. A label is only a short tag that names a test, a case or a note
  * («QA test 2026-11-23:», «Case 4:», «سؤال ٣:»); it is never an instruction, a field of a document («Title:»), or a topic
  * («Unit tests:» stays, see `incidentalLabel`). A directive is a closing clause that only says the reply's language,
  * length or fields. Callers use the body only when it is complete on its own (a calculation that computes, a full
@@ -17,24 +20,37 @@
  */
 export type ReplyLanguage = 'ar' | 'en';
 export type ReplyField = 'title' | 'link' | 'heading' | 'first_sentence';
-export interface ReplyDirective {
+export interface ReplyConstraints {
   /** The language the reply is asked in, when the request names one. */
   lang?: ReplyLanguage;
   /** «in one sentence», «في جملتين»: how many sentences, 1 to 3. */
   sentences?: number;
   /** «short», «قصيرة», «briefly», «باختصار». */
   brief?: boolean;
+  /** Explicitly request a list or prose. */
+  list?: boolean;
+  /** An upper limit on links. */
+  links?: number;
   /** «Return the page title and source link»: what the reply should name. */
   fields?: ReplyField[];
+}
+export interface ReplyDirective extends ReplyConstraints {
   /** The owner's own words of the directive, as written. */
   text: string;
 }
 export interface ReplyFraming { body: string; label: string | null; directive: ReplyDirective | null }
+export type ReplyPreferences = Omit<ReplyConstraints, 'fields'>;
+export type ReplyPreferencePatch = { [Key in keyof ReplyPreferences]?: ReplyPreferences[Key] | null };
+type ReplyOverrides = ReplyPreferencePatch & Pick<ReplyConstraints, 'fields'>;
+export interface ReplyRequest extends ReplyFraming {
+  overrides: ReplyOverrides;
+  preferences: ReplyPreferencePatch;
+  preferenceOnly: boolean;
+}
 
 const MAX_TEXT = 4000;
 /** Matching key only: Arabic letter forms folded, lower case, single spaces. The original text is never changed. */
-const fold = (value: string) => value.normalize('NFKC').replace(/[ـً-ٰٟ]/gu, '')
-  .replace(/[أإآٱ]/gu, 'ا').replace(/ى/gu, 'ي').replace(/ة/gu, 'ه').toLowerCase().replace(/\s+/gu, ' ').trim();
+const fold = (value: string) => matchText(value).replace(/\s+/gu, ' ').trim();
 
 /** Words that name a tag rather than a subject: a test, a case, a question number, a note. */
 const LABEL_WORD = /(?:^|[^\p{L}])(?:qa|test|tests|testing|case|demo|trial|ticket|note|exercise|question|scenario|probe|run|check|item|task|step|example)(?![\p{L}])|(?:^|[^\p{L}])(?:اختبار|تجربه|حاله|سؤال|ملاحظه|مثال|تمرين|بند|سيناريو|مهمه|خطوه)(?![\p{L}])/iu;
@@ -66,7 +82,12 @@ const ADJ_EN = String.raw`(?:short|brief|simple|concise|clear|plain|single)`;
 const SENTENCES_EN = new RegExp(String.raw`^(?:please\s+)?(?:(?:reply|respond|answer|explain(?:\s+it)?|write(?:\s+it)?|give(?:\s+me)?(?:\s+the\s+(?:answer|result))?|state(?:\s+it)?|summari[sz]e(?:\s+it)?|put(?:\s+it)?|keep(?:\s+it)?|say(?:\s+it)?|tell\s+me)\s+)?(?:with\s+(?:the\s+)?(?:result|answer|value|number|total)\s+)?(?:in|as|using|within)\s+(a single|one single|a|an|one|two|three|1|2|3)\s+(?:${ADJ_EN}\s+){0,2}(?:${LANG_EN}\s+)?(?:${ADJ_EN}\s+){0,2}(sentences?|lines?|paragraphs?)(?:\s+(?:in|using)\s+${LANG_EN})?(?:\s+only)?$`, 'iu');
 /** «in Arabic», «reply in English only», «answer using Arabic». */
 const LANGUAGE_EN = new RegExp(String.raw`^(?:please\s+)?(?:(?:reply|respond|answer|write(?:\s+it)?|say(?:\s+it)?|give(?:\s+me)?(?:\s+the\s+(?:answer|result))?|explain(?:\s+it)?)\s+)?(?:with\s+(?:the\s+)?(?:result|answer)\s+)?(?:only\s+)?(?:in|using)\s+${LANG_EN}(?:\s+only)?$`, 'iu');
-const BRIEF_EN = /^(?:please\s+)?(?:(?:reply|respond|answer|keep\s+it|be)\s+)?(?:briefly|concisely|short|brief)$/iu;
+const BRIEF_EN = /^(?:please\s+)?(?:(?:reply|respond|answer|keep\s+it|be|keep (?:the |your )?(?:answers?|replies|responses))\s+)?(?:briefly|concisely|short|brief|concise)(?:\s+(?:answers?|replies|responses))?$/iu;
+const DETAIL_EN = /^(?:please\s+)?(?:(?:reply|respond|answer|explain(?:\s+it)?)\s+)?(?:in (?:more |full )?detail|detailed (?:answers?|replies|responses))$/iu;
+const NO_LIST_EN = /^(?:please\s+)?(?:(?:reply|respond|answer)\s+)?(?:(?:no|without(?: any)?|(?:do not|don't) use) (?:a )?(?:lists?|(?:bullet|numbered) points|bullets)|(?:in )?(?:plain|continuous) prose)$/iu;
+const LIST_EN = /^(?:please\s+)?(?:(?:reply|respond|answer|format it)\s+)?(?:as|in|use|with) (?:an? )?(?:(?:bulleted|numbered) list|list|bullet points|bullets)$/iu;
+const LINKS_EN = /^(?:please\s+)?(?:(?:reply|respond|answer)\s+)?(?:(?:give(?: me)?|with|include|use|cite|add|provide)\s+)?(?:(?:only|up to|at most|no more than)\s+)?(zero|one|two|three|[0-9]+)\s+(?:source\s+)?links?(?:\s+only)?$/iu;
+const NO_LINKS_EN = /^(?:please\s+)?(?:(?:reply|respond|answer)\s+)?(?:no|without(?: any)?|(?:do not|don't) (?:include|use)) (?:source )?links$/iu;
 /** «Return the page title and source link», «give me the link», «with the source link», «include the title and URL». */
 const FIELD_VERB_EN = /^(?:please\s+)?(?:(?:return|give|show|tell|send|provide|include|report|list|share|quote|cite)(?:\s+me)?|with|and)\s+/iu;
 const FIELD_NOUN_EN: [RegExp, ReplyField][] = [
@@ -77,17 +98,24 @@ const FIELD_NOUN_EN: [RegExp, ReplyField][] = [
 const LANG_AR: [RegExp, ReplyLanguage][] = [[/^(?:بال)?عربي(?:ه)?$|^باللغه العربيه$|^العربيه$/u, 'ar'], [/^(?:بال)?(?:انجليزي|انكليزي|إنجليزي)(?:ه)?$|^باللغه الانجليزيه$|^الانجليزيه$/u, 'en']];
 const COUNT_AR: Record<string, number> = { جمله: 1, سطر: 1, فقره: 1, جملتين: 2, جملتان: 2, سطرين: 2, فقرتين: 2 };
 const MODIFIER_AR = /^(?:واحده|واحد|قصيره|قصيرتين|قصيرتان|قصير|مختصره|مختصرتين|بسيطه|بسيطتين|واضحه|فقط|عربيه|عربي|انجليزيه|انجليزي|بالعربيه|بالعربي|بالانجليزيه|بالانجليزي|بالانكليزيه|باللغه|العربيه|الانجليزيه|ثلاث|ثلاثه|جمل|اسطر)$/u;
-const VERB_AR = /^(?:و)?(?:اجب|اجبني|رد|اكتب|اكتبها|اكتبه|اعطني|اعطيني|قدم|قدمها|اذكر|اذكرها|اشرح|اشرحها|لخص|لخصها|صغ|صغها|قل|قلها)(?:\s+لي)?$/u;
+const REPLY_VERB_AR = '(?:و)?(?:(?:اجب|جاوب)(?:ني| (?:لي|علي))?|رد(?: (?:لي|علي))?|تكلم معي|اريد (?:ال)?(?:اجابات|ردود))';
+const REPLY_LEAD_AR = new RegExp(`^${REPLY_VERB_AR}(?= |$)`, 'u');
+const VERB_AR = /^(?:و)?(?:اجب|اجبني|رد|جاوب|اكتب|اكتبها|اكتبه|اعطني|اعطيني|قدم|قدمها|اذكر|اذكرها|اشرح|اشرحها|لخص|لخصها|صغ|صغها|قل|قلها)(?:\s+لي)?$/u;
 const OBJECT_AR = /^(?:ال)?(?:نتيجه|ناتج|جواب|اجابه|رد)$/u;
 const BRIEF_AR = /^(?:و)?(?:باختصار|بايجاز|باقتضاب|اختصر|مختصرا|مختصر)$/u;
+const SHORT_REPLIES_AR = '(?:ال)?(?:اجابات|ردود) (?:ال)?(?:قصيره|مختصره)';
+const BRIEF_PHRASE_AR = new RegExp(`^(?:بشكل مختصر|${SHORT_REPLIES_AR})$`, 'u');
+const NO_LIST_AR = /^(?:بدون|بلا|من دون|دون|لا تستخدم) (?:نقاط(?: تعداد)?|قوائم|قائمه)$/u;
+const LIST_AR = /^(?:(?:علي شكل|في|استخدم) (?:قائمه(?: مرقمه)?|نقاط)|بنقاط|بقائمه(?: مرقمه)?)$/u;
+const NO_LINKS_AR = /^(?:بدون|بلا|من دون|دون|لا (?:تضف|تذكر|ترسل)) (?:اي )?(?:رابط|روابط)$/u;
+const LINKS_AR = /^(?:(?:مع|اضف|ارفق|اذكر|اعطني|قدم) )?(?:فقط )?(رابط واحد|رابطين|رابطان|([0-9]+) (?:روابط|رابط))(?:(?: كحد اقصي)? فقط| كحد اقصي)?$/u;
 const FIELD_VERB_AR = /^(?:و)?(?:اعطني|اعطيني|اذكر|ارسل|اعرض|قدم|انقل|اكتب)(?:\s+لي)?$/u;
 const FIELD_NOUN_AR: [RegExp, ReplyField][] = [
   [/^(?:و)?(?:ال)?عنوان(?:ها|ه)?$/u, 'title'], [/^(?:و)?(?:ال)?(?:رابط|مصدر)(?:ها|ه)?$/u, 'link'],
   [/^(?:و)?(?:ال)?(?:جمله الاولي|اول جمله)$/u, 'first_sentence'],
 ];
 
-function englishDirective(clause: string): Omit<ReplyDirective, 'text'> | null {
-  const text = clause.replace(/[.!؟?]+$/u, '').trim();
+function englishDirective(text: string): ReplyConstraints | null {
   const sentences = SENTENCES_EN.exec(text);
   if (sentences) {
     const [, count, lang1, , lang2] = sentences;
@@ -98,6 +126,15 @@ function englishDirective(clause: string): Omit<ReplyDirective, 'text'> | null {
   const language = LANGUAGE_EN.exec(text);
   if (language) return { lang: language[1]!.toLowerCase() === 'arabic' ? 'ar' : 'en' };
   if (BRIEF_EN.test(text)) return { brief: true };
+  if (DETAIL_EN.test(text)) return { brief: false };
+  if (NO_LIST_EN.test(text)) return { list: false };
+  if (LIST_EN.test(text)) return { list: true };
+  if (NO_LINKS_EN.test(text)) return { links: 0 };
+  const links = LINKS_EN.exec(text)?.[1];
+  if (links) {
+    const count = links === 'zero' ? 0 : COUNT_EN[links] ?? Number(links);
+    if (Number.isSafeInteger(count)) return { links: count };
+  }
   const verb = FIELD_VERB_EN.exec(text);
   if (verb) {
     const nouns = text.slice(verb[0].length).replace(/\b(?:the|its|their|a|an)\b/giu, ' ').split(/\s*(?:,|&|\band\b|\bplus\b)\s*/iu).map(part => part.replace(/\s+/gu, ' ').trim()).filter(Boolean);
@@ -107,8 +144,9 @@ function englishDirective(clause: string): Omit<ReplyDirective, 'text'> | null {
   return null;
 }
 
-function arabicDirective(clause: string): Omit<ReplyDirective, 'text'> | null {
-  const words = fold(clause).replace(/[.!؟?،,]+/gu, ' ').split(/\s+/u).filter(Boolean);
+function arabicDirective(text: string): ReplyConstraints | null {
+  const plainStyle = text.replace(/^(?:من فضلك|لو سمحت|رجاءا?) +/u, '').replace(REPLY_LEAD_AR, '');
+  const words = plainStyle.replace(/[.!؟?،,]+/gu, ' ').split(/\s+/u).filter(Boolean);
   if (!words.length) return null;
   let at = 0;
   const lead = words.slice(0, 2).join(' ');
@@ -116,17 +154,29 @@ function arabicDirective(clause: string): Omit<ReplyDirective, 'text'> | null {
   if (words[at] && OBJECT_AR.test(words[at]!)) at++;
   if (at === words.length) return null;
   const rest = words.slice(at);
+  const phrase = rest.join(' ').replace(/^و(?=(?:بدون|بلا|مع|في|بنقاط|بالتفصيل|دون))/u, '');
   if (rest.length === 1 && BRIEF_AR.test(rest[0]!)) return { brief: true };
+  if (BRIEF_PHRASE_AR.test(phrase)) return { brief: true };
+  if (/^(?:بالتفصيل|بشكل مفصل|(?:اجابات|ردود) مفصله)$/u.test(phrase)) return { brief: false };
+  if (NO_LIST_AR.test(phrase)) return { list: false };
+  if (LIST_AR.test(phrase)) return { list: true };
+  if (NO_LINKS_AR.test(phrase)) return { links: 0 };
+  const links = LINKS_AR.exec(phrase);
+  if (links) {
+    const count = links[2] ? Number(links[2]) : links[1] === 'رابط واحد' ? 1 : 2;
+    if (Number.isSafeInteger(count)) return { links: count };
+  }
   // «في جملة واحدة قصيرة بالعربية», «بجملة عربية قصيرة», «بجملتين».
   let first = rest[0]!.replace(/^(?:في|ب)(?=\S)/u, '');
   let start = 0;
   if (rest[0] === 'في' || rest[0] === 'ب') { first = rest[1] ?? ''; start = 1; }
-  if (Object.hasOwn(COUNT_AR, first)) {
-    const modifiers = rest.slice(start + 1);
+  const three = /^(?:ثلاث|ثلاثه|3)$/u.test(first) && /^(?:جمل|اسطر)$/u.test(rest[start + 1] ?? '');
+  if (three || Object.hasOwn(COUNT_AR, first)) {
+    const modifiers = rest.slice(start + (three ? 2 : 1));
     if (!modifiers.every(word => MODIFIER_AR.test(word))) return null;
     const joined = modifiers.join(' ');
     const lang = /عربي/u.test(joined) ? 'ar' : /انجليزي|انكليزي/u.test(joined) ? 'en' : undefined;
-    const count = /ثلاث/u.test(joined) ? 3 : COUNT_AR[first]!;
+    const count = three ? 3 : COUNT_AR[first]!;
     return { sentences: count, ...(lang ? { lang } : {}), ...(/قصير|مختصر|بسيط/u.test(joined) ? { brief: true } : {}) };
   }
   // «بالعربية», «باللغة العربية», «أجب بالإنجليزية فقط».
@@ -142,52 +192,148 @@ function arabicDirective(clause: string): Omit<ReplyDirective, 'text'> | null {
   return null;
 }
 
-/** Each directive clause of a tail, or null when any clause is something other than a directive. */
-function directiveOf(tail: string): ReplyDirective | null {
-  // A field list keeps its «and»: «Return the page title and source link» is one clause.
-  const whole = /\p{Script=Arabic}/u.test(tail) ? arabicDirective(tail) : englishDirective(tail);
-  if (whole) return { ...whole, text: tail.trim() };
-  const clauses = tail.split(/\s*(?:[,،;؛]|(?<!\d)\.(?!\d)|!|\s(?:and|then)\s|\s+و(?=(?:اجب|رد|اكتب|اعطني|اعطيني|اذكر|قدم|ارسل|اعرض|انقل|باختصار|بايجاز)))\s*/iu)
-    .map(part => part.trim()).filter(Boolean);
-  if (!clauses.length || clauses.length > 4) return null;
-  const merged: ReplyDirective = { text: tail.trim() };
-  for (const clause of clauses) {
-    const found = /\p{Script=Arabic}/u.test(clause) ? arabicDirective(clause) : englishDirective(clause);
-    if (!found) return null;
-    if (found.lang) merged.lang = found.lang;
-    if (found.sentences) merged.sentences = found.sentences;
-    if (found.brief) merged.brief = true;
-    if (found.fields) merged.fields = [...new Set([...(merged.fields ?? []), ...found.fields])];
-  }
-  return merged;
+const PREFERENCE_MARKER = 'always|from now on|going forward|for (?:the rest of )?this (?:conversation|chat)|دايما|دائما|من الان(?: فصاعدا)?|بعد الان|في هذه المحادثه';
+const PREFERENCE_START = new RegExp(String.raw`^(?:(?:please|من فضلك) +)?(?:${PREFERENCE_MARKER})[ ,،:]+|^(?:(?:remember (?:that )?)?i prefer|(?:تذكر انني )?افضل) +`, 'u');
+const REPLY_VERB = `(?:(?:please|من فضلك|لو سمحت|رجاءا?) )?(?:${REPLY_VERB_AR}|(?:reply|answer|respond)(?: to me)?)`;
+const REPLY_ONLY = new RegExp(`^${REPLY_VERB}$`, 'u');
+const PREFERENCE_MIDDLE = new RegExp(`^(${REPLY_VERB}) (?:${PREFERENCE_MARKER})(?:[ ,،:]+|$)`, 'u');
+const PREFERENCE_END = new RegExp(String.raw`[ ,،]+(?:${PREFERENCE_MARKER})$`, 'u');
+const STANDALONE_BREVITY = new RegExp(`^(?:(?:short|brief|concise) (?:answers|replies|responses)|${SHORT_REPLIES_AR})$`, 'u');
+const TURN_ONLY_START = /^(?:this time|for this (?:reply|answer)|هذه المره|لهذا الرد|في هذا الرد|لهذه الاجابه)[ ,،:]+/u;
+const TURN_ONLY_END = /[ ,،]+(?:this time|for this (?:reply|answer)|هذه المره|لهذا الرد|في هذا الرد|لهذه الاجابه)$/u;
+const CLEAR_LENGTH = /^(?:(?:no need to (?:answer |reply )?(?:briefly|be brief)|(?:don't|do not) (?:keep (?:it|answers) brief|(?:answer|reply) briefly|be brief)) (?:anymore|any longer)|(?:forget|clear|reset|remove) (?:my |the )?(?:brevity|reply length|reply-length) preference|stop (?:answering|replying|responding) (?:briefly|concisely)|(?:لا داعي (?:للاختصار|للايجاز|للرد باختصار)|لا تختصر) (?:بعد الان|من الان)|الغ (?:تفضيل|شرط) (?:الاختصار|الايجاز)|توقف عن (?:الاختصار|الايجاز))$/u;
+const CLEAR_LANGUAGE = /^(?:(?:forget|clear|reset|remove) (?:my |the )?(?:reply )?language preference|no need to (?:answer|reply|respond) in (?:english|arabic) (?:anymore|any longer)|لا داعي (?:للاجابه|للرد) ب(?:اللغه )?(?:العربيه|الانجليزيه) بعد الان|الغ (?:تفضيل|شرط) (?:لغه الرد|اللغه))$/u;
+const CLEAR_LIST = /^(?:forget|clear|reset|remove) (?:my |the )?(?:list|list format) preference$|^الغ (?:تفضيل|شرط) (?:القوائم|القائمه)$/u;
+const CLEAR_LINKS = /^(?:forget|clear|reset|remove) (?:my |the )?(?:link|link count) preference$|^الغ (?:تفضيل|شرط) (?:الروابط|عدد الروابط)$/u;
+
+interface DirectiveGroup {
+  overrides: ReplyOverrides;
+  preferences: ReplyPreferencePatch;
 }
 
-/** Where a closing directive may start: a sentence end, a comma, «and», «و» before a directive verb, or «in …». */
-const SPLIT_POINTS = /(?<!\d)\.(?=\s)|[!?؟;؛](?=\s)|[,،](?=\s)|\s(?=and\s)|\s(?=و(?:اجب|رد|اكتب|اعطني|اعطيني|اذكر|قدم|ارسل|اعرض|انقل|باختصار|بايجاز))|\s(?=(?:in|using)\s+(?:a|an|one|two|three|single|[123]|arabic|english)\b)|\s(?=(?:في\s+|ب)?(?:جمله|جملتين|جملتان|سطر|سطرين)(?:\s|$))|\s(?=(?:بالعربيه|بالعربي|بالانجليزيه|بالانجليزي|باللغه|باختصار|بايجاز)(?:\s|$))/giu;
+const directiveText = (clause: string) => fold(clause).replace(/[.!؟?]+$/u, '').replace(/[’‘]/gu, "'").trim();
+const preferenceStyle = (text: string) => text.replace(PREFERENCE_START, '').replace(PREFERENCE_MIDDLE, '$1 ').replace(PREFERENCE_END, '').trim();
 
-/**
- * The request, its label and its closing directive. The earliest split whose whole remainder is directives wins, so
- * «Calculate 37 × 24 and reply with the result in one short Arabic sentence.» gives the body «Calculate 37 × 24».
- */
-export function splitReplyDirective(text: string): ReplyFraming {
-  const none: ReplyFraming = { body: typeof text === 'string' ? text.trim() : '', label: null, directive: null };
+function clauseOf(clause: string): DirectiveGroup | null {
+  const text = directiveText(clause);
+  const clear = CLEAR_LENGTH.test(text) ? { brief: null, sentences: null }
+    : CLEAR_LANGUAGE.test(text) ? { lang: null }
+    : CLEAR_LIST.test(text) ? { list: null }
+    : CLEAR_LINKS.test(text) ? { links: null } : null;
+  if (clear) return { overrides: clear, preferences: clear };
+
+  const preferred = preferenceStyle(text);
+  const style = preferred.replace(TURN_ONLY_START, '').replace(TURN_ONLY_END, '').trim();
+  const constraints = englishDirective(style) ?? arabicDirective(style);
+  if (!constraints) return null;
+  const { fields, ...preferences } = constraints;
+  if (fields && preferred !== text) return null;
+  // A new length replaces the previous length. Both stay active when a clause asks for short sentences.
+  const patch: ReplyPreferencePatch = { ...preferences };
+  if (constraints.sentences !== undefined && constraints.brief === undefined) patch.brief = null;
+  if (constraints.brief !== undefined && constraints.sentences === undefined) patch.sentences = null;
+  return { overrides: fields ? { ...patch, fields } : patch, preferences: preferred !== text ? patch : {} };
+}
+
+function combineDirectives(first: DirectiveGroup, last: DirectiveGroup): DirectiveGroup {
+  const overrides = { ...first.overrides, ...last.overrides };
+  if (first.overrides.fields && last.overrides.fields) {
+    overrides.fields = [...new Set([...first.overrides.fields, ...last.overrides.fields])];
+  }
+  return { overrides, preferences: { ...first.preferences, ...last.preferences } };
+}
+
+const CLAUSE_BREAKS = /[,،;؛!?؟\n]|(?<!\d)\.(?!\d)|\s+(?:and|then|but|ثم|لكن)\s+|\s+(?=و(?:[اأ]جب|رد|اكتب|اعطني|اعطيني|اذكر|قدم|ارسل|اعرض|انقل|باختصار|بايجاز))/giu;
+
+/** Try whole clauses first so «return the page title and source link» keeps its conjunction. */
+function directiveOf(tail: string): DirectiveGroup | null {
+  const whole = clauseOf(tail);
+  if (whole) return whole;
+  const breaks = [...tail.matchAll(CLAUSE_BREAKS)];
+  if (breaks.length > 12) return null;
+  const groups: (DirectiveGroup | null)[] = [];
+  for (let to = 0; to <= breaks.length; to++) {
+    const end = breaks[to]?.index ?? tail.length;
+    let group: DirectiveGroup | null = null;
+    for (let from = -1; from < to; from++) {
+      const previous = groups[from];
+      if (from >= 0 && !previous) continue;
+      const start = from < 0 ? 0 : breaks[from]!.index + breaks[from]![0].length;
+      const part = tail.slice(start, end).trim();
+      const current = part ? clauseOf(part) : previous;
+      if (current) {
+        group = previous && part ? combineDirectives(previous, current) : current;
+        break;
+      }
+    }
+    groups.push(group);
+  }
+  return groups.at(-1) ?? null;
+}
+
+/** Where a closing directive may start, including inline language, length, list, and link limits. */
+const SPLIT_POINTS = /(?<!\d)\.(?=\s)|[!?؟;؛,،\n](?=\s*\S)|\s(?=(?:and|then|but|ثم|لكن)\s)|\s(?=و(?:اجب|رد|اكتب|اعطني|اعطيني|اذكر|قدم|ارسل|اعرض|انقل|باختصار|بايجاز))|\s(?=(?:in|using)\s+(?:a|an|one|two|three|single|[123]|arabic|english|detail|bullet|plain)\b)|\s(?=(?:في\s+|ب)?(?:جمله|جملتين|جملتان|ثلاث|ثلاثه|[٣3]|سطر|سطرين)(?:\s|$))|\s(?=(?:briefly|concisely|without|with|at most|no (?:links|lists|bullet))\b|(?:بالعربيه|بالعربي|بالانجليزيه|بالانجليزي|باللغه|باختصار|بايجاز|بالتفصيل|بنقاط|بقائمه|بدون|بلا|علي شكل|في نقاط|مع رابط(?:ين)?)(?!\p{L}))/giu;
+
+export function mergeReplyConstraints(parsed: ReplyRequest, saved: ReplyPreferences = {}): ReplyConstraints {
+  return Object.fromEntries(Object.entries({ ...saved, ...parsed.overrides }).filter(([, value]) => value != null));
+}
+
+/** Read directives around the request once, preserving scope and order for conflicting settings. */
+export function parseReplyRequest(text: string): ReplyRequest {
+  const none: ReplyRequest = { body: typeof text === 'string' ? text.trim() : '', label: null, directive: null,
+    overrides: {}, preferences: {}, preferenceOnly: false };
   if (typeof text !== 'string' || !text.trim() || text.length > MAX_TEXT) return none;
   const labelled = incidentalLabel(text);
-  const working = labelled ? labelled.rest : text.trim();
-  // The matching copy keeps every offset of `working`: folding here only changes letters one for one, never their count.
-  const matching = working.replace(/[أإآٱ]/gu, 'ا').replace(/ى/gu, 'ي').replace(/ة/gu, 'ه');
-  let directive: ReplyDirective | null = null, body = working;
-  for (const point of matching.matchAll(SPLIT_POINTS)) {
-    const at = point.index;
-    if (at < 3) continue;
-    const tail = working.slice(at).replace(/^[\s.!?؟;؛,،]+/u, '').replace(/^(?:and|then)\s+/iu, '');
-    if (!tail.trim()) continue;
-    const found = directiveOf(tail);
-    if (found) { directive = found; body = working.slice(0, at).replace(/[\s,،;؛]+$/u, '').trim(); break; }
+  const working = labelled?.rest ?? text.trim();
+  // Literal data and quoted text cannot set reply preferences. The matching copy preserves offsets.
+  const matching = maskRequestLiteralData(working).replace(/[أإآٱ]/gu, 'ا').replace(/ى/gu, 'ي').replace(/ة/gu, 'ه');
+  const standalone = directiveText(working);
+  const standaloneStyle = preferenceStyle(standalone);
+  const incompletePreference = standaloneStyle !== standalone && REPLY_ONLY.test(standaloneStyle);
+  const whole = incompletePreference ? { overrides: {}, preferences: {} } : directiveOf(working);
+  if (whole && STANDALONE_BREVITY.test(standalone)) whole.preferences = { brief: true, sentences: null };
+  let group = whole;
+  let body = working, style = group ? working : '';
+  if (!group) {
+    let start = 0;
+    for (const point of matching.matchAll(CLAUSE_BREAKS)) {
+      const end = point.index + point[0].length;
+      if (!working.slice(end).trim()) continue;
+      const prefix = working.slice(0, point.index).trim();
+      const parsed = directiveOf(prefix);
+      // Leading field verbs such as «give me the link» can be a primary request.
+      if (!parsed || parsed.overrides.fields) continue;
+      start = end;
+      group = parsed;
+      style = prefix;
+    }
+    body = working.slice(start).trim();
+    // Do not look inside an already consumed leading directive for a suffix.
+    for (const point of matching.matchAll(SPLIT_POINTS)) {
+      const at = point.index;
+      if (at <= start || working.slice(start, at).trim().length < 2) continue;
+      const tail = working.slice(at).replace(/^[\s.!?؟;؛,،]+/u, '').replace(/^(?:and|then|but|ثم|لكن)\s+/iu, '');
+      const parsed = directiveOf(tail);
+      if (!parsed) continue;
+      group = group ? combineDirectives(group, parsed) : parsed;
+      style = [style, tail].filter(Boolean).join(' ');
+      body = working.slice(start, at).replace(/[\s,،;؛]+$/u, '').trim();
+      break;
+    }
   }
-  if (!directive && !labelled) return none;
-  if (!body || body.length < 2) return none;
-  return { body, label: labelled?.label ?? null, directive };
+  const preferenceOnly = incompletePreference || Boolean(group && Object.keys(group.preferences).length
+    && (whole || REPLY_ONLY.test(directiveText(body))));
+  if (preferenceOnly) { body = ''; style = working; }
+  if (!group || (!preferenceOnly && body.length < 2)) return { ...none, body: working, label: labelled?.label ?? null };
+  const parsed: ReplyRequest = { body, label: labelled?.label ?? null, directive: null, preferenceOnly, ...group };
+  return { ...parsed, directive: { ...mergeReplyConstraints(parsed), text: style } };
+}
+
+/** Compatibility for callers that expect a request body and a directive attached to it. */
+export function splitReplyDirective(text: string): ReplyFraming {
+  const { body, label, directive, preferenceOnly } = parseReplyRequest(text);
+  if (preferenceOnly) return { body: directive!.text, label, directive: null };
+  return { body, label, directive: body === directive?.text ? null : directive };
 }
 
 /** «ar»/«en» for a request by its letters, as the rest of the assistant decides. */

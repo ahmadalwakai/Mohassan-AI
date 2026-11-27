@@ -1,6 +1,7 @@
 import { analyzeCompoundRequest } from './compound-request.js';
 import { evaluateLocalComputation } from './local-computation.js';
 import type { Claim, Evidence } from './mind/contract.js';
+import { replyBodyFor, replyConstraintsFor } from './reply-turn.js';
 import { evaluateSelfQuestion, type SelfFacts } from './self-knowledge.js';
 
 /**
@@ -71,7 +72,7 @@ export const sequenceParts = (request: string): string[] | null => typeof reques
 export const answerLocalPart = (request: string, deps: LocalSequenceDeps): LocalSequencePart | null => answer(request, deps);
 
 function answer(request: string, deps: LocalSequenceDeps): LocalSequencePart | null {
-  const computation = evaluateLocalComputation(request, deps.now);
+  const computation = evaluateLocalComputation(request, deps.now, undefined, replyConstraintsFor());
   if (computation) {
     // A calculation with its own follow-up action («احسب … ثم احفظ») is not a whole local answer.
     if (computation.compound?.pendingActions.length || computation.compound?.forbiddenActions.length) return null;
@@ -87,7 +88,7 @@ function answer(request: string, deps: LocalSequenceDeps): LocalSequencePart | n
 /** The joined local answer of a message of several parts, or null when it is not one (see the module comment). */
 export function evaluateLocalSequence(request: string, deps: LocalSequenceDeps): LocalSequence | null {
   if (typeof request !== 'string' || !request.trim() || !Number.isFinite(deps.now.getTime())) return null;
-  const split = parts(request);
+  const split = parts(replyBodyFor(request));
   if (!split) return null;
   const answered: LocalSequencePart[] = [];
   for (const part of split) {
@@ -99,7 +100,7 @@ export function evaluateLocalSequence(request: string, deps: LocalSequenceDeps):
   return {
     status: completed === answered.length ? 'completed' : completed ? 'partial' : 'blocked',
     text: answered.map(part => part.text.trim()).join('\n\n'),
-    lang: /\p{Script=Arabic}/u.test(request) ? 'ar' : 'en',
+    lang: replyConstraintsFor()?.lang ?? (/\p{Script=Arabic}/u.test(request) ? 'ar' : 'en'),
     parts: answered,
   };
 }

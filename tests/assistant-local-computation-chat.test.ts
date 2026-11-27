@@ -52,4 +52,18 @@ describe('local calculations through the real chat controller', () => {
     expect((await database.db.selectFrom('chat_runs').select('status').where('conversation_id', '=', id).executeTakeFirstOrThrow()).status).toBe('blocked');
     expect(search).not.toHaveBeenCalled();
   });
+
+  it('renders verified arithmetic in the requested language and sentence limit', async () => {
+    const owner = 'isolated-local-computation-owner';
+    const { id } = await control.create(owner, { goal: 'Calculate 37 × 24. بالعربية، في جملتين.' });
+    await control.settled(id);
+    const detail = await control.detail(owner, id);
+    const reply = detail.messages.at(-1)?.text ?? '';
+    expect(reply).toMatch(/\p{Script=Arabic}/u);
+    expect(reply).toContain(String(37 * 24));
+    expect([...new Intl.Segmenter('ar', { granularity: 'sentence' }).segment(reply)]).toHaveLength(1);
+    const run = await database.db.selectFrom('chat_runs').select(['state', 'status']).where('conversation_id', '=', id).executeTakeFirstOrThrow();
+    expect(run.status).toBe('completed');
+    expect(run.state.trail).toMatchObject([{ action: 'calculate' }]);
+  });
 });

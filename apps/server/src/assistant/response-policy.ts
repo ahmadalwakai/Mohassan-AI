@@ -1,7 +1,7 @@
 import { legacyClarificationNeeded } from './clarify/policy.js';
 import { detectManners, type MannersDialect, type SpeechAct } from './manners/detect.js';
 import { matchText, normalizeRequest } from './mind/normalize.js';
-import { splitReplyDirective, type ReplyField, type ReplyLanguage } from './reply-directive.js';
+import { splitReplyDirective, type ReplyConstraints, type ReplyField, type ReplyLanguage } from './reply-directive.js';
 import { maskRequestLiteralData, type UserRequestConstraints } from './request-constraints.js';
 import { returnParts } from './return-to.js';
 import type { RequestContextIntent, RequestResolution } from './request-context.js';
@@ -25,6 +25,7 @@ export interface ResponsePolicyInput {
   speechAct?: SpeechAct | null;
   clarification?: 'needed' | 'pending' | 'answered';
   constraints?: UserRequestConstraints | null;
+  replyConstraints?: ReplyConstraints;
   resolution?: RequestResolution | null;
   language?: ReplyLanguage;
   dialect?: MannersDialect | null;
@@ -116,20 +117,22 @@ export function decideResponsePolicy(input: ResponsePolicyInput): ResponsePolicy
   const speechAct = input.speechAct ?? manners?.act;
   const socialOnly = Boolean(speechAct && (manners ? !manners.request : !input.route || input.route === 'chat' || input.route === 'reply'));
   const phrase = splitReplyDirective(outer);
-  const directive = phrase.directive;
+  const directive = input.replyConstraints ?? phrase.directive;
   const task = matchText(normalizeRequest(phrase.body).text).replace(/[’‘]/gu, "'").replace(/\s+/gu, ' ');
   const actionText = constraints?.safeActionText ? matchText(maskRequestLiteralData(constraints.safeActionText)).replace(/\s+/gu, ' ').trim() : normalized;
   const locale = explicitReplyLocale(normalized);
-  const language = locale?.language ?? directive?.lang ?? input.language ?? manners?.language ?? normalizeRequest(text).lang;
+  const language = input.replyConstraints?.lang ?? locale?.language ?? directive?.lang ?? input.language ?? manners?.language ?? normalizeRequest(text).lang;
   const dialect = language === 'ar' ? locale?.dialect ?? input.dialect ?? manners?.dialect ?? requestDialect(task) : null;
   const includeEarlierTurns = !noHistory.test(normalized) && !constraints?.forbiddenCapabilities.includes('memory_read');
   const scope = contextTrigger(input, normalized, includeEarlierTurns);
   const nextStep = input.concreteNextStep?.trim() || null;
   const follow = followUp(input, normalized, scope, nextStep);
-  const explicit = explicitLength(normalized) ?? (directive?.sentences ? directive.sentences === 1 ? 'short' : 'medium'
-    : directive?.brief ? 'short' : null);
+  const explicit = input.replyConstraints?.brief ? 'short' : input.replyConstraints?.sentences ? input.replyConstraints.sentences === 1 ? 'short' : 'medium'
+    : explicitLength(normalized) ?? (directive?.sentences ? directive.sentences === 1 ? 'short' : 'medium' : directive?.brief ? 'short' : null);
   const coverage = asksForCoverage.test(normalized) || multipleQuestions.test(task) || Boolean(directive?.fields?.length);
-  const structure = requestedStructure(normalized) ?? (directive?.sentences || follow === 'ask' ? 'prose' : suggestedStructure(task));
+  const structure = input.replyConstraints?.list === undefined
+    ? requestedStructure(normalized) ?? (directive?.sentences || follow === 'ask' ? 'prose' : suggestedStructure(task))
+    : input.replyConstraints.list ? 'list' : 'prose';
 
   return {
     ...lengthFor({ ...input, speechAct }, task, structure, explicit, socialOnly, follow, coverage),

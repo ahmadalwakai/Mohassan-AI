@@ -44,6 +44,19 @@ describe('private recall through the main chat without a model', () => {
     expect(search).not.toHaveBeenCalled(); expect(save).not.toHaveBeenCalled();
   });
 
+  it('uses the requested reply language around an unchanged memory quote', async () => {
+    const note = 'My depot capacity is 20 vans';
+    notes = [`${note}.`];
+    const owner = 'isolated-memory-owner';
+    const { id } = await control.create(owner, { goal: 'What is my depot capacity from memory? بالعربية، في جملتين.' });
+    await control.settled(id);
+    const detail = await control.detail(owner, id);
+    const reply = detail.messages.at(-1)?.text ?? '';
+    expect(reply).toBe(`من الذاكرة: «${note}»`);
+    expect([...new Intl.Segmenter('ar', { granularity: 'sentence' }).segment(reply)]).toHaveLength(1);
+    expect(search).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['From my memory, return my depot capacity only.', 'My depot capacity is not 20 vans.'],
     ['From my memory, return my depot capacity only.', 'My depot capacity is less than 20 vans.'],

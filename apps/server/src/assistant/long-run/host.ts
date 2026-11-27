@@ -12,7 +12,7 @@ import { classifySteering } from '../agent-run.js';
 import { newBrainState } from '../brain.js';
 import { matchText } from '../mind/normalize.js';
 import { reviewWorkRefusal } from '../refusal/turn.js';
-import { splitReplyDirective } from '../reply-directive.js';
+import { parseReplyRequest, type ReplyRequest } from '../reply-directive.js';
 import { assessRequestScope, parseUserRequestConstraints, requestCapabilityAllowed, reviewPublicProjection } from '../request-scope.js';
 import { decideResponsePolicy } from '../response-policy.js';
 import { monitoringRequest } from '../response-policy-signals.js';
@@ -51,10 +51,13 @@ function monitorDelays(text: string): number[] | null {
   return delays;
 }
 
-export function planLongRun(text: string, config: Pick<CommandChatConfig, 'searchProvider' | 'sites'>, network: SafeNetwork, backgroundEnabled = false): LongRunPlan | null {
+export function planLongRun(text: string, config: Pick<CommandChatConfig, 'searchProvider' | 'sites'>, network: SafeNetwork,
+    backgroundEnabled = false, framed = parseReplyRequest(text)): LongRunPlan | null {
   const constraints = parseUserRequestConstraints(text);
   const safeAction = constraints?.safeActionText ?? text;
-  const request = backgroundEnabled ? backgroundTaskText(splitReplyDirective(safeAction).body) : { task: safeAction, requested: false };
+  const actionFraming = safeAction === text ? framed : parseReplyRequest(safeAction);
+  const actionText = actionFraming.directive || backgroundEnabled ? actionFraming.body : safeAction;
+  const request = backgroundEnabled ? backgroundTaskText(actionText) : { task: actionText, requested: false };
   const decision = decideResponsePolicy({ text, constraints, backgroundRequested: request.requested, ...(backgroundEnabled ? { currentLength: 'long' } : {}) });
   if (decision.workMode !== 'long_running' || !withoutCredentials(text)) return null;
   const { language } = decision;
@@ -173,11 +176,14 @@ export async function withLongRunChat(db: Parameters<typeof createCommandChatCon
     if (!enabled || await legacyMonitorHandledBySmartChat(db, ownerId, text)) return null;
     const full = config.fullAccess ? await config.fullAccess(ownerId) : true;
     if (reviewWorkRefusal(text, newBrainState(), full, { computer: Boolean(config.tools?.computer || config.desktop), memory: Boolean(config.tools?.memory) })) return null;
-    return planLongRun(text, config, network, backgroundEnabled);
+    const framed = parseReplyRequest(text);
+    const plan = planLongRun(text, config, network, backgroundEnabled, framed);
+    return plan ? { plan, framed } : null;
   }
 
-  async function start(ownerId: string, conversationId: string, text: string, plan: LongRunPlan) {
-    await runner.admission(ownerId, conversationId, cleanup(text), plan);
+  async function start(ownerId: string, conversationId: string, text: string, selection: { plan: LongRunPlan; framed: ReplyRequest }) {
+    const { plan, framed } = selection;
+    await runner.admission(ownerId, conversationId, cleanup(text), plan, framed);
     if (plan.background) {
       try { return await chat.detail(ownerId, conversationId); }
       finally { runner.wake(); }

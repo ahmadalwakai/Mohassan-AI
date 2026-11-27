@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BrowserError, type AgentAction, type AgentElement, type AgentPage } from '@mohassan/browser';
-import { describe as describeReply, excerpt, headlines, findSearchBox, findTarget, ordinalOf, parseHands, realUrl, relevantLines, resultLinks, runHands, readableText, webQuestion, WIKI_SEARCH, type HandsIO, type HandsPlan } from '../apps/server/src/assistant/hands.js';
+import { applyHandsReplyConstraints, articleUrl, describe as describeReply, excerpt, headlines, findSearchBox, findTarget, ordinalOf, parseHands, realUrl, relevantLines, resultLinks, runHands, readableText, webQuestion, WIKI_SEARCH, type HandsIO, type HandsPlan } from '../apps/server/src/assistant/hands.js';
+import { enforceReplyConstraints } from '../apps/server/src/assistant/reply-constraint-review.js';
 
 const el = (ref: string, role: string, label: string, extra: Partial<AgentElement> = {}): AgentElement => ({ ref, role, label, inViewport: true, ...extra });
 const pageOf = (url: string, elements: AgentElement[], text = ''): AgentPage => ({
@@ -46,6 +47,10 @@ describe('parseHands', () => {
     expect(parseHands('ادخل إلى حسابي')).toBeNull();
     expect(parseHands('افتح حسابي واعرض الرصيد')).toBeNull();
     expect(parseHands('افتح رابط الأسعار')).toEqual([{ kind: 'click', target: 'الأسعار', ordinal: null }]);
+  });
+
+  it('does not reinterpret a reply directive as a browser field', () => {
+    expect(parseHands('Write a poem about a silver moon in two Arabic sentences.')).toBeNull();
   });
 });
 
@@ -250,6 +255,82 @@ describe('search is the default', () => {
 });
 
 describe('question answers from the web', () => {
+  it('keeps the answer and its primary citation when the request says باختصار', async () => {
+    const url = 'https://observatory.example/guide';
+    const extra = 'https://observatory.example/archive';
+    const answer = 'مرصد السرو هو موقع تجريبي مفتوح للزوار في هذه الصفحة.';
+    const detail = 'تشرح صفحة مرصد السرو نظام الجولة التجريبية خطوة بخطوة.';
+    const article = { ...pageOf(url, [], `${answer}\n${detail}`), title: 'مرصد السرو' };
+    const steps = webQuestion('ما هو مرصد السرو؟ باختصار')!;
+    const { io } = fakeIO({}, null, {}, { [url]: article, [extra]: 'disallowed' });
+    io.search = async () => [hit(article.title, url), hit('مرصد السرو - الأرشيف', extra)];
+    const outcome = await runHands({ steps, next: 0, lang: 'ar' }, io);
+    expect(outcome).toMatchObject({ kind: 'done', status: 'completed' });
+    if (outcome.kind !== 'done') throw new Error('Expected a web answer');
+    expect(outcome.text).toContain(answer);
+    expect(outcome.text).toContain(`](${url})`);
+    expect(outcome.text).not.toContain(detail);
+    expect(outcome.text).not.toContain(extra);
+    expect(outcome.text).not.toContain('للمزيد:');
+  });
+
+  it.each([
+    { request: 'What is Luma? In two short sentences.', title: 'Luma', lines: [
+      'Luma is a fixture for checking reply format.', 'Luma documents how the chat output is rendered.', 'Luma contains more material than requested.',
+    ] },
+    { request: 'ما هو مرصد السرو؟ في جملتين قصيرتين.', title: 'مرصد السرو', lines: [
+      'مرصد السرو موقع تجريبي مفتوح للزوار في هذه الصفحة.', 'تشرح صفحة مرصد السرو نظام الجولة التجريبية خطوة بخطوة.', 'يعرض مرصد السرو سجل الجولات التجريبية في قسم الأرشيف.',
+    ] },
+  ])('keeps both short sentences for $request', ({ request, title, lines }) => {
+    const primary = 'https://observatory.example/guide';
+    const secondary = 'https://observatory.example/archive';
+    const [step] = webQuestion(request)!;
+    if (step?.kind !== 'search') throw new Error('Expected a web question');
+    expect(step.reply).toMatchObject({ sentences: 2, brief: true });
+
+    const plan: HandsPlan = { steps: [step], next: 0, found: { url: primary, title, lines },
+      results: [{ url: primary, title }, { url: secondary, title: `${title} archive` }] };
+    const rendered = describeReply(plan, null);
+    const reviewed = enforceReplyConstraints(rendered.text, step.reply);
+    expect(rendered.status).toBe('completed');
+    expect(reviewed.withheld).toBe(false);
+    for (const text of [rendered.text, reviewed.text]) {
+      expect(text.split('\n\n')[0]).toBe(lines.slice(0, 2).join('\n'));
+      expect(text).toContain(primary);
+      expect(text).not.toContain(secondary);
+    }
+  });
+
+  it('uses a preferred Arabic source for an English question', async () => {
+    const url = articleUrl('Luma', 'ar');
+    const sentence = 'Luma هو مشروع تجريبي لمراقبة بيانات محطة العمل في هذه الصفحة.';
+    const article = { ...pageOf(url, [], sentence), title: 'Luma' };
+    const { io, log } = fakeIO({}, null, {}, { [url]: article });
+    io.search = async () => [];
+    const outcome = await runHands({ steps: webQuestion('What is Luma? بالعربية')!, next: 0, lang: 'en' }, io);
+    expect(log).toContain(`read:${url}`);
+    expect(outcome).toMatchObject({ kind: 'done', status: 'completed' });
+    if (outcome.kind !== 'done') throw new Error('Expected a web answer');
+    expect(outcome.text).toContain(sentence);
+    expect(outcome.text).toContain('**المصدر:**');
+  });
+
+  it('applies the turn constraints to an existing search plan and its citation budget', () => {
+    const primary = 'https://luma.example/guide';
+    const secondary = 'https://luma.example/archive';
+    const lines = ['Luma is a fixture for checking reply format.', 'Luma documents how the chat output is rendered.', 'Luma contains more material than requested.'];
+    const plan: HandsPlan = { steps: webQuestion('What is Luma?')!, next: 0, lang: 'en',
+      found: { url: primary, title: 'Luma', lines }, results: [{ url: primary, title: 'Luma' }, { url: secondary, title: 'Luma archive' }] };
+    const constraints = { sentences: 2, list: false, links: 0 };
+    applyHandsReplyConstraints(plan, constraints);
+    expect(plan.replyConstraints).toBe(constraints);
+    const { status, text } = describeReply(plan, null);
+    expect(status).toBe('completed');
+    expect(text.split('\n\n')[0]).toBe(lines.slice(0, 2).join('\n'));
+    expect(text).toContain('**Source:** luma.example — Luma');
+    expect(text).not.toContain('https://');
+  });
+
   it('uses shared web search and reads a topic-specific site before an encyclopedia result', async () => {
     const article = pageOf('https://www.nhs.uk/conditions/cataract-surgery/', [], 'Cataract surgery usually takes 20 to 45 minutes and is performed under local anaesthetic.');
     const previous = pageOf('https://en.wikipedia.org/wiki/Japan', [el('wiki-search', 'searchbox', 'Search Wikipedia')]);
@@ -338,6 +419,23 @@ describe('question answers from the web', () => {
     io.search = async () => { throw new Error('Explicit site search must not use general web search'); };
     expect(await runHands({ steps: parseHands('ابحث في ويكيبيديا عن اليابان')!, next: 0 }, io)).toMatchObject({ kind: 'done', status: 'completed' });
     expect(log.filter(line => line.startsWith('open:'))).toEqual([`open:${wiki}`]);
+  });
+
+  it('keeps the language and link limit on browser-scoped search results', async () => {
+    const wiki = WIKI_SEARCH('مرصد السرو');
+    const primary = articleUrl('مرصد السرو', 'ar');
+    const extra = articleUrl('سجل مرصد السرو', 'ar');
+    const elements = [el('main', 'link', 'مرصد السرو', { href: primary }), el('archive', 'link', 'سجل مرصد السرو', { href: extra })];
+    const { io } = fakeIO({ [wiki]: pageOf(wiki, elements) }, null);
+    const plan: HandsPlan = { steps: parseHands('ابحث في ويكيبيديا عن مرصد السرو')!, next: 0, lang: 'ar' };
+    applyHandsReplyConstraints(plan, { lang: 'en', links: 1, list: false });
+    const outcome = await runHands(plan, io);
+    expect(outcome).toMatchObject({ kind: 'done', status: 'completed' });
+    if (outcome.kind !== 'done') throw new Error('Expected search results');
+    expect(outcome.text).toContain('I found matching results on the site.');
+    expect(outcome.text).toContain(primary);
+    expect(outcome.text).not.toContain(extra);
+    expect(outcome.text).not.toMatch(/^\d+[.)]\s/mu);
   });
 
   it('does not leak rejected or encoded secret queries to browser fallback', async () => {

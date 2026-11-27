@@ -21,6 +21,7 @@ export function chatResponsePolicyInput(text: string, state: BrainState): Respon
     text, route: state.routing?.route, intent: state.routing?.intent, handler: state.routing?.handler,
     resolution: state.requestResolution ?? undefined,
     constraints: state.requestResolution?.constraints,
+    replyConstraints: state.replyTurn?.constraints,
     clarification: state.requestClarification ? 'pending' : state.clarifiedRequest ? 'answered' : state.routing?.route === 'clarify' ? 'needed' : undefined,
     channel: channels.getStore() ?? 'web', previousTurns: state.agentRun?.context?.previousTurns,
   };

@@ -9,6 +9,7 @@ import { analyzeCompoundRequest } from './compound-request.js';
 import { ExactPersistencePolicySchema } from './exact-memory-persistence.js';
 import type { EffectiveRequestSource } from './effective-request-source.js';
 import { isEntireLiteralRequest, requestCapabilityAllowed, type RequestScopeAssessment, type UserRequestConstraints } from './request-scope.js';
+import { replyBodyFor, replyConstraintsFor } from './reply-turn.js';
 import { hasStructuredMemorySecret, parseStructuredMemoryRequest, structuredMemoryInstruction } from './structured-memory-parser.js';
 import { applyStructuredMemory, lockStructuredMemoryOwner } from './structured-memory-storage.js';
 import { assessUserFactMemoryRequest } from './user-fact-memory-receipt.js';
@@ -171,7 +172,10 @@ export async function handleStructuredMemoryTurn(input: StructuredMemoryTurn): P
   if (!input.task) return false;
   const { db, state, ownerId, conversationId, runId } = input;
   const request = input.source.request;
-  const intent = request === secretPlaceholder ? { kind: 'secret' } as const : parseStructuredMemoryRequest(request);
+  const body = replyBodyFor(request);
+  const framed = body === request ? null : parseStructuredMemoryRequest(body);
+  const intent = request === secretPlaceholder ? { kind: 'secret' } as const
+    : framed?.kind === 'recall' ? framed : parseStructuredMemoryRequest(request);
   if (intent.kind === 'none') return false;
   if (!enabled()) {
     const property = 'target' in intent ? intent.target.property : undefined;
@@ -180,7 +184,8 @@ export async function handleStructuredMemoryTurn(input: StructuredMemoryTurn): P
     return false;
   }
 
-  const ar = /\p{Script=Arabic}/u.test(request.match(/\p{L}/u)?.[0] ?? '');
+  const lang = replyConstraintsFor(state)?.lang;
+  const ar = lang ? lang === 'ar' : /\p{Script=Arabic}/u.test(request.match(/\p{L}/u)?.[0] ?? '');
   const blocked = (arabic: string, english: string): Reply => ({ status: 'blocked', text: ar ? arabic : english });
   const completed = (arabic: string, english: string): Reply => ({ status: 'completed', text: ar ? arabic : english });
   const publish = async (resolve: (tx: Kysely<any>) => Promise<Reply>, write = false) => {
@@ -198,7 +203,8 @@ export async function handleStructuredMemoryTurn(input: StructuredMemoryTurn): P
     }
     return true;
   };
-  if (intent.kind === 'secret') return publish(async () => ({ status: 'blocked', text: secretRefusal }));
+  if (intent.kind === 'secret') return publish(async () => blocked(secretRefusal,
+    'I did not save this sensitive information. Passwords, card numbers and verification codes are kept out of memory.'));
 
   if (state.computationMemory !== undefined || state.userFactMemory !== undefined
     || state.memoryVerification !== undefined || state.userFactMemoryVerification !== undefined) return false;
@@ -217,7 +223,7 @@ export async function handleStructuredMemoryTurn(input: StructuredMemoryTurn): P
     && input.scrub(request) === request && !isEntireLiteralRequest(request);
   const canRead = requestCapabilityAllowed(input.constraints, 'memory_read');
   const canWrite = !deniesMemoryWrite(request) && requestCapabilityAllowed(input.constraints, 'memory_write');
-  const instruction = write ? structuredMemoryInstruction(request) : request;
+  const instruction = write ? structuredMemoryInstruction(request) : body;
   if (!fresh || !verifiedSource || !canRead || write && !canWrite || analyzeCompoundRequest(instruction).kind !== 'single') {
     return publish(async () => blocked('لم أتمكن من تنفيذ طلب الذاكرة من هذه الرسالة.', 'I could not act on the memory request in this message.'));
   }

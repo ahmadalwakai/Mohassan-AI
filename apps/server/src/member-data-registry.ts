@@ -132,7 +132,7 @@ export const memberDataRegistry: readonly AccountDataTable[] = [
   accountData('chat_messages', through('conversation_id', 'chat_conversations'), 'id conversation_id role text created_at images run_id'),
   owned('chat_request_keys', false),
   owned('chat_runs', 'id conversation_id owner_id status goal steps created_at updated_at attempt intent'),
-  owned('chat_conversations', 'id owner_id title status active_run_id session_id question progress error created_at updated_at'),
+  owned('chat_conversations', 'id owner_id title status active_run_id session_id question progress error created_at updated_at reply_preferences'),
   owned('browser_approvals', 'id session_id owner_id observation_id digest status expires_at created_at'),
   accountData('browser_observations', through('session_id', 'browser_sessions'), 'id session_id sequence created_at'),
   accountData('browser_events', through('session_id', 'browser_sessions'), 'id session_id kind message created_at'),

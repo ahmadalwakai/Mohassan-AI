@@ -33,7 +33,7 @@ const SITE_FIELDS: Readonly<Record<string, string>> = {
   steps: 'steps|الخطوات', facts: 'facts|الحقائق', testimonials: 'testimonials|الشهادات',
 };
 
-export interface PlanToolContext extends Pick<PlanWebToolContext, 'openPage' | 'onWebAction'> {
+export interface PlanToolContext extends Pick<PlanWebToolContext, 'openPage' | 'onWebAction' | 'replyConstraints'> {
   ownerId: string;
   conversationId: string;
   runId: string;

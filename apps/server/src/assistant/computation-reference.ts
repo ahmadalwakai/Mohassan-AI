@@ -1,6 +1,7 @@
 import type { Evidence } from './mind/contract.js';
 import { evaluateLocalComputation, type LocalComputation } from './local-computation.js';
 import { requestLanguage, type ReplyLanguage } from './reply-directive.js';
+import { replyConstraintsFor } from './reply-turn.js';
 
 /**
  * A calculation on a result this conversation already holds: «Add 12 to your previous result.» after «37 × 24 = 888»
@@ -115,10 +116,11 @@ export function calculatorForm(text: string): string | null {
 
 /** The calculation of a request whose reference was written in, read in the calculator's form when needed. */
 export function evaluateReferencedComputation(text: string, now = new Date()): LocalComputation | null {
-  const direct = evaluateLocalComputation(text, now);
+  const constraints = replyConstraintsFor();
+  const direct = evaluateLocalComputation(text, now, undefined, constraints);
   if (direct) return direct;
   const form = calculatorForm(text);
-  return form ? evaluateLocalComputation(form, now) : null;
+  return form ? evaluateLocalComputation(form, now, undefined, constraints) : null;
 }
 
 const LINE = /^(.+?)\s=\s(-?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?)$/iu;
@@ -184,7 +186,7 @@ export function composeReferencedComputation(result: LocalComputation, source: {
 
 /** The focused question when the request points at a result this conversation does not have. */
 export function missingReferenceQuestion(request: string, reference: ComputationReference): { prompt: string; lang: ReplyLanguage } {
-  const lang = requestLanguage(request);
+  const lang = replyConstraintsFor()?.lang ?? requestLanguage(request);
   return lang === 'ar'
     ? { lang, prompt: `أي نتيجة تقصد بـ«${reference.phrase}»؟ لا توجد عملية حسابية سابقة في هذه المحادثة. اكتب الرقم، أو العملية التي جاء منها، وسأكمل طلبك به.` }
     : { lang, prompt: `Which result do you mean by “${reference.phrase}”? This conversation has no earlier calculation. Send the number, or the calculation it came from, and I will finish your request with it.` };

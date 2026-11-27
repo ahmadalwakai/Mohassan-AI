@@ -12,6 +12,7 @@ import {
   excerpt, isLiveWebQuestion, pageAnswer, parseHands, plainTitle, PROVIDER_SPACING_MS, readableOverHttp, topicCoverage, topicWords,
 } from '../hands.js';
 import { extractPublicSearchQueries, mergePublicQueryTerms, reviewGeneratedPublicQuery } from '../public-query-provenance.js';
+import type { ReplyConstraints } from '../reply-directive.js';
 import { parseUserRequestConstraints, requestCapabilityAllowed, requestScopeActionText, reviewPublicProjection } from '../request-scope.js';
 import type { PlanAttempt, PlanToolResult } from './executor.js';
 import type { PlanStep, PlanValue, ResolvedStepInputs } from './types.js';
@@ -21,6 +22,7 @@ import { planReadMeasure, planReadTarget } from './web-target.js';
 export interface PlanWebToolContext {
   ownerId: string;
   request: string;
+  replyConstraints?: ReplyConstraints;
   search?: SearchProvider;
   readPage?: CommandChatConfig['readPage'];
   openPage?: (url: string, signal: AbortSignal) => Promise<AgentPage>;
@@ -267,7 +269,7 @@ export function createPlanWebTools(context: PlanWebToolContext) {
   }
 
   function resultFromPage(step: PlanStep, page: AgentPage, question: string): PlanToolResult {
-    const lang = /\p{Script=Arabic}/u.test(step.text) ? 'ar' : 'en';
+    const lang = context.replyConstraints?.lang ?? (/\p{Script=Arabic}/u.test(step.text) ? 'ar' : 'en');
     const answer = pageAnswer(page, question, lang);
     if (answer.missing.length) return { ok: false, reason: 'no_result' };
     const quotes = answer.parts.flatMap(part => part.quotes);
@@ -288,7 +290,9 @@ export function createPlanWebTools(context: PlanWebToolContext) {
     if (step.output !== 'text') return { ok: false, reason: 'invalid_result' };
     if (!quotes.length) return { ok: false, reason: 'no_result' };
     const text = quotes.join('\n');
-    return { ok: true, value: { type: 'text', value: text }, text: `${text}\n${citation(page.title, page.url)}`,
+    const reply = context.replyConstraints;
+    const displayed = quotes.slice(0, reply?.sentences ?? (reply?.brief ? 1 : undefined)).join('\n');
+    return { ok: true, value: { type: 'text', value: text }, text: `${displayed}\n${citation(page.title, page.url)}`,
       evidence: { kind: 'source', label: page.title, reference: page.url, independent: true } };
   }
 

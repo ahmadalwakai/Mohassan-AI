@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { replyBodyFor, replyConstraintsFor } from './reply-turn.js';
 
 /** A host-bound status renderer, never a model response parser or capability grant. */
 export const RUNTIME_STATUS_VERSION = 1;
@@ -210,6 +211,6 @@ export function renderRuntimeStatus(question: RuntimeStatusQuestion, hostInput: 
     facts: facts ? 'provided_host_facts' : 'unknown', text: lines.join('\n') });
 }
 export function answerRuntimeStatus(request: unknown, hostInput: unknown): RuntimeStatusAnswer | null {
-  const question = recognizeRuntimeStatusRequest(request);
-  return question ? renderRuntimeStatus(question, hostInput) : null;
+  const question = recognizeRuntimeStatusRequest(typeof request === 'string' ? replyBodyFor(request) : request);
+  return question ? renderRuntimeStatus({ ...question, lang: replyConstraintsFor()?.lang ?? question.lang }, hostInput) : null;
 }

@@ -10,6 +10,7 @@ import { createRefusalAwareCommandChat } from '../apps/server/src/assistant/refu
 import { planLongRun } from '../apps/server/src/assistant/long-run/host.js';
 import { createLongRunRuntime, LongRunTransientError, type LongRunPorts } from '../apps/server/src/assistant/long-run/runtime.js';
 import { LONG_RUN_LIMITS, restoreLongRunState, type LongRunPlan } from '../apps/server/src/assistant/long-run/state.js';
+import { loadReplyPreferences } from '../apps/server/src/assistant/reply-preferences.js';
 import { migrateAuth } from '../apps/server/src/auth.js';
 import { migrateBackgroundResults } from '../apps/server/src/background-results-migration.js';
 import { createSitesControl } from '../apps/server/src/sites.js';
@@ -48,6 +49,8 @@ describe('response policy long-run admission', () => {
     expect(planLongRun('Research my private documents from multiple sources.', { searchProvider }, network)).toBeNull();
     expect(planLongRun('What is tidal power?', { searchProvider }, network)).toBeNull();
     expect(planLongRun('Research tidal power deeply. Do not use the web.', { searchProvider }, network)).toBeNull();
+    expect(planLongRun('Research tidal power from multiple sources. أجب بالعربية دائماً. في جملتين.', { searchProvider }, network)?.steps[0])
+      .toEqual({ kind: 'search', query: 'tidal power' });
   });
 
   it.each([
@@ -93,11 +96,11 @@ describe('durable long-running response policy work', () => {
     await database?.close();
   });
 
-  async function open(plan: LongRunPlan, execute: LongRunPorts['execute']) {
+  async function open(plan: LongRunPlan, execute: LongRunPorts['execute'], text = 'Test long-running task.') {
     const ownerId = randomUUID();
     const { id: conversationId } = await chat.create(ownerId);
     const runner = launch(execute);
-    const id = await runner.admission(ownerId, conversationId, 'Test long-running task.', plan);
+    const id = await runner.admission(ownerId, conversationId, text, plan);
     return { id, ownerId, conversationId, runner };
   }
 
@@ -165,6 +168,26 @@ describe('durable long-running response policy work', () => {
     expect(final).toContain(quote);
     expect(await backgroundNotices(run.id)).toEqual([{ task_id: run.id, background_outcome: 'completed', result_preview: 'I read 1 public sources.' }]);
     expect(await notices(run.conversationId)).toEqual(['task_completed']);
+  });
+
+  it('keeps the admitted reply language, sentence and link constraints across a background worker restart', async () => {
+    const execute: LongRunPorts['execute'] = async input => input.operation.kind === 'search' ? { kind: 'searched', urls: [url] } : found;
+    const run = await open({ ...research, background: { replyLength: 'long' } }, execute,
+      'Research tidal power. أجب بالعربية دائماً. في جملة واحدة. بدون روابط.');
+    const state = restoreLongRunState((await row(run.id)).state, run.id);
+    expect(state?.longRun.replyConstraints).toEqual({ lang: 'ar', sentences: 1, links: 0 });
+    expect(await loadReplyPreferences(database.db, run.ownerId, run.conversationId)).toEqual({ lang: 'ar' });
+    const acknowledged = (await chat.detail(run.ownerId, run.conversationId)).messages.at(-1)?.text;
+    expect(acknowledged).toMatch(/\p{Script=Arabic}/u);
+    await run.runner.runOnce();
+    await run.runner.shutdown();
+    time += 1_000;
+    await launch(execute).runOnce();
+    const result = (await chat.detail(run.ownerId, run.conversationId)).messages.at(-1)?.text;
+    const excerpt = `مقتطف: «${found.observation.quote}»`;
+    expect(result?.split('\n')[0]).toBe(excerpt);
+    expect(result).not.toContain(url);
+    expect(await backgroundNotices(run.id)).toMatchObject([{ result_preview: excerpt }]);
   });
 
   it('records approval, sign-in and failure as distinct background outcomes', async () => {

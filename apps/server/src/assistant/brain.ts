@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { AgentElement, AgentPage } from '@mohassan/browser';
 import { parseRequestContextState, type RequestContextState, type RequestResolution } from './request-context.js';
 import { appendResponsePolicyPrompt, responsePolicyPromptInput } from './response-policy-runtime.js';
+import { replyConstraintPrompt, type ReplyTurn } from './reply-turn.js';
 
 /**
  * The assistant's own thinking. Everything that can be decided from the page
@@ -223,7 +224,7 @@ function workGuide(work: readonly WorkTool[]): string {
 
 export function systemPrompt(today: string, skillsEnabled = false, runsEnabled = false, work: readonly WorkTool[] = []): string {
   const original = `You are Mohassan AI (موحسن), a capable general assistant that gets real work done. Today is ${today}.
-Reply to the user in their language, naturally and briefly. Each turn return ONE JSON decision; a program executes it and shows you the result.
+Follow the host's reply constraints for this turn. By default, reply in the user's language, naturally and briefly. Each turn return ONE JSON decision; a program executes it and shows you the result.
 
 Application identity:
 - The Mohassan AI application and assistant were created and developed by احمد الوكاع (Mr Ahmad Alwakai), Lead Developer.
@@ -274,6 +275,7 @@ Rules:
 export interface TrailEntry { step: number; action: string; result: string; changed: boolean | null }
 
 export interface BrainState {
+  replyTurn?: ReplyTurn;
   /** The run ledger (agent-run.ts): phase, typed plan, evidence, permission decisions and verdict. Only host code writes it. */
   agentRun?: import('./agent-run.js').RunLedger;
   /** Data-only user context carried between runs; never an action permission. */
@@ -479,6 +481,7 @@ function essentialSections({ request, state, page, warning, learningContext }: P
     state.trail.length ? untrustedData('tool_results', state.trail.slice(-6).map((entry) => `${entry.step}. ${entry.action} -> ${entry.result}${entry.changed === false ? ' (changed: no)' : ''}`).join('\n').slice(-1800), 1800) : '',
     page ? untrustedData('current_page', describePage(page, state.textOffset).slice(0, 5000), 5000) : 'No browser page is open. This is only about the web browser; it says nothing about windows on the user PC.',
     warning ? `IMPORTANT: ${warning.slice(0, 1200)}` : '',
+    replyConstraintPrompt(state.replyTurn?.constraints),
     taskReminder(request, state.steps),
   ].filter(Boolean);
   const learning = learningSection(learningContext);

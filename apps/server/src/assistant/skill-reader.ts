@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { requestTerms, skillStems } from '../../../../packages/skills/src/stems.js';
 import { buildFrame } from './mind/frame.js';
 import { matchText } from './mind/normalize.js';
+import type { ReplyConstraints } from './reply-directive.js';
+import { replyBodyFor, replyConstraintsFor } from './reply-turn.js';
 
 /**
  * Model-free reading of the owner's active instruction skills.
@@ -291,23 +293,29 @@ const ORDER: SectionKey[] = ['steps', 'answer', 'checks', 'pitfalls', 'tips', 'o
 const bound = (text: string, limit: number) => text.length <= limit ? text : `${text.slice(0, limit).replace(/\s+\S*$/u, '')}…`;
 
 /** Builds the answer from one skill: its steps, outline and checks first, what it needs from the owner last, and the skill named as source. */
-export function composeSkillAnswer(request: string, skill: SkillReaderCandidate, body: string, options: { mode: SkillReadMode; related?: readonly SkillReaderCandidate[] }): { text: string; lang: 'ar' | 'en' } {
-  const lang: 'ar' | 'en' = ARABIC.test(request) ? 'ar' : 'en';
+export function composeSkillAnswer(request: string, skill: SkillReaderCandidate, body: string, options: { mode: SkillReadMode; related?: readonly SkillReaderCandidate[]; constraints?: ReplyConstraints }): { text: string; lang: 'ar' | 'en' } {
+  const lang = options.constraints?.lang ?? (ARABIC.test(request) ? 'ar' : 'en');
   const label = LABELS[lang];
   const quoted = bound(request.replace(/\s+/gu, ' ').trim(), 160);
   const fill = (text: string) => text.replace(/\{\{\s*(?:الطلب|request)\s*\}\}/giu, `«${quoted}»`);
   const { intro, sections } = parseSkillSections(body);
   const parts: string[] = [];
-  if (options.mode === 'writing') parts.push(label.writing.replace('{name}', skill.name));
-  parts.push(`**${skill.name}**\n${label.applied(quoted)}${bodyLanguage(body) === lang ? '' : `\n${label.foreign}`}`);
-  const opening = intro || skill.description.split(/(?<=[.!؟?])\s/u)[0] || '';
-  if (opening) parts.push(bound(fill(opening), 600));
   const ordered = ORDER.flatMap(key => sections.filter(section => section.key === key));
+  const foreign = bodyLanguage(body) !== lang;
+  const constrainedLength = options.constraints?.brief || options.constraints?.sentences;
+  if (options.constraints?.lang && foreign) {
+    const first = (intro || ordered[0]?.text || '').split('\n')[0]!.trim();
+    return { text: [label.foreign + (first ? ` «${bound(first, 400)}»` : ''), label.source(skill)].join('\n\n'), lang };
+  }
+  if (options.mode === 'writing' && !constrainedLength) parts.push(label.writing.replace('{name}', skill.name));
+  parts.push(`**${skill.name}**${constrainedLength ? '' : `\n${label.applied(quoted)}`}${foreign ? `\n${label.foreign}` : ''}`);
+  const opening = intro || skill.description.split(/(?<=[.!؟?])\s/u)[0] || '';
+  if (opening && (!constrainedLength || !ordered.length)) parts.push(bound(fill(opening), 600));
   const inputs = sections.filter(section => section.key === 'inputs');
   const tail: string[] = [];
-  if (inputs.length) tail.push(`**${label.inputs}**\n${bound(fill(inputs.map(section => section.text).join('\n')), 700)}`);
+  if (!constrainedLength && inputs.length) tail.push(`**${label.inputs}**\n${bound(fill(inputs.map(section => section.text).join('\n')), 700)}`);
   const related = (options.related ?? []).slice(0, 3);
-  if (related.length) tail.push(`${label.related}: ${related.map(item => label.name(item.name)).join(label.list)}.`);
+  if (!constrainedLength && related.length) tail.push(`${label.related}: ${related.map(item => label.name(item.name)).join(label.list)}.`);
   tail.push(label.source(skill));
   const reserved = tail.join('\n\n').length + 4;
   for (const section of ordered) {
@@ -345,6 +353,8 @@ async function withinTime<T>(work: Promise<T>, signal?: AbortSignal): Promise<T 
 /** The reader the chat calls. It returns null whenever no active skill clearly fits, so the conversation goes on as before. */
 export function createSkillReader(deps: SkillReaderDeps): SkillReader {
   return async (ownerId, request, options) => {
+    const constraints = replyConstraintsFor();
+    request = replyBodyFor(request);
     if (!skillReadable(request, options.mode) || options.signal?.aborted) return null;
     const index = deps.index ? await withinTime(deps.index(ownerId).catch(() => null), options.signal) : null;
     let matches: SkillMatch[];
@@ -356,7 +366,7 @@ export function createSkillReader(deps: SkillReaderDeps): SkillReader {
       if (!candidates?.length || options.signal?.aborted) return null;
       matches = matchSkills(request, candidates);
     }
-    const wanted: 'ar' | 'en' = ARABIC.test(request) ? 'ar' : 'en';
+    const wanted = constraints?.lang ?? (ARABIC.test(request) ? 'ar' : 'en');
     // The best skill that still passes the gate, unless a close one (within 80% of its score) is written in the request's language.
     let chosen: { match: SkillMatch; body: string } | null = null;
     for (const match of matches.slice(0, 3)) {
@@ -370,7 +380,7 @@ export function createSkillReader(deps: SkillReaderDeps): SkillReader {
     if (!chosen) return null;
     const { match, body } = chosen;
     const related = matches.filter(entry => entry !== match).map(entry => entry.skill);
-    const { text, lang } = composeSkillAnswer(request, match.skill, body, { mode: options.mode, related });
+    const { text, lang } = composeSkillAnswer(request, match.skill, body, { mode: options.mode, related, constraints });
     return { text, skill: match.skill, related, terms: match.terms, score: match.score, lang };
   };
 }

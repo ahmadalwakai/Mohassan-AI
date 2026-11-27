@@ -104,6 +104,51 @@ describe('the referee', () => {
 });
 
 describe('deliberation', () => {
+  it('checks the standing pipeline answer against the turn sentence and link limits', async () => {
+    const sentences = ['The alert arrived.', 'The owner confirmed.', 'The schedule continued.'];
+    const council = createModelCouncil({ runner: runner({}) });
+    const outcome = await council.deliberate(turn({ constraints: { sentences: 2, links: 0 },
+      pipeline: { text: `${sentences.join(' ')}\n\nSource: https://example.test/receipt`, status: 'completed' } }));
+    expect(outcome).toMatchObject({ changed: false, chosen: 'pipeline', text: sentences.slice(0, 2).join(' '), status: 'completed' });
+  });
+
+  it('uses the original v4 and v5 inputs and rejects a wrong-language last resort', async () => {
+    const generate = vi.fn(async () => 'The message was delivered to the recipient. The alert was closed.');
+    const run = vi.fn(runner({}).run);
+    const council = createModelCouncil({ runner: { run }, v5: generate });
+    const source = turn({ constraints: { lang: 'ar', sentences: 2 }, v5MayAnswer: true,
+      pipeline: { text: 'تعذّر التحقق من الجواب.', status: 'blocked' } });
+    const outcome = await council.deliberate(source);
+    expect(generate).toHaveBeenCalledWith([{ role: 'user', content: source.question }], source.signal);
+    expect(run).toHaveBeenCalledWith('chat-v4', { text: source.question, maxNewTokens: 48 });
+    expect(outcome).toMatchObject({ changed: false, chosen: 'pipeline' });
+    expect(outcome.council.members.find(member => member.model === 'chat-v5')?.judge).toBe('withhold');
+  });
+
+  it('sends the selected model answer trimmed to the requested count', async () => {
+    const sentences = ['وصل الرد إلى صاحبه.', 'تأكد الاستلام.', 'أُغلق التنبيه.'];
+    const council = createModelCouncil({ runner: runner({}), v5: async () => sentences.join(' ') });
+    const outcome = await council.deliberate(turn({ constraints: { lang: 'ar', sentences: 2 }, v5MayAnswer: true,
+      pipeline: { text: 'تعذّر التحقق من الجواب.', status: 'blocked' } }));
+    expect(outcome).toMatchObject({ changed: true, chosen: 'chat-v5', text: sentences.slice(0, 2).join(' '), status: 'completed' });
+  });
+
+  it('uses the original reader prompt and trims its answer while keeping the source and disclosure', async () => {
+    const [first, second] = PARIS.split(/(?<=\.) /u);
+    const source = page(PARIS);
+    const run = vi.fn(runner({ 'reading-v3-last': { ok: true, output: { text: PARIS }, elapsedMs: 1 } }).run);
+    const council = createModelCouncil({ runner: { run }, v5: async () => first });
+    const input = turn({ constraints: { sentences: 1 },
+      pipeline: { text: 'I could not find it.', status: 'blocked' }, evidence: [source] });
+    const outcome = await council.deliberate(input);
+    expect(run).toHaveBeenCalledWith('reading-v3-last', { prompt: `${PARIS}\n\nQuestion: ${input.question}\nAnswer:`, maxNewTokens: 20 });
+    expect(outcome).toMatchObject({ changed: true, chosen: 'reading-v3-last', status: 'completed' });
+    expect(outcome.text).toContain(first);
+    expect(outcome.text).not.toContain(second);
+    expect(outcome.text).toContain(source.url);
+    expect(outcome.text).toContain('reading model v3');
+  });
+
   it('keeps a completed pipeline answer, shows the members, and searches nothing', async () => {
     const search = vi.fn();
     const models = runner({ 'reading-v3-last': { ok: true, output: { text: ' Paris', stopReason: 'eos' }, elapsedMs: 40 } });

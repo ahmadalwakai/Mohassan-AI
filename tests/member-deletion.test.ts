@@ -7,6 +7,7 @@ import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MemberAgentBrowser, purgeAgentBrowserProfiles } from '../apps/server/src/member-profile-storage.ts';
 import { createApplication } from '../apps/server/src/app.ts';
+import { resolveReplyTurn } from '../apps/server/src/assistant/reply-preferences.ts';
 import { memberDocumentDirectory } from '../apps/server/src/member-data-document-path.ts';
 import { purgeMemberAccount, startMemberDeletionPurge } from '../apps/server/src/member-deletion.ts';
 import { conversationSharePaths } from '../apps/server/src/conversation-share-paths.ts';
@@ -211,6 +212,8 @@ describe('member deletion', () => {
       { id: conversationId, owner_id: purgedId, title: 'Delete this', browser_account: legacyName },
       { id: otherConversation, owner_id: memberId, title: 'Keep this' },
     ]).execute();
+    await resolveReplyTurn(db(), purgedId, conversationId, 'أجب بالعربية دائماً');
+    await resolveReplyTurn(db(), memberId, otherConversation, 'Always answer in English');
     await db().insertInto('chat_messages').values(Array.from({ length: 251 }, () =>
       ({ id: randomUUID(), conversation_id: conversationId, role: 'user', text: 'fixture message' }))).execute();
     await db().insertInto('chat_messages').values({ id: randomUUID(), conversation_id: otherConversation, role: 'user', text: 'other fixture message' }).execute();
@@ -245,6 +248,10 @@ describe('member deletion', () => {
       await expect(purge()).rejects.toThrow('simulated interruption');
       expect(await db().selectFrom('chat_messages').select('id').where('conversation_id', '=', conversationId).execute()).toHaveLength(0);
       expect(await db().selectFrom('chat_messages').select('id').where('conversation_id', '=', otherConversation).execute()).toHaveLength(1);
+      expect(await db().selectFrom('chat_conversations').select(['id', 'reply_preferences'])
+        .where('id', 'in', [conversationId, otherConversation]).execute()).toEqual([
+        { id: otherConversation, reply_preferences: { lang: 'en' } },
+      ]);
       for (const [table, row] of Object.entries(platform.exportedRows)) {
         const accountColumn = 'owner_id' in row ? 'owner_id' : 'sharer_id' in row ? 'sharer_id' : 'user_id';
         expect(await db().selectFrom(table).select(accountColumn).where(accountColumn, '=', purgedId).execute(), table).toEqual([]);

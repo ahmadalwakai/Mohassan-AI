@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { incidentalLabel, splitReplyDirective } from '../apps/server/src/assistant/reply-directive.js';
+import { incidentalLabel, mergeReplyConstraints, parseReplyRequest, splitReplyDirective } from '../apps/server/src/assistant/reply-directive.js';
 import { calculatorForm, composeReferencedComputation, computationReference, computedRecord, evaluateReferencedComputation, latestComputedResult,
   missingReferenceQuestion, referencedValueFromAnswer, withReferencedValue } from '../apps/server/src/assistant/computation-reference.js';
 import { evaluateLocalComputation } from '../apps/server/src/assistant/local-computation.js';
@@ -44,6 +44,93 @@ describe('a request, its label and its closing instruction about the reply', () 
     // Development-only. MASSIVE 1.0 ar-SA rows 13255 and 12714, joined at the annotated slot.
     const body = 'من فضلك أعطني معلومات عن مقهى بلكونة ورد';
     expect(splitReplyDirective(body)).toMatchObject({ body, label: null, directive: null });
+  });
+});
+
+describe('reply constraints and conversation preferences', () => {
+  it.each([
+    ['أجب بالعربية دائماً', { lang: 'ar' }],
+    ['أجب دائماً بالعربية', { lang: 'ar' }],
+    ['أجب دائماً في جملتين', { sentences: 2, brief: null }],
+    ['العربية دائماً', { lang: 'ar' }],
+    ['من فضلك أجب بالعربية دائماً', { lang: 'ar' }],
+    ['رد علي بالعربي دايما', { lang: 'ar' }],
+    ['جاوبني بالعربية دائماً', { lang: 'ar' }],
+    ['تكلم معي بالعربية من الآن', { lang: 'ar' }],
+    ['أريد الإجابات بالعربية دائماً', { lang: 'ar' }],
+    ['من الآن إجابات مختصرة', { brief: true, sentences: null }],
+    ['إجابات مختصرة', { brief: true, sentences: null }],
+    ['من الآن الردود القصيرة', { brief: true, sentences: null }],
+    ['always answer in English', { lang: 'en' }],
+    ['answer always in English', { lang: 'en' }],
+    ['From now on, use a numbered list', { list: true }],
+    ['I prefer brief answers', { brief: true, sentences: null }],
+    ['Remember that I prefer brief answers', { brief: true, sentences: null }],
+    ['تذكر أنني أفضل الإجابات المختصرة', { brief: true, sentences: null }],
+    ['رد علي، بالعربي دايما', { lang: 'ar' }],
+  ])('treats %s as a conversation preference without a separate task', (text, preferences) => {
+    expect(parseReplyRequest(text)).toMatchObject({ body: '', preferenceOnly: true, preferences });
+  });
+
+  it('holds a reply command with no format without writing or clearing a preference', () => {
+    const parsed = parseReplyRequest('أجب دائماً');
+    expect(parsed).toMatchObject({ body: '', preferenceOnly: true });
+    expect(parsed.preferences).toEqual({});
+    expect(parsed.overrides).toEqual({});
+    expect(mergeReplyConstraints(parsed, { lang: 'en', sentences: 2 })).toEqual({ lang: 'en', sentences: 2 });
+    const action = 'أجب دائماً على كل الرسائل الواردة';
+    expect(parseReplyRequest(action)).toMatchObject({ body: action, preferenceOnly: false, directive: null });
+  });
+
+  it('reads mixed-language format clauses in order and keeps them out of the task', () => {
+    const parsed = parseReplyRequest('Always answer in English. What is 6 × 7? بالعربية، في جملتين، بدون نقاط، واذكر رابطين فقط');
+    expect(parsed).toMatchObject({ body: 'What is 6 × 7', preferences: { lang: 'en' }, preferenceOnly: false });
+    expect(mergeReplyConstraints(parsed)).toEqual({ lang: 'ar', sentences: 2, list: false, links: 2 });
+  });
+
+  it('supports leading preferences containing commas and later one-off overrides', () => {
+    const parsed = parseReplyRequest('من الآن، إجابات مختصرة. Explain clouds, this time in detail and use a list.');
+    expect(parsed).toMatchObject({ body: 'Explain clouds', preferences: { brief: true, sentences: null } });
+    expect(mergeReplyConstraints(parsed, { lang: 'ar', sentences: 2 })).toEqual({ lang: 'ar', brief: false, list: true });
+  });
+
+  it('uses a temporary language or length for one turn only', () => {
+    const saved = { lang: 'en', brief: true } as const;
+    const parsed = parseReplyRequest('Explain clouds in two Arabic sentences.');
+    expect(parsed.preferences).toEqual({});
+    expect(mergeReplyConstraints(parsed, saved)).toEqual({ lang: 'ar', sentences: 2 });
+    expect(mergeReplyConstraints(parseReplyRequest('Explain fog.'), saved)).toEqual(saved);
+  });
+
+  it('clears the length preference and lets a later explicit request replace it', () => {
+    const saved = { lang: 'ar', brief: true } as const;
+    const removal = parseReplyRequest('لا داعي للاختصار بعد الآن');
+    expect(removal).toMatchObject({ preferenceOnly: true, preferences: { brief: null, sentences: null } });
+    expect(mergeReplyConstraints(removal, saved)).toEqual({ lang: 'ar' });
+    const parsed = parseReplyRequest('What is 2 + 3? Reply in two sentences. No need to be brief anymore. Briefly.');
+    expect(parsed.preferences).toEqual({ brief: null, sentences: null });
+    expect(mergeReplyConstraints(parsed, saved)).toEqual({ lang: 'ar', brief: true });
+  });
+
+  it.each(['Stop answering briefly', 'توقف عن الاختصار'])('clears saved brevity on %s', text => {
+    const parsed = parseReplyRequest(text);
+    expect(parsed).toMatchObject({ body: '', preferenceOnly: true, preferences: { brief: null, sentences: null } });
+    expect(mergeReplyConstraints(parsed, { lang: 'ar', brief: true })).toEqual({ lang: 'ar' });
+  });
+
+  it('reads numeric link and sentence limits, plus requested page fields', () => {
+    const parsed = parseReplyRequest('ابحث عن المطر في ثلاث جمل، مع ٢ روابط');
+    expect(parsed.body).toBe('ابحث عن المطر');
+    expect(mergeReplyConstraints(parsed)).toEqual({ sentences: 3, links: 2 });
+    expect(mergeReplyConstraints(parseReplyRequest('Search for the page. Return the page title and source link, and include only one link.')))
+      .toEqual({ fields: ['title', 'link'], links: 1 });
+    expect(mergeReplyConstraints(parseReplyRequest('Explain clouds without links, without a list'), { links: 2, list: true })).toEqual({ links: 0, list: false });
+  });
+
+  it('does not store mentions in quotes, code or transform input', () => {
+    for (const text of ['Translate «أجب بالعربية دائماً».', 'Quote `always answer in English`.', 'Translate this: hello. Always answer in English.']) {
+      expect(parseReplyRequest(text)).toMatchObject({ body: text, preferences: {}, preferenceOnly: false });
+    }
   });
 });
 
@@ -142,7 +229,7 @@ describe('an instruction to explain is a question about the world', () => {
   it('searches the question an instruction to explain carries, with the reply instruction kept apart', () => {
     expect(explainedQuestion('Explain why rain falls')).toBe('why rain falls');
     expect(explainedQuestion('اشرح لماذا تسقط الأمطار')).toBe('لماذا تسقط الأمطار');
-    expect(webQuestion('Explain why rain falls in two short Arabic sentences.')).toEqual([{ kind: 'search', query: 'why rain falls', site: null, ask: true, reply: { lang: 'ar', sentences: 2 } }]);
+    expect(webQuestion('Explain why rain falls in two short Arabic sentences.')).toEqual([{ kind: 'search', query: 'why rain falls', site: null, ask: true, reply: { lang: 'ar', sentences: 2, brief: true } }]);
     expect(webQuestion('Describe how vaccines work.')).toEqual([{ kind: 'search', query: 'how vaccines work', site: null, ask: true }]);
   });
 
