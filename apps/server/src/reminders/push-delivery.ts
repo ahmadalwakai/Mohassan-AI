@@ -1,7 +1,8 @@
 import type { Kysely } from 'kysely';
-import { memberDeletionQuery, memberReminderDeliveryAllowed } from '../member-deletion.js';
-import { isQuietHours, notificationPreferences, oldestEvent, sendToPushDevice } from '../notifications-store.js';
+import { memberDeletionQuery } from '../member-deletion.js';
+import { backgroundAccountCanReceive, isQuietHours, notificationPreferences, oldestEvent, sendToPushDevice } from '../notifications-store.js';
 import type { PushSender } from '../web-push.js';
+import { reminderAccountResumedAfter, suspendedReminderMemberQuery } from './delivery-access.js';
 import type { ReminderDeliveryPort } from './scheduler.js';
 
 export const queueReminderPush: ReminderDeliveryPort = {
@@ -21,7 +22,8 @@ export function deliverQueuedReminderPush(db: Kysely<any>, send: PushSender | un
       join.onRef('n.conversation_id', '=', 'c.id').onRef('n.user_id', '=', 'c.owner_id'))
       .select(['n.task_id', 'c.title']).where('n.kind', '=', 'reminder_due').where('n.delivery', '=', 'pending')
       .where('n.available_at', '<=', now)
-      .where(eb => eb.not(eb.exists(memberDeletionQuery(tx).select('d.user_id').whereRef('d.user_id', '=', 'n.user_id'))));
+      .where(eb => eb.not(eb.exists(memberDeletionQuery(tx).select('d.user_id').whereRef('d.user_id', '=', 'n.user_id'))))
+      .where(eb => eb.not(eb.exists(suspendedReminderMemberQuery(tx).whereRef('m.user_id', '=', 'n.user_id'))));
     if (visited.length) candidates = candidates.where('n.task_id', 'not in', visited);
     // Lock the conversation before the queued event, in the same order as scheduling and chat writes.
     const candidate = await candidates.orderBy('n.available_at').orderBy('n.task_id').limit(1)
@@ -30,12 +32,17 @@ export function deliverQueuedReminderPush(db: Kysely<any>, send: PushSender | un
     const id: string = candidate.task_id;
     const event = await tx.selectFrom('chat_notifications').select(['user_id', 'conversation_id', 'happened_at'])
       .where('task_id', '=', id).where('delivery', '=', 'pending').forUpdate().skipLocked().executeTakeFirst();
-    if (!event || !await memberReminderDeliveryAllowed(tx, event.user_id)) return id;
+    if (!event || !await backgroundAccountCanReceive(tx, event.user_id)) return id;
 
     const delivered = await tx.selectFrom('reminder_deliveries').selectAll().where('delivery_key', '=', id)
       .where('user_id', '=', event.user_id).where('conversation_id', '=', event.conversation_id).executeTakeFirst();
+    const happenedAt = new Date(event.happened_at);
+    const resumed = delivered !== undefined && await reminderAccountResumedAfter(tx, event.user_id, happenedAt);
+    if (resumed) {
+      await tx.updateTable('reminder_deliveries').set({ late: true, delivered_at: now }).where('delivery_key', '=', id).execute();
+    }
     let pushed = false;
-    if (delivered && send && new Date(event.happened_at) > oldestEvent(now)) {
+    if (delivered && send && happenedAt > oldestEvent(now)) {
       const notificationDb: Kysely<any> = tx;
       const { quietHours, hideTitle } = await notificationPreferences(notificationDb, event.user_id);
       if (!isQuietHours(quietHours, now)) {
@@ -53,7 +60,7 @@ export function deliverQueuedReminderPush(db: Kysely<any>, send: PushSender | un
       await fallback.deliver(tx, {
         id, reminderId: delivered.reminder_id, userId: event.user_id, conversationId: event.conversation_id,
         text: delivered.text, dueAt: new Date(delivered.due_at).toISOString(), timeZone: delivered.time_zone,
-        deliveredAt: new Date(delivered.delivered_at).toISOString(), late: delivered.late,
+        deliveredAt: resumed ? now.toISOString() : new Date(delivered.delivered_at).toISOString(), late: resumed || delivered.late,
       });
     }
     await tx.updateTable('chat_notifications').set({ delivery: pushed ? 'push' : 'suppressed' })

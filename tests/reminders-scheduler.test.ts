@@ -51,6 +51,8 @@ describe('durable reminder scheduling', () => {
     .select(['id', 'conversation_id', 'role', 'text']).orderBy('created_at').execute();
   const stateOf = (id: string) => database.db.selectFrom('reminders')
     .select(['status', 'attempts', 'last_error']).where('id', '=', id).executeTakeFirstOrThrow();
+  const setMemberSuspended = (suspended: boolean) => database.db.updateTable('workspace_members')
+    .set({ disabled_at: suspended ? now() : null }).where('user_id', '=', memberId).execute();
   async function subscribe(userId: string) {
     const subscription = {
       // A synthetic provider path in the format already accepted by the notification sender.
@@ -81,6 +83,7 @@ describe('durable reminder scheduling', () => {
 
   beforeEach(async () => {
     clock = baseline;
+    await setMemberSuspended(false);
     await database.db.deleteFrom('chat_notifications').execute();
     await database.db.deleteFrom('push_subscriptions').execute();
     await database.db.deleteFrom('notification_preferences').execute();
@@ -128,6 +131,89 @@ describe('durable reminder scheduling', () => {
     expect(await messages()).toEqual([]);
     expect(await store.listDue(ownerId)).toEqual([expect.objectContaining({ id, reminderId: reminder.id })]);
     expect(await ownsPushNotification(database.db, ownerId, id, now())).toBe(true);
+  });
+
+  it('holds a suspended member reminder and delivers one late occurrence after re-enabling', async () => {
+    const memberSubscription = await subscribe(memberId);
+    const ownerSubscription = await subscribe(ownerId);
+    const memberReminder = await store.create(memberId, { ...input(memberConversation), recurrence: daily });
+    const ownerReminder = await store.create(ownerId, input());
+    const sendPush = vi.fn<PushSender>().mockResolvedValueOnce('delivered').mockResolvedValue('failed');
+    const scheduler = createReminderScheduler(database.db, { now, sendPush });
+    await setMemberSuspended(true);
+
+    clock = firstDue;
+    await scheduler.runOnce();
+    clock += day + hour;
+    await scheduler.runOnce();
+
+    expect(sendPush).toHaveBeenCalledExactlyOnceWith(ownerSubscription, expect.objectContaining({ conversationId: ownerConversation }));
+    expect(await store.listDue(ownerId)).toEqual([expect.objectContaining({ reminderId: ownerReminder.id, late: false })]);
+    expect(await store.listDue(memberId)).toEqual([]);
+    expect(await messages()).toEqual([]);
+    expect(await store.list(memberId)).toEqual([memberReminder]);
+
+    await setMemberSuspended(false);
+    await scheduler.runOnce();
+    await scheduler.runOnce();
+
+    const [delivery] = await store.listDue(memberId);
+    expect(await store.listDue(memberId)).toHaveLength(1);
+    expect(delivery).toMatchObject({ reminderId: memberReminder.id, dueAt: iso(firstDue), deliveredAt: iso(clock), late: true });
+    expect(sendPush).toHaveBeenCalledTimes(2);
+    expect(sendPush).toHaveBeenLastCalledWith(memberSubscription, {
+      kind: 'reminder_due', taskId: delivery.id, conversationId: memberConversation,
+    });
+    expect(await messages()).toEqual([expect.objectContaining({
+      id: delivery.id, conversation_id: memberConversation, text: expect.stringContaining('(متأخر)'),
+    })]);
+    expect(await store.list(memberId)).toEqual([expect.objectContaining({
+      id: memberReminder.id, status: 'scheduled', dueAt: iso(firstDue + 2 * day), recurrence: daily, attempts: 0,
+    })]);
+  });
+
+  it.each(['scheduled reminder', 'queued push'] as const)('marks a held %s late after a short suspension', async state => {
+    // Keep the fake poll clock close to the database's real audit timestamps.
+    const dueAt = Date.now();
+    clock = dueAt - hour;
+    const subscription = await subscribe(memberId);
+    const reminder = await store.create(memberId, input(memberConversation, dueAt));
+    const sendPush = vi.fn<PushSender>().mockResolvedValue('delivered');
+    clock = dueAt;
+    if (state === 'queued push') {
+      const interrupted = createReminderScheduler(database.db, { now, sendPush, delivery: {
+        async deliver(tx, delivery) {
+          await queueReminderPush.deliver(tx, delivery);
+          void interrupted.stop();
+        },
+      } });
+      await interrupted.runOnce();
+    }
+    await setMemberSuspended(true);
+
+    const resumed = createReminderScheduler(database.db, { now, sendPush });
+    await resumed.runOnce();
+    expect(sendPush).not.toHaveBeenCalled();
+    expect(await messages()).toEqual([]);
+    expect(await store.listDue(memberId)).toEqual([]);
+
+    await setMemberSuspended(false);
+    const resumedAt = await database.db.selectFrom('workspace_member_audit').select('occurred_at')
+      .where('target_id', '=', memberId).where('action', '=', 'member_unsuspended')
+      .orderBy('id', 'desc').executeTakeFirstOrThrow();
+    clock = new Date(resumedAt.occurred_at).getTime() + 1;
+    expect(clock - dueAt).toBeLessThan(REMINDER_POLL_MS);
+    await resumed.runOnce();
+    await resumed.runOnce();
+
+    const [delivery] = await store.listDue(memberId);
+    expect(await store.listDue(memberId)).toEqual([expect.objectContaining({
+      reminderId: reminder.id, dueAt: iso(dueAt), deliveredAt: iso(clock), late: true,
+    })]);
+    expect(sendPush).toHaveBeenCalledExactlyOnceWith(subscription, {
+      kind: 'reminder_due', taskId: delivery.id, conversationId: memberConversation,
+    });
+    expect(await messages()).toEqual([]);
   });
 
   it.each(['no subscription', 'quiet hours', 'provider failure', 'transport exception'] as const)(

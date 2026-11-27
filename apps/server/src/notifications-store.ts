@@ -7,6 +7,7 @@ import {
 } from '@mohassan/contracts';
 import type { PushSender, WebPushPayload } from './web-push.js';
 import { backgroundKinds, backgroundPayload, type BackgroundNotificationEvent, type BackgroundOutcome } from './background-notification-payload.js';
+import { backgroundDeliveryDeadlineReached, backgroundDeliveryExpired, backgroundDeliveryTime, type BackgroundDeliveryClock } from './background-delivery-lifetime.js';
 import { memberReminderDeliveryAllowed } from './member-deletion.js';
 import { hideNotificationTitleByDefault, notificationPresenceMs, updateNotificationPresence } from './notification-security.js';
 import { monitorMetricTransaction } from './ops/metrics/monitor-events.js';
@@ -230,13 +231,19 @@ function eventPayload(event: EventWithTitle, preferences: NotificationPreference
 
 export const oldestEvent = (now: Date) => new Date(now.getTime() - EVENT_TTL_MS);
 
-export async function syncNotifications(db: Database, userId: string, input: NotificationSyncRequest, now = new Date()): Promise<NotificationSyncResponse> {
+function eventDeliveryWindow(now: Date, lifetimeHours?: number) {
+  const background = lifetimeHours === undefined ? sql`n.background_outcome IS NOT NULL`
+    : sql`n.background_outcome IS NOT NULL AND NOT ${backgroundDeliveryExpired(now, lifetimeHours)}`;
+  return sql<boolean>`(n.happened_at > ${oldestEvent(now)} OR (${background}))`;
+}
+
+export async function syncNotifications(db: Database, userId: string, input: NotificationSyncRequest, now = new Date(), lifetimeHours?: number): Promise<NotificationSyncResponse> {
   await updateNotificationPresence(db, userId, input, now);
   if (input.state === 'closed') return { backgroundTask: false, pending: [] };
   const visible = input.state === 'visible';
   let recentEvents = events(db).where('n.user_id', '=', userId).where('n.delivery', '=', 'pending')
     .where(eb => eb.or([eb('n.tab_claim_until', 'is', null), eb('n.tab_claim_until', '<=', now), eb('n.tab_claim_id', '=', input.tabId)]))
-    .where(eb => eb.or([eb('n.happened_at', '>', oldestEvent(now)), eb('n.background_outcome', 'is not', null)]))
+    .where(eventDeliveryWindow(now, lifetimeHours))
     .where(eb => eb.or([
       eb.not(eb.exists(eb.selectFrom('push_subscriptions').select('id').whereRef('push_subscriptions.id', '=', 'n.web_push_device_id'))),
       ...(visible ? [eb('n.web_push_attempts', '>', 0)] : []),
@@ -255,11 +262,12 @@ export async function syncNotifications(db: Database, userId: string, input: Not
   return { backgroundTask, pending };
 }
 
-export async function claimNotification(db: Database, userId: string, id: string, channel: Delivery, now: Date, tabId?: string, acknowledge = false) {
+export async function claimNotification(db: Database, userId: string, id: string, channel: Delivery, clock: BackgroundDeliveryClock, tabId?: string, acknowledge = false, lifetimeHours?: number) {
+  const now = backgroundDeliveryTime(clock);
   return monitorMetricTransaction(db, async (tx, observe) => {
     const event = await events(tx).where('n.task_id', '=', id).where('n.user_id', '=', userId)
       .where('n.delivery', '=', 'pending').where('n.available_at', '<=', now)
-      .where(eb => eb.or([eb('n.happened_at', '>', oldestEvent(now)), eb('n.background_outcome', 'is not', null)]))
+      .where(eventDeliveryWindow(now, lifetimeHours))
       .forUpdate('n').executeTakeFirst();
     if (!event) return null;
     const preferences = await notificationPreferences(tx, userId);
@@ -278,6 +286,7 @@ export async function claimNotification(db: Database, userId: string, id: string
       if (!tab || (!tab.visible && await tabs.where('visible', '=', true).executeTakeFirst())) return null;
       if ((!tab.visible || !event.web_push_attempts) && event.web_push_device_id && await tx.selectFrom('push_subscriptions').select('id')
         .where('id', '=', event.web_push_device_id).executeTakeFirst()) return null;
+      if (lifetimeHours !== undefined && backgroundDeliveryDeadlineReached(event.happened_at, backgroundDeliveryTime(clock), lifetimeHours)) return null;
       await row.set({ tab_claim_id: tabId, tab_claim_until: new Date(now.getTime() + notificationPresenceMs) }).execute();
       return eventPayload(event, preferences);
     }
@@ -311,16 +320,17 @@ export function pendingPushNotifications(db: Database, now: Date, excludeBackgro
   return (excludeBackground ? pending.where('n.background_outcome', 'is', null) : pending).execute();
 }
 
-function lockDueWebPush(db: Database, id: string, now: Date) {
-  return events(db).where('n.task_id', '=', id).where('n.delivery', '=', 'pending')
+function lockDueWebPush(db: Database, id: string, now: Date, lifetimeHours?: number) {
+  let due = events(db).where('n.task_id', '=', id).where('n.delivery', '=', 'pending')
     .where(eb => eb.or([eb('n.tab_claim_until', 'is', null), eb('n.tab_claim_until', '<=', now)]))
-    .where(eb => eb.or([eb('n.web_push_after', 'is', null), eb('n.web_push_after', '<=', now)]))
-    .forUpdate('n').skipLocked().executeTakeFirst();
+    .where(eb => eb.or([eb('n.web_push_after', 'is', null), eb('n.web_push_after', '<=', now)]));
+  if (lifetimeHours !== undefined) due = due.where(eb => eb.not(backgroundDeliveryExpired(now, lifetimeHours)));
+  return due.forUpdate('n').skipLocked().executeTakeFirst();
 }
 
-async function reserveBackgroundWebPush(db: Database, userId: string, id: string, now: Date, active: boolean) {
+async function reserveBackgroundWebPush(db: Database, userId: string, id: string, now: Date, active: boolean, lifetimeHours?: number) {
   return db.transaction().execute(async tx => {
-    const event = await lockDueWebPush(tx, id, now);
+    const event = await lockDueWebPush(tx, id, now, lifetimeHours);
     if (!event) return;
     const row = tx.updateTable('chat_notifications').where('task_id', '=', id);
     const preferences = active && await backgroundAccountCanReceive(tx, userId) && await notificationPreferences(tx, userId);
@@ -344,17 +354,21 @@ async function reserveBackgroundWebPush(db: Database, userId: string, id: string
   });
 }
 
-export async function dispatchBackgroundWebPush(db: Database, send: PushSender<NotificationPayload>, isActive: (id: string) => Promise<boolean>, now: Date) {
-  const pending = await webPushCandidates(db, now, true).where('n.background_outcome', 'is not', null)
+export async function dispatchBackgroundWebPush(db: Database, send: PushSender<NotificationPayload>, isActive: (id: string) => Promise<boolean>, clock: BackgroundDeliveryClock, lifetimeHours?: number) {
+  const now = backgroundDeliveryTime(clock);
+  let candidates = webPushCandidates(db, now, true).where('n.background_outcome', 'is not', null)
     .where(eb => eb.or([eb('n.tab_claim_until', 'is', null), eb('n.tab_claim_until', '<=', now)]))
-    .where(eb => eb.or([eb('n.web_push_after', 'is', null), eb('n.web_push_after', '<=', now)]))
+    .where(eb => eb.or([eb('n.web_push_after', 'is', null), eb('n.web_push_after', '<=', now)]));
+  if (lifetimeHours !== undefined) candidates = candidates.where(eb => eb.not(backgroundDeliveryExpired(now, lifetimeHours)));
+  const pending = await candidates
     .orderBy(sql`row_number() over (partition by n.user_id order by n.available_at, n.task_id)`)
     .orderBy('n.available_at').orderBy('n.task_id').limit(20).execute();
   await Promise.all(pending.map(async ({ user_id: userId, task_id: id }) => {
-    const deviceId = await reserveBackgroundWebPush(db, userId, id, now, await isActive(userId));
+    const active = await isActive(userId);
+    const deviceId = await reserveBackgroundWebPush(db, userId, id, backgroundDeliveryTime(clock), active, lifetimeHours);
     if (!deviceId) return;
     await monitorMetricTransaction(db, async (tx, observe) => {
-      const event = await lockDueWebPush(tx, id, now);
+      const event = await lockDueWebPush(tx, id, backgroundDeliveryTime(clock), lifetimeHours);
       if (!event || event.web_push_device_id !== deviceId) return;
       if (event.web_push_attempts && await activeTabs(tx, now).where('user_id', '=', userId).where('visible', '=', true).executeTakeFirst()) return;
       const row = tx.updateTable('chat_notifications').where('task_id', '=', id);
@@ -365,6 +379,7 @@ export async function dispatchBackgroundWebPush(db: Database, send: PushSender<N
       }
       const device = await ownDevices(tx, userId).select(['id', 'user_id', 'endpoint', 'p256dh', 'auth'])
         .where('id', '=', deviceId).executeTakeFirst();
+      if (lifetimeHours !== undefined && backgroundDeliveryDeadlineReached(event.happened_at, backgroundDeliveryTime(clock), lifetimeHours)) return;
       const result = device ? await deliverToWebDevice(tx, send, device, eventPayload(event, preferences)) : 'expired';
       if (result === 'delivered') {
         await row.set({ delivery: 'push', web_push_device_id: null }).execute();
@@ -384,9 +399,9 @@ export async function createTestNotification(db: Database, userId: string, now =
   return { taskId, kind: 'task_completed', conversationId: null };
 }
 
-export async function ownsPushNotification(db: Database, userId: string, id: string, now = new Date()) {
+export async function ownsPushNotification(db: Database, userId: string, id: string, now = new Date(), lifetimeHours?: number) {
   const background = sql<boolean>`COALESCE(to_jsonb(n)->>'run_id', to_jsonb(n)->>'monitor_id') IS NOT NULL`;
-  return Boolean(await db.selectFrom('chat_notifications as n').select('n.task_id')
+  let events = db.selectFrom('chat_notifications as n').select('n.task_id')
     .where('n.task_id', '=', id).where('n.user_id', '=', userId).where(eb => eb.or([
       eb('n.delivery', '=', 'push'),
       // The worker may check ownership before the provider's response reaches the reminder scheduler.
@@ -395,5 +410,7 @@ export async function ownsPushNotification(db: Database, userId: string, id: str
     .where(eb => eb.or([eb('n.happened_at', '>', oldestEvent(now)), background])).where(eb => eb.or([
       eb('n.conversation_id', 'is', null),
       eb.exists(eb.selectFrom('chat_conversations as c').select('c.id').whereRef('c.id', '=', 'n.conversation_id').whereRef('c.owner_id', '=', 'n.user_id')),
-    ])).executeTakeFirst());
+    ]));
+  if (lifetimeHours !== undefined) events = events.where(eb => eb.or([eb.not(background), eb.not(backgroundDeliveryExpired(now, lifetimeHours))]));
+  return Boolean(await events.executeTakeFirst());
 }

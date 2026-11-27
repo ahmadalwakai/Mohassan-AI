@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { sql, type Kysely, type Transaction } from 'kysely';
 import type { ReminderDeliverySummary } from '@mohassan/contracts';
-import { memberDeletionQuery, memberReminderDeliveryAllowed } from '../member-deletion.js';
+import { memberDeletionQuery } from '../member-deletion.js';
+import { backgroundAccountCanReceive } from '../notifications-store.js';
 import type { PushSender } from '../web-push.js';
+import { reminderAccountResumedAfter, suspendedReminderMemberQuery } from './delivery-access.js';
 import { deliverQueuedReminderPush, queueReminderPush } from './push-delivery.js';
 import { OWNER_ACTIVE_REMINDER_LIMIT, readReminderRecurrence, reminderUpdatedAt, type ReminderRecord } from './storage.js';
 import { nextReminderOccurrence, ReminderCalendarExhausted } from './time.js';
@@ -56,6 +58,7 @@ export function createReminderScheduler(db: Kysely<any>, {
       let candidates = tx.selectFrom('reminders as r').innerJoin('chat_conversations as c', 'c.id', 'r.conversation_id')
         .select('r.id').where('r.status', '=', 'scheduled').where('r.due_at', '<=', at)
         .where(eb => eb.not(eb.exists(memberDeletionQuery(tx).select('d.user_id').whereRef('d.user_id', '=', 'r.user_id'))))
+        .where(eb => eb.not(eb.exists(suspendedReminderMemberQuery(tx).whereRef('m.user_id', '=', 'r.user_id'))))
         .where(eb => eb.or([eb('r.attempts', '=', 0), eb('r.updated_at', '<=', retryBefore)]));
       if (visited.length) candidates = candidates.where('r.id', 'not in', visited);
       const candidate = await candidates.orderBy('r.due_at').orderBy('r.id').limit(1).forNoKeyUpdate('c').skipLocked().executeTakeFirst();
@@ -65,13 +68,14 @@ export function createReminderScheduler(db: Kysely<any>, {
         .where(eb => eb.or([eb('attempts', '=', 0), eb('updated_at', '<=', retryBefore)]))
         .forUpdate().skipLocked().executeTakeFirst() as ReminderRecord | undefined;
       if (!row) return candidate.id as string;
-      if (!await memberReminderDeliveryAllowed(tx, row.user_id)) return row.id;
+      if (!await backgroundAccountCanReceive(tx, row.user_id)) return row.id;
 
       const dueAt = new Date(row.due_at);
       const reminder = {
         id: row.delivery_key, reminderId: row.id, conversationId: row.conversation_id, userId: row.user_id, text: row.text,
         dueAt: dueAt.toISOString(), timeZone: row.time_zone, deliveredAt: at.toISOString(),
-        late: dueAt < retryBefore || (startupAt !== undefined && dueAt < startupAt),
+        late: dueAt < retryBefore || (startupAt !== undefined && dueAt < startupAt)
+          || await reminderAccountResumedAfter(tx, row.user_id, dueAt),
       };
       const updatedAt = reminderUpdatedAt(row, at);
       // A failed adapter can roll back partial writes and still record the retry on the locked reminder.

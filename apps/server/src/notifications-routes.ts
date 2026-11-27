@@ -5,6 +5,7 @@ import { checkPushRegistration } from './notification-security.js';
 import { IOS_PUSH_MEMBER_ROUTES, registerIosPushRoutes } from './ios-push-routes.js';
 import { apnsConfigFromEnv, createApnsSender } from './apns.js';
 import { dispatchBackgroundApns } from './background-apns-delivery.js';
+import { backgroundDeliveryTime, type BackgroundDeliveryClock } from './background-delivery-lifetime.js';
 import {
   NotificationClaimRequestSchema, NotificationPreferencesSchema, NotificationSyncRequestSchema, PushSubscribeRequestSchema,
   type NotificationClaimResponse, type NotificationPayload, type NotificationSettingsResponse, type PushSubscribeResponse,
@@ -29,13 +30,24 @@ export const NOTIFICATION_MEMBER_ROUTES = [
 const pushUnavailable = { error: { code: 'PUSH_UNAVAILABLE', message: 'إرسال الإشعارات إلى الأجهزة غير مهيّأ.' } };
 
 export async function dispatchPushNotifications(db: Kysely<any>, send: PushSender<NotificationPayload>,
-  isActive: (userId: string) => Promise<boolean>, now = new Date()) {
+  isActive: (userId: string) => Promise<boolean>, clock: BackgroundDeliveryClock = new Date(), lifetimeHours?: number) {
+  const now = backgroundDeliveryTime(clock);
   const pending = await pendingPushNotifications(db, now, true);
-  await Promise.all([dispatchBackgroundWebPush(db, send, isActive, now), ...pending.map(async ({ user_id: userId, task_id: id }) => {
+  await Promise.all([dispatchBackgroundWebPush(db, send, isActive, clock, lifetimeHours), ...pending.map(async ({ user_id: userId, task_id: id }) => {
     if (!await isActive(userId)) return;
     const payload = await claimNotification(db, userId, id, 'push', now);
     if (payload) await sendToPushDevice(db, send, userId, payload);
   })]);
+}
+
+function backgroundPushLifetimeHours() {
+  const value = process.env.MOHASSAN_BACKGROUND_PUSH_LIFETIME_HOURS;
+  if (value === undefined) return;
+  const hours = Number(value);
+  if (!Number.isFinite(hours) || hours < 24) {
+    throw new Error('MOHASSAN_BACKGROUND_PUSH_LIFETIME_HOURS must be a finite number of hours of at least 24.');
+  }
+  return hours;
 }
 
 export function registerNotificationRoutes(app: FastifyInstance, options: {
@@ -45,6 +57,7 @@ export function registerNotificationRoutes(app: FastifyInstance, options: {
   recoverChatRuns: () => Promise<void>;
 }) {
   const { db, owner, isActive, recoverChatRuns } = options;
+  const lifetimeHours = backgroundPushLifetimeHours();
   registerIosPushRoutes(app, db, owner);
   const config = webPushConfigFromEnv(process.env);
   const send: PushSender | undefined = config ? (subscription, payload) => sendWebPushNotification(config, subscription, payload) : undefined;
@@ -75,14 +88,14 @@ export function registerNotificationRoutes(app: FastifyInstance, options: {
   app.delete<{ Params: { id: string } }>(device, async request => ({
     removed: await unsubscribePushDevice(db, (await owner(request)).id, z.uuid().parse(request.params.id)),
   } satisfies PushUnsubscribeResponse));
-  app.post(sync, async request => syncNotifications(db, (await owner(request)).id, NotificationSyncRequestSchema.parse(request.body)));
+  app.post(sync, async request => syncNotifications(db, (await owner(request)).id, NotificationSyncRequestSchema.parse(request.body), new Date(), lifetimeHours));
   app.post<{ Params: { id: string } }>(claim, async request => {
     const { id } = await owner(request);
     const { tabId, acknowledge } = NotificationClaimRequestSchema.parse(request.body);
-    return { notification: await claimNotification(db, id, z.uuid().parse(request.params.id), 'tab', new Date(), tabId, acknowledge) } satisfies NotificationClaimResponse;
+    return { notification: await claimNotification(db, id, z.uuid().parse(request.params.id), 'tab', () => new Date(), tabId, acknowledge, lifetimeHours) } satisfies NotificationClaimResponse;
   });
   app.get<{ Params: { id: string } }>(event, async (request, reply) => {
-    const found = await ownsPushNotification(db, (await owner(request)).id, z.uuid().parse(request.params.id));
+    const found = await ownsPushNotification(db, (await owner(request)).id, z.uuid().parse(request.params.id), new Date(), lifetimeHours);
     return reply.code(found ? 204 : 404).send();
   });
   app.post(test, { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
@@ -93,7 +106,7 @@ export function registerNotificationRoutes(app: FastifyInstance, options: {
     return { delivered } satisfies PushTestResponse;
   });
 
-  if (send || sendIos) {
+  if (send || sendIos || lifetimeHours !== undefined) {
     let inFlight: Promise<void> | undefined;
     let recoverAfter = Date.now() + 15_000;
     async function drain() {
@@ -101,10 +114,10 @@ export function registerNotificationRoutes(app: FastifyInstance, options: {
         recoverAfter = Date.now() + 15_000;
         await recoverChatRuns().catch(() => { app.log.error('Chat notification recovery could not finish.'); });
       }
-      const now = new Date();
+      const clock = lifetimeHours === undefined ? new Date() : () => new Date();
       await Promise.all([
-        send && dispatchPushNotifications(db, send, isActive, now),
-        sendIos && dispatchBackgroundApns(db, sendIos, isActive, now),
+        send && dispatchPushNotifications(db, send, isActive, clock, lifetimeHours),
+        (sendIos || lifetimeHours !== undefined) && dispatchBackgroundApns(db, sendIos, isActive, clock, lifetimeHours),
       ]);
     }
     function poll() {
