@@ -195,7 +195,7 @@ export function MembersPanel({ offline }: { offline: boolean }) {
 }
 
 /** What a member sees behind "advanced": their own Google Ads and their daily allowance. */
-export function MemberTools({ access, onChat, onSignOut }: { access: Access; onChat: () => void; onSignOut: () => void }) {
+export function MemberTools({ access, initialSiteId, onChat, onSignOut }: { access: Access; initialSiteId?: string | null; onChat: () => void; onSignOut: () => void }) {
   const ads = access.services.includes("ads");
   return <div className={styles.member}>
     <header className={styles.memberHeader}>
@@ -206,7 +206,7 @@ export function MemberTools({ access, onChat, onSignOut }: { access: Access; onC
       </div>
     </header>
     <main className={styles.memberMain}>
-      {access.services.includes("sites") ? <><h1>المواقع</h1><SitesWorkspace offline={false} /></> : null}
+      {access.services.includes("sites") ? <><h1>المواقع</h1><SitesWorkspace offline={false} initialSiteId={initialSiteId} /></> : null}
       <h1>Google Ads</h1>
       {ads ? <GoogleAdsWorkspace offline={false} /> : <p className={styles.empty}>ربط Google Ads غير متاح بعد. سيظهر هنا عندما يفعّله صاحب الحساب.</p>}
     </main>

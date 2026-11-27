@@ -64,20 +64,21 @@ export async function buildSiteReply(port: SitesChatPort, ownerId: string, state
   }
   const role = port.roleOf ? (await port.roleOf(ownerId)) ?? undefined : undefined;
   const detail = await port.createFromBrief(ownerId, completion.brief, { conversationId, role });
+  const member = role === 'member';
   const skipped = state.partial.skipped.filter(want => state.partial.requested.includes(want));
   const pages = detail.pages.map(page => page.title).join(lang === 'ar' ? '، ' : ', ');
   const failed = detail.checks.checks.filter(check => !check.passed);
   const lines = lang === 'ar'
     ? [
       `بنيتُ موقع «${detail.name}» من كلماتك: ${pagesLabel(detail.pages.length, 'ar')} (${pages}).`,
-      `[افتح المعاينة](${previewLink(port, detail)}) لتراه على الهاتف والحاسوب، وتنزّله ملف ZIP، أو تنشره.`,
+      `[افتح المعاينة](${previewLink(port, detail)}) لتراه على الهاتف والحاسوب${member ? ' وتنزّله كملف ZIP.' : '، وتنزّله ملف ZIP، أو تنشره.'}`,
       failed.length ? `تنبيه: لم تجتز ${failed.length} من الفحوص الآلية: ${failed.map(check => check.message).join(' | ')}` : 'اجتاز الموقع الفحوص الآلية كلها (روابط، تباين، أرقام من كلامك فقط، بلا مصادر خارجية).',
       skipped.length ? `تركتُ ما لم تعطني محتواه: ${skipped.map(want => WANT_LABELS.ar[want]).join('، ')}. اكتب لي محتواه متى شئت وسأضيفه.` : '',
       `للتعديل اكتب لي مباشرة، مثلاً: ${commandExamples('ar').slice(0, 4).map(example => `«${example}»`).join('، ')}.`,
     ]
     : [
       `I built the "${detail.name}" site from your words: ${pagesLabel(detail.pages.length, 'en')} (${pages}).`,
-      `[Open the preview](${previewLink(port, detail)}) to see it on phone and desktop, download it as a ZIP, or publish it.`,
+      `[Open the preview](${previewLink(port, detail)}) to see it on phone and desktop${member ? ' and download it as a ZIP.' : ', download it as a ZIP, or publish it.'}`,
       failed.length ? `Note: ${failed.length} automatic checks did not pass: ${failed.map(check => check.message).join(' | ')}` : 'It passed every automatic check (links, contrast, numbers from your words only, no external sources).',
       skipped.length ? `I left out what you gave no content for: ${skipped.map(want => WANT_LABELS.en[want]).join(', ')}. Send it any time and I will add it.` : '',
       `To change anything just tell me, for example: ${commandExamples('en').slice(0, 4).map(example => `"${example}"`).join(', ')}.`,
