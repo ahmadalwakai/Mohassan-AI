@@ -51,6 +51,12 @@ export function robotsAllows(text:string,target:string,agent='MohassanAI-Researc
   }
   return winning?.allow??true;
 }
+export class RobotsRateLimitError extends BrowserError {
+  constructor(readonly retryAfter: string | undefined) {
+    super('RESEARCH_ROBOTS_UNAVAILABLE', 'تعذر التحقق من سياسة قراءة المصدر.', 502);
+  }
+}
+
 export class RobotsPolicy {
   private cache=new Map<string,{until:number;text:string}>();
   constructor(private network:SafeNetwork,private now=Date.now){}
@@ -64,11 +70,16 @@ export class RobotsPolicy {
         for(let redirect=0;redirect<=5;redirect++){
           const response=await this.network.request(target,{signal,maxBytes:512000});
           if([301,302,303,307,308].includes(response.status)&&response.headers.location){target=this.network.validate(new URL(response.headers.location,target).href).href;continue;}
-          if(response.status>=400&&response.status<500&&response.status!==429){text='';break;}
+          if (response.status === 429) throw new RobotsRateLimitError(response.headers['retry-after']);
+          if(response.status>=400&&response.status<500){text='';break;}
           if(response.status!==200)throw new Error('robots unavailable');
           text=new TextDecoder('utf-8',{fatal:true}).decode(response.body);break;
         }
-      }catch{signal?.throwIfAborted();throw new BrowserError('RESEARCH_ROBOTS_UNAVAILABLE','تعذر التحقق من سياسة قراءة المصدر.',502);}
+      } catch (error) {
+        signal?.throwIfAborted();
+        if (error instanceof RobotsRateLimitError) throw error;
+        throw new BrowserError('RESEARCH_ROBOTS_UNAVAILABLE', 'تعذر التحقق من سياسة قراءة المصدر.', 502);
+      }
       if(text===undefined)throw new BrowserError('RESEARCH_ROBOTS_UNAVAILABLE','تعذر التحقق من سياسة قراءة المصدر.',502);
       if(this.cache.size>=200)this.cache.delete(this.cache.keys().next().value!);
       this.cache.set(url.origin,{until:this.now()+3600000,text});

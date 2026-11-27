@@ -128,6 +128,17 @@ describe('public web plan adapters', () => {
     expect(onWebAction.mock.calls).toEqual([['read', 'completed'], ['open', 'completed']]);
   });
 
+  it('does not open an explicitly navigated read when its HTTP source is rate-limited', async () => {
+    const command = `Open ${source1}, read the workshop charge`;
+    const [step] = compilePlan(`${command}, then multiply the amount by 2.`).steps;
+    const { tools, openPage, readPage, onWebAction } = fixture(command);
+    readPage.mockResolvedValue({ kind: 'rate-limited', retryAfterMs: 30_000 });
+
+    await expect(tools.read(step!, { text: command, references: [] }, initial)).resolves.toEqual({ ok: false, reason: 'no_result' });
+    expect(openPage).not.toHaveBeenCalled();
+    expect(onWebAction.mock.calls).toEqual([['read', 'failed']]);
+  });
+
   it('does not use ambiguous source amounts or figures on unexpected destinations', async () => {
     const command = `Open ${source1} for the workshop fee`;
     const [step] = compilePlan(command).steps;

@@ -2,6 +2,7 @@ import type { AgentPage, SearchProvider } from '@mohassan/browser';
 import type { Kysely } from 'kysely';
 import type { DocumentControl } from '../../documents.js';
 import type { BrainState } from '../brain.js';
+import { isRateLimitedPageRead, type HttpPageReader } from '../http-page-reader.js';
 import { reviewBrowserRequestScope } from '../browser-request-scope.js';
 import { buildFrame } from '../mind/frame.js';
 import { extractPublicSearchQueries } from '../public-query-provenance.js';
@@ -18,8 +19,7 @@ const SOURCE_LIMIT = 6;
 const SOURCE_CHARS = 256_000;
 const PARALLEL_READS = 2;
 
-export type WritingPageReader = (url: string, signal: AbortSignal, options?: { live?: boolean; includePdf?: boolean }) =>
-  Promise<{ url: string; title: string; text: string; status: number; fetchedAt?: string; layout?: WritingSource['layout'] } | 'disallowed' | null>;
+export type WritingPageReader = HttpPageReader;
 
 interface WritingPorts {
   db: Kysely<any>;
@@ -102,7 +102,7 @@ async function readUrl(ports: WritingPorts, value: string): Promise<WritingSourc
   const url = allowedUrl(value);
   if (!url || !readPage || ports.scrub(url) !== url) return null;
   const page = await attempt(ports, () => readPage(url, ports.signal, { includePdf: true }));
-  return page && page !== 'disallowed' && page.status >= 200 && page.status < 300 && page.text.trim() && allowedUrl(page.url)
+  return page && page !== 'disallowed' && !isRateLimitedPageRead(page) && page.status >= 200 && page.status < 300 && page.text.trim() && allowedUrl(page.url)
     ? { title: page.title, text: page.text, url: page.url, layout: page.layout } : null;
 }
 

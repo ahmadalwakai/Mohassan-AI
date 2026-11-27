@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { parse,parseFragment } from 'parse5';
+import { parse,parseFragment, type DefaultTreeAdapterMap } from 'parse5';
 import { BrowserError, SafeNetwork } from './network.js';
 import { RobotsPolicy } from './search/robots.js';
 
@@ -8,13 +8,91 @@ export interface SearchProvider {name:string;limitations?:readonly string[];sear
 export interface ResearchSource {id:string;title:string;url:string;accessedAt:string;contentHash:string;quote:string;text:string}
 export interface ResearchReport {id:string;question:string;provider:string;createdAt:string;plan:string[];sources:ResearchSource[];claims:{text:string;sourceIds:string[]}[];conflicts:{sourceIds:string[];description:string;status:'needs_review'}[];coverage:{requested:number;read:number;failed:{url:string;reason:string}[];limitations:string[]}}
 
-function domText(node:any):string {if(node.nodeName==='#text')return node.value??'';if(['script','style','noscript','svg','template','nav','footer'].includes(node.tagName))return '';return (node.childNodes??[]).map(domText).join(' ');}
-function find(node:any,predicate:(node:any)=>boolean,result:any[]=[]):any[]{if(predicate(node))result.push(node);for(const child of node.childNodes??[])find(child,predicate,result);return result;}
+const hiddenText = new Set(['script', 'style', 'noscript', 'svg', 'template', 'nav', 'footer']);
+function domText(node:any):string {if(node.nodeName==='#text')return node.value??'';if(hiddenText.has(node.tagName))return '';return (node.childNodes??[]).map(domText).join(' ');}
+function find(root: any, predicate: (node: any) => boolean, limit = Infinity): any[] {
+  const pending = [root];
+  const matches: any[] = [];
+  while (pending.length) {
+    const node = pending.pop();
+    if (predicate(node)) {
+      matches.push(node);
+      if (matches.length === limit) break;
+    }
+    const children = node.childNodes ?? [];
+    for (let index = children.length - 1; index >= 0; index--) pending.push(children[index]);
+  }
+  return matches;
+}
 const attr=(node:any,name:string)=>node.attrs?.find((item:any)=>item.name===name)?.value??'';
 const clean=(value:string)=>value.replace(/\s+/g,' ').trim();
-export function readableSource(html:string,url:string):{title:string;text:string;links:string[]} {
-  const tree=parse(html),title=find(tree,node=>node.tagName==='title')[0],body=find(tree,node=>node.tagName==='body')[0]??tree;
-  return {title:clean(title?domText(title):new URL(url).hostname).slice(0,240),text:clean(domText(body)).slice(0,60000),links:find(body,node=>node.tagName==='a'&&attr(node,'href')).slice(0,100).flatMap(node=>{try{return [new URL(attr(node,'href'),url).href];}catch{return [];}})};
+
+/** Keep each heading with its first paragraph and separate the remaining paragraphs and sections for ranking. */
+function sectionText(root: DefaultTreeAdapterMap['node'], limit: number): string {
+  const pending: (DefaultTreeAdapterMap['node'] | 'heading-end' | null)[] = [root];
+  const chunks: string[] = [];
+  let length = 0;
+  let separator = '';
+  let afterHeading = false;
+  while (pending.length && length <= limit) {
+    const node = pending.pop() ?? null;
+    if (node === 'heading-end') {
+      afterHeading = true;
+      continue;
+    }
+    if (node === null) {
+      if (length) separator = '\n';
+      continue;
+    }
+    if ('value' in node) {
+      const value = clean(node.value);
+      if (!value) continue;
+      const chunk = separator + value;
+      // Keep a single extra code unit to detect clipping without flattening the remaining text.
+      chunks.push(chunk.slice(0, limit + 1 - length));
+      length += chunk.length;
+      separator = ' ';
+      continue;
+    }
+    const tag = 'tagName' in node ? node.tagName : '';
+    if (hiddenText.has(tag)) continue;
+    const heading = /^h[1-6]$/u.test(tag);
+    if (heading || tag === 'p' || tag === 'section' || tag === 'br') {
+      if (length && !(tag === 'p' && afterHeading)) separator = '\n';
+      afterHeading = false;
+      pending.push(heading ? 'heading-end' : null);
+    }
+    if ('childNodes' in node) {
+      for (let index = node.childNodes.length - 1; index >= 0; index--) pending.push(node.childNodes[index]!);
+    }
+  }
+  const text = chunks.join('');
+  if (length <= limit) return text;
+  // End at the last full paragraph or sentence to avoid exposing a clipped number or claim as evidence.
+  const marker = '\n…';
+  for (let index = limit - marker.length - 1; index >= 0; index--) {
+    const character = text[index];
+    if (character === '\n' || /[.!?؟]/u.test(character) && /\s/u.test(text[index + 1])) {
+      return text.slice(0, index + 1).trimEnd() + marker;
+    }
+  }
+  const wordBoundary = text.lastIndexOf(' ', limit - marker.length);
+  return wordBoundary > 0 ? text.slice(0, wordBoundary) + marker : '…';
+}
+
+/** An explicit character budget requests section breaks and marks any clipped text. Existing default callers use 60k flat text. */
+export function readableSource(html: string, url: string, limit?: number): { title: string; text: string; links: string[] } {
+  if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1)) throw new RangeError('Invalid readable source character limit');
+  const tree = parse(html);
+  const title = find(tree, node => node.tagName === 'title', 1)[0];
+  const body = find(tree, node => node.tagName === 'body', 1)[0] ?? tree;
+  return {
+    title: clean(title ? domText(title) : new URL(url).hostname).slice(0, 240),
+    text: limit === undefined ? clean(domText(body)).slice(0, 60_000) : sectionText(body, limit),
+    links: find(body, node => node.tagName === 'a' && attr(node, 'href'), 100).flatMap(node => {
+      try { return [new URL(attr(node, 'href'), url).href]; } catch { return []; }
+    }),
+  };
 }
 
 /** Public HTML search adapter. Captchas, denied responses and empty result sets are explicit failures. */

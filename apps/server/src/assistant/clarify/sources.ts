@@ -3,6 +3,7 @@ import { redactCredentialText } from '@mohassan/cognitive';
 import { isDisambiguationPage, isDisambiguationTitle, isMetaLine } from '../answer-check.js';
 import { emptyConversationState, understandTurn } from '../conversation-state.js';
 import { plainTitle } from '../hands.js';
+import { isRateLimitedPageRead, type RateLimitedPageRead } from '../http-page-reader.js';
 import { matchText, normalizeRequest } from '../mind/normalize.js';
 import type { MemoryLookupResult } from '../tools.js';
 
@@ -40,7 +41,7 @@ interface LookupSourceInput extends SourceInput {
   signal: AbortSignal;
   /** These ports are supplied only when the current request permits the read. */
   search?: (query: string, limit: number, signal: AbortSignal) => Promise<readonly SearchHit[]>;
-  readPage?: (url: string, signal: AbortSignal) => Promise<ClarificationPage | 'disallowed' | null>;
+  readPage?: (url: string, signal: AbortSignal) => Promise<ClarificationPage | RateLimitedPageRead | 'disallowed' | null>;
   memory?: (ownerId: string, query: string) => Promise<MemoryLookupResult>;
 }
 
@@ -220,7 +221,7 @@ async function publicCandidates(input: LookupSourceInput, signal: AbortSignal): 
     && includesName(plainTitle(hit.title), reference) && isDisambiguationPage({ title: hit.title, text: hit.snippet })).slice(0, 2);
   const sources = await Promise.all(disambiguation.map(async hit => {
     const page = await input.readPage?.(hit.url, signal).catch(() => null);
-    return page && page !== 'disallowed' && pageUrl(page.url)?.origin === pageUrl(hit.url)?.origin
+    return page && page !== 'disallowed' && !isRateLimitedPageRead(page) && pageUrl(page.url)?.origin === pageUrl(hit.url)?.origin
       ? pageLabels(page, reference, hits, personQuestion)
       : [];
   }));

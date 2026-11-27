@@ -2,6 +2,7 @@ import { AgentEffectHeld, BrowserError, compileQuery, publicSearchScan, publicSe
 import { directRoute, namedSite, sensitiveAction } from './brain.js';
 import { hostOf, readingLabel, siteName } from './activity.js';
 import { checkAnswerLine, figureKind, hasAnswerNumber, isDisambiguationPage, isDisambiguationTitle, isMetaLine, isReasonQuestion, questionLanguage } from './answer-check.js';
+import type { RateLimitedPageRead } from './http-page-reader.js';
 import { releaseLines, releaseQuestion } from './releases.js';
 import { isCampaignRequest } from './campaign-request.js';
 import { matchesConversationPage, readConversationPageLines, type ConversationPageRead } from './conversation-state-page.js';
@@ -1309,8 +1310,8 @@ export function normalizeHandsPlan(plan: HandsPlan): HandsPlan {
   return plan;
 }
 
-/** A public page read over HTTP without the browser; `unreadable` (no text, not HTML, timeout) falls back to the browser, `disallowed` (robots) is skipped. */
-export type HandsRead = { kind: 'page'; page: AgentPage } | { kind: 'unreadable' } | { kind: 'disallowed' };
+/** Only an unreadable HTTP response can fall back to the browser. Access denials and rate limits skip the page. */
+export type HandsRead = { kind: 'page'; page: AgentPage } | { kind: 'unreadable' } | { kind: 'disallowed' } | RateLimitedPageRead;
 
 export interface HandsIO {
   /** The conversation's live page, or null when no page is open. */
@@ -1337,7 +1338,7 @@ export interface HandsIO {
   hold(held: AgentEffectHeld['held'], label: string): Promise<void>;
 }
 
-export type HandsOutcome = { kind: 'paused' } | { kind: 'done'; text: string; status: 'completed' | 'partial' | 'blocked' };
+export type HandsOutcome = { kind: 'paused' } | { kind: 'done'; text: string; status: 'completed' | 'partial' | 'blocked'; rateLimited?: true };
 
 /** The shared search engine's spacing between two calls to one provider (1000 ms), with a margin. */
 export const PROVIDER_SPACING_MS = 1100;
@@ -1365,6 +1366,10 @@ export const searchFailed = (query: string, detail: string, lang: 'ar' | 'en' = 
 const noSearchSource = (query: string, lang: 'ar' | 'en' = /[؀-ۿ]/u.test(query) ? 'ar' : 'en') => isLiveWebQuestion(query) ? noLiveSource(query, lang) : lang === 'ar'
   ? `لم أجد في المصادر المتاحة لي (ويكيبيديا والواجهات الموثقة) نتائج مرتبطة بسؤالك «${query}». أرسل رابط موقع مناسب أو حدد اسم الجهة التي تريد البحث لديها.`
   : `I found no results relevant to “${query}” in the sources available to me (Wikipedia and documented APIs). Send a suitable website link or name the organization to search.`;
+
+const busySources = (query: string, lang = questionLanguage(query)) => lang === 'ar'
+  ? `كل المصادر التي حاولت قراءتها للإجابة عن «${query}» مشغولة مؤقتًا وتحدّ من الطلبات. أعد المحاولة بعد قليل.`
+  : `The sources I tried for “${query}” are temporarily busy and limiting requests. Please try again shortly.`;
 
 
 /** A page title without the site's own suffix («… - ويكيبيديا») and without link brackets. */
@@ -1441,7 +1446,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
   const ownPage = (page: { url: string; title: string }, entity: readonly string[]) => ownUrls.has(withoutHash(page.url)) || isOwnArticle(page.title, entity);
   type SearchResult = { title: string; url: string };
   type SearchBatch = { results: SearchResult[]; retrySubject?: () => Promise<SearchResult[]> };
-  const engine = async (query: string, ask = false): Promise<SearchBatch | { failed: string } | 'unavailable'> => {
+  const engine = async (query: string, ask: boolean, read?: HandsIO['read']): Promise<SearchBatch | { failed: string } | 'unavailable'> => {
     const publicQuery = query.normalize('NFKC').replace(/\p{Cf}/gu, '');
     const decoded = publicSearchScan(publicQuery);
     if (publicSearchText(publicQuery) !== publicQuery || publicSearchText(decoded) !== decoded || (decoded.match(/https?:\/\/\S+/gi) ?? []).some(url => safeResumeUrl(url) === null)) {
@@ -1493,8 +1498,8 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
     // Wikipedia opens a subject's article by its name and follows its redirects («المياه البيضاء» → «الساد», «الشاي الأخضر»
     // → «شاي أخضر», measured 2026-11-22), so the article is read while the search runs, not searched for after it: the search
     // lookup cost 1.1 to 1.9 s a question (the engine's one-second spacing, then the search). The page reader caches it.
-    const direct = subject.length && !live && surface.trim() && io.read
-      ? io.read(articleUrl(surface, questionLanguage(query))).catch((): HandsRead => ({ kind: 'unreadable' })) : null;
+    const direct = subject.length && !live && surface.trim() && read
+      ? read(articleUrl(surface, questionLanguage(query))) : null;
     let results = await lookup(query);
     const openedByName = direct ? await direct : null;
     const named = openedByName?.kind === 'page' && readableOverHttp(openedByName.page.text) && !isDisambiguationPage(openedByName.page) ? openedByName.page : null;
@@ -1543,6 +1548,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
       plan.next = index + 1;
       await io.begin(index);
     }
+    let busyReply: string | undefined;
     switch (step.kind) {
       case 'open': {
         await io.step(`فتح ${step.name}`);
@@ -1564,13 +1570,26 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         if (!template && !box && step.here) return { kind: 'done', status: 'partial', text: page ? `لم أجد خانة بحث في ${hostOf(page.url)}. الصفحة ظاهرة في لوحة المتصفح؛ قل «ابحث عن ${step.query} في الإنترنت» لأبحث خارجها.` : NO_PAGE };
         let searched: SearchResult[] | undefined;
         let retrySubject: SearchBatch['retrySubject'];
+        const rateLimited = new Map<string, RateLimitedPageRead>();
+        let otherSource = false;
+        const allSourcesRateLimited = () => rateLimited.size > 0 && !otherSource;
+        const httpRead = io.read;
+        const readPage = httpRead ? async (url: string): Promise<HandsRead> => {
+          const key = withoutHash(url);
+          const previous = rateLimited.get(key);
+          if (previous) return previous;
+          const result = await httpRead(url).catch((): HandsRead => ({ kind: 'unreadable' }));
+          if (result.kind === 'rate-limited') rateLimited.set(key, result);
+          return result;
+        } : undefined;
         // «What is the latest version of Node.js?» is read from the product's own release page first (releases.ts): the
         // search only finds old forum threads for it. When that page cannot be read or no longer states a version, the
         // general search runs as before.
-        const release = !template && !box && step.ask && io.read ? releaseQuestion(step.query) : null;
-        if (release) {
+        const release = !template && !box && step.ask && readPage ? releaseQuestion(step.query) : null;
+        if (release && readPage) {
           await io.step(readingLabel([release.page]));
-          const read = await io.read!(release.page).catch((): HandsRead => ({ kind: 'unreadable' }));
+          const read = await readPage(release.page);
+          otherSource = read.kind !== 'rate-limited';
           const official = read.kind === 'page' ? read.page : null;
           const fact = official ? release.parse(official.text) : null;
           if (official && fact) {
@@ -1582,8 +1601,12 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         }
         if (!template && !box) {
           // The shared engine over HTTP: a results list and no browser page.
-          const found = await engine(step.query, step.ask);
-          if (found === 'unavailable') return { kind: 'done', status: 'blocked', text: noSearchSource(step.query, plan.lang) };
+          const found = await engine(step.query, step.ask === true, readPage);
+          if (found === 'unavailable') {
+            if (!step.ask || !allSourcesRateLimited()) return { kind: 'done', status: 'blocked', text: noSearchSource(step.query, plan.lang) };
+            busyReply = busySources(step.query, plan.lang);
+            break;
+          }
           if ('failed' in found) return { kind: 'done', status: 'blocked', text: searchFailed(step.query, found.failed, plan.lang) };
           searched = found.results;
           retrySubject = found.retrySubject;
@@ -1640,12 +1663,14 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
           const fitting = [...new Set(searched ? [...byName, ...subject, ...unread] : [...subject, ...best])].filter(item => !isDisambiguationTitle(item.title)).slice(0, 3);
           // Engine results are read over HTTP, all together, so no browser opens for a question. A page that
           // gives no readable text (built by JavaScript, not HTML, timed out) is opened in the hidden browser instead.
-          const reads: (HandsRead | null)[] = searched && io.read && fitting.length
-            ? (await io.step(readingLabel(fitting.map(item => item.url))), await Promise.all(fitting.map(item => io.read!(item.url).catch((): HandsRead => ({ kind: 'unreadable' })))))
+          const reads: (HandsRead | null)[] = searched && readPage && fitting.length
+            ? (await io.step(readingLabel(fitting.map(item => item.url))), await Promise.all(fitting.map(item => readPage(item.url))))
             : fitting.map(() => null);
           for (const [index, item] of fitting.entries()) {
             tried.add(withoutHash(item.url));
             const read = reads[index];
+            if (read?.kind === 'rate-limited') continue;
+            otherSource = true;
             if (read?.kind === 'disallowed') continue;
             const explicit = read?.kind === 'page' && !isLiveWebQuestion(step.query) && !isDisambiguationPage(read.page)
               ? explicitFactualEvidence(read.page, step.query) : undefined;
@@ -1738,6 +1763,8 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             title: tidy(item.element.label).slice(0, 90).replace(/[[\]]/g, ''), url: item.url,
           }));
           if (!await readResults(results)) return { kind: 'paused' };
+          // When a source is busy, give the remaining hits one batch to provide an answer.
+          if (!plan.found && extracted.size !== 1 && rateLimited.size && !await readResults(results)) return { kind: 'paused' };
           if (!plan.found && extracted.size === 1) plan.found = extracted.values().next().value;
           if (!plan.found && retrySubject) {
             const own = await retrySubject();
@@ -1748,6 +1775,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
               if (!plan.found && extracted.size === 1) plan.found = extracted.values().next().value;
             }
           }
+          if (!plan.found && allSourcesRateLimited()) busyReply = busySources(step.query, plan.lang);
         }
         break;
       }
@@ -1872,6 +1900,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         || answer !== null && (!answer.parts.length || answer.missing.length > 0);
       await io.complete(index, missing || ranked?.status === 'blocked' ? 'partial' : 'completed');
     }
+    if (busyReply) return { kind: 'done', status: 'partial', text: busyReply, rateLimited: true };
   }
   return { kind: 'done', ...describe(plan, page) };
 }
