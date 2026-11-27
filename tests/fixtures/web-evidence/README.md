@@ -12,7 +12,9 @@ Replay checks the SHA-256 of the cassette bytes and the frozen question set, fee
 
 The expected quality result is 10/12, with `d5` and `e1` marked as expected failures for `fix/event-bound-dates`. Replay checks the fall date for `e1` because a chronology can contain `1989` without answering the question. The replay criterion for `p2` also accepts a sourced, dated estimate rounded from the UN's 2026 projection. This number is beyond the council script's frozen range, which continues to be reported by the recorder. The primary sources were retrieved 2026-11-27. [Berlin's account of the fall of the Wall](https://www.berlin.de/en/history/8482274-8619314-opening-and-fall-of-the-berlin-wall.en.html) · [UN World Population Prospects 2024, Medium variant CSV](https://population.un.org/wpp/assets/Excel%20Files/1_Indicator%20(Standard)/CSV_FILES/WPP2024_Demographic_Indicators_Medium.csv.gz)
 
-To refresh the live cassette, run this command from an internet-connected checkout. It uses an in-memory database and the production search and HTTP reader, with the original eight-second spacing between questions. Review the score and the manifest diff before committing a new capture because Wikipedia's articles and rankings change.
+The server defaults to the flat 60,000-character HTTP evidence profile. Set `MOHASSAN_SECTIONED_WEB_EVIDENCE=1` in the server environment before startup to enable the section-aware 200,000-character profile. The local index uses its 60,000-character extraction independently of this setting.
+
+To refresh the live cassette, run this command from an internet-connected checkout. The recorder explicitly uses the section-aware profile captured in this cassette. It uses an in-memory database and the production search and HTTP reader, with the original eight-second spacing between questions. Review the score and the manifest diff before committing a new capture because Wikipedia's articles and rankings change.
 
 ```sh
 npx tsx scripts/quality/record-web-evidence.ts

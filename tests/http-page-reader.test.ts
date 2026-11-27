@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { setImmediate as nextTurn } from 'node:timers/promises';
 import { RobotsPolicy, SafeNetwork, type SafeResponse } from '@mohassan/browser';
 import { createHttpPageReader } from '../apps/server/src/assistant/http-page-reader.js';
 
@@ -77,48 +78,88 @@ it('skips the article when robots.txt is rate-limited and carries the same retry
   expect(request.mock.calls.map(([url]) => url)).toEqual(['https://en.wikipedia.org/robots.txt']);
 });
 
-it('serializes reads per Wikimedia host and allows another host to run in parallel', async () => {
-  const first = wiki + 'Article';
-  const second = wiki + 'Another';
-  const started = deferred();
+it.each([wiki, otherWiki])('starts three concurrent Wikimedia reads on %s before any 429', async base => {
+  const urls = ['First', 'Second', 'Third'].map(article => base + article);
   const finish = deferred();
   const request = vi.fn(async (url: string) => {
-    if (url === first) {
-      started.resolve();
-      await finish.promise;
-    }
-    return response(url);
-  });
-  const read = createHttpPageReader({ request }, allowed);
-
-  const inFlight = read(first, signal());
-  await started.promise;
-  const queued = read(second, signal());
-  await expect(read(otherWiki + 'Article', signal())).resolves.toMatchObject({ status: 200 });
-  expect(request.mock.calls.map(([url]) => url)).toEqual([first, otherWiki + 'Article']);
-  finish.resolve();
-  await inFlight;
-  await expect(queued).resolves.toMatchObject({ status: 200 });
-  expect(request.mock.calls.map(([url]) => url)).toEqual([first, otherWiki + 'Article', second]);
-});
-
-it('honors cancellation while a Wikimedia read is queued', async () => {
-  const first = wiki + 'Article';
-  const started = deferred();
-  const finish = deferred();
-  const request = vi.fn(async (url: string) => {
-    started.resolve();
     await finish.promise;
     return response(url);
   });
   const read = createHttpPageReader({ request }, allowed);
-  const controller = new AbortController();
-  const inFlight = read(first, signal());
+
+  const reads = urls.map(url => read(url, signal()));
+  await nextTurn();
+  const inFlight = request.mock.calls.map(([url]) => url);
+  finish.resolve();
+  await expect(Promise.all(reads)).resolves.toMatchObject(urls.map(url => ({ url, status: 200 })));
+  expect(inFlight).toEqual(urls);
+});
+
+it('rechecks host cooldown before dispatching an article after robots admission', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(Date.now());
+  const pending = wiki + 'Pending';
+  const limited = wiki + 'Limited';
+  const started = deferred();
+  const finish = deferred();
+  const request = vi.fn(async (url: string) => url === limited ? response(url, 429, '30') : response(url));
+  const read = createHttpPageReader({ request }, {
+    async assertAllowed(url) {
+      if (url === pending) {
+        started.resolve();
+        await finish.promise;
+      }
+    },
+  });
+
+  const awaitingRobots = read(pending, signal());
   await started.promise;
-  const queued = read(wiki + 'Cancelled', controller.signal);
+  const blocked = await read(limited, signal());
+  finish.resolve();
+  expect(blocked).toEqual({ kind: 'rate-limited', retryAfterMs: 30_000 });
+  await expect(awaitingRobots).resolves.toEqual(blocked);
+  expect(request.mock.calls.map(([url]) => url)).toEqual([limited]);
+});
+
+it('skips a timeout retry if another request put that host in cooldown', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(Date.now());
+  const timeout = new AbortController();
+  vi.spyOn(AbortSignal, 'timeout').mockReturnValueOnce(timeout.signal);
+  const slow = wiki + 'Slow';
+  const limited = wiki + 'Limited';
+  const started = deferred();
+  const finish = deferred();
+  const request = vi.fn(async (url: string) => {
+    if (url === limited) return response(url, 429, '30');
+    started.resolve();
+    await finish.promise;
+    throw timeout.signal.reason;
+  });
+  const read = createHttpPageReader({ request }, allowed);
+
+  const pending = read(slow, signal());
+  await started.promise;
+  const blocked = await read(limited, signal());
+  timeout.abort();
+  finish.resolve();
+  await expect(pending).resolves.toEqual(blocked);
+  expect(request.mock.calls.map(([url]) => url)).toEqual([slow, limited]);
+});
+
+it('honors cancellation while a Wikimedia read is queued by Retry-After', async () => {
+  const now = Date.now();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+  const limited = wiki + 'Limited';
+  const cancelled = wiki + 'Cancelled';
+  const request = vi.fn(async (url: string) => url === limited ? response(url, 429, '2') : response(url));
+  const read = createHttpPageReader({ request }, allowed);
+  const controller = new AbortController();
+  await expect(read(limited, signal())).resolves.toEqual({ kind: 'rate-limited', retryAfterMs: 2000 });
+
+  clock.mockReturnValue(now + 1500);
+  const queued = read(cancelled, controller.signal);
   controller.abort();
   await expect(queued).rejects.toMatchObject({ name: 'AbortError' });
-  finish.resolve();
-  await inFlight;
-  expect(request).toHaveBeenCalledTimes(1);
+  expect(request.mock.calls.map(([url]) => url)).toEqual([limited]);
+  clock.mockReturnValue(now + 2000);
+  await expect(read(cancelled, signal())).resolves.toMatchObject({ status: 200 });
 });

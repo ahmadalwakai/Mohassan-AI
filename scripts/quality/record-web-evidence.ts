@@ -64,7 +64,7 @@ try {
   await migrate(database.db);
   await migrateSearch(database.db);
   const network = new RecordingNetwork();
-  const read = createHttpPageReader(network, new RobotsPolicy(network));
+  const read = createHttpPageReader(network, new RobotsPolicy(network), { sectioned: true });
   const store = new SqlSearchStore(database.db);
   let current: RecordedQuestion;
   class RecordingSearch extends SearchEngine {

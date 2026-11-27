@@ -1,4 +1,4 @@
-import { expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { readableSource, type AgentPage } from '@mohassan/browser';
 import { articleUrl, runHands, webQuestion, type HandsIO } from '../apps/server/src/assistant/hands.js';
 import { createHttpPageReader } from '../apps/server/src/assistant/http-page-reader.js';
@@ -15,6 +15,15 @@ const html = `<title>${subject} - ويكيبيديا</title><main>
   <section><h2>العاصمة</h2><p>${answer}</p></section>
   <section><h2>الملحق</h2><p>${filler(150_000)}</p><p>لا يظهر خارج النافذة.</p></section>
 </main>`;
+
+function fixtureReader() {
+  const body = Buffer.from(html, 'utf8');
+  return createHttpPageReader({ async request(requestedUrl) {
+    return { url: requestedUrl, status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body };
+  } }, { async assertAllowed() {} });
+}
+
+afterEach(() => vi.unstubAllEnvs());
 
 it('keeps the default 60,000-character extraction for the local index', () => {
   const legacy = readableSource(html, url);
@@ -36,11 +45,16 @@ it('keeps complete words when a single long paragraph has no sentence breaks', (
   expect(page.text).toBe('Unpunctuated\n…');
 });
 
-it('reads and ranks an Arabic answer after 60,000 characters within a 200,000-character window', async () => {
-  const body = Buffer.from(html, 'utf8');
-  const reader = createHttpPageReader({ async request(requestedUrl) {
-    return { url: requestedUrl, status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body };
-  } }, { async assertAllowed() {} });
+it('defaults to the same flat 60,000-character text as the local extractor', async () => {
+  vi.stubEnv('MOHASSAN_SECTIONED_WEB_EVIDENCE', undefined);
+  await expect(fixtureReader()(url, new AbortController().signal)).resolves.toMatchObject({
+    text: readableSource(html, url).text,
+  });
+});
+
+it('reads and ranks an Arabic answer after 60,000 characters when the 200,000-character window is enabled', async () => {
+  vi.stubEnv('MOHASSAN_SECTIONED_WEB_EVIDENCE', '1');
+  const reader = fixtureReader();
   const signal = new AbortController().signal;
   const start = performance.now();
   const page = await reader(url, signal);
