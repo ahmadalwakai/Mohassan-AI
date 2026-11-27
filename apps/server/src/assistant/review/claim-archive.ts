@@ -2,11 +2,11 @@ import { createHash } from 'node:crypto';
 import { constants, deflateRawSync, inflateRawSync } from 'node:zlib';
 import type { Claim, ConversationLedger } from './ledger.js';
 
-export function encodeCheckpointData(value: unknown): string {
+function encodeCheckpointData(value: unknown): string {
   return deflateRawSync(JSON.stringify(value), { level: constants.Z_BEST_SPEED }).toString('base64');
 }
 
-export function decodeCheckpointData<T>(data: string): T {
+function decodeCheckpointData<T>(data: string): T {
   return JSON.parse(inflateRawSync(Buffer.from(data, 'base64')).toString()) as T;
 }
 

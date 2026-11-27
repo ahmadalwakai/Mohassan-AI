@@ -1,6 +1,6 @@
 import { setImmediate } from 'node:timers/promises';
 import { sql, type Kysely } from 'kysely';
-import { decodeCheckpointData, encodeCheckpointData, extendClaimArchive, readClaimArchive, type ClaimArchive } from './claim-archive.js';
+import { extendClaimArchive, readClaimArchive, type ClaimArchive } from './claim-archive.js';
 import {
   buildConversationSummary, emptyLedger, extendLedger, SUMMARY_MIN_MESSAGES, validSummary,
   type ConversationLedger, type ConversationSummary, type LedgerProgress, type ReviewMessage,
@@ -22,19 +22,21 @@ interface CheckpointState {
 }
 
 interface Checkpoint {
-  version: 1;
   cursor: Cursor;
   messageCount: number;
-  data: string;
+  state: CheckpointState;
 }
 
-type StoredSummary = ConversationSummary & { checkpoint?: Checkpoint };
+interface CachedCheckpoint {
+  checkpoint: Checkpoint;
+  bytes: number;
+}
+
 type MessageRow = Cursor & { role: ReviewMessage['role']; text: string };
 
 interface ReviewSnapshot {
-  stored: StoredSummary | null;
+  stored: ConversationSummary | null;
   checkpoint?: Checkpoint;
-  state?: CheckpointState;
   cursor?: Cursor;
   pages: MessageRow[][];
   revision: string;
@@ -44,9 +46,53 @@ interface PreparedReview {
   ledger: ConversationLedger;
   revision: string;
   summary?: string;
+  prefix?: CachedCheckpoint;
 }
 
 const conversationRevision = sql<string>`xmin::text`;
+const MAX_CACHE_BYTES = 8 * 1024 * 1024;
+
+class PrefixCache {
+  private readonly entries = new Map<string, CachedCheckpoint>();
+  private bytes = 0;
+
+  get(id: string): Checkpoint | undefined {
+    const entry = this.entries.get(id);
+    if (!entry) return;
+    this.entries.delete(id);
+    this.entries.set(id, entry);
+    return entry.checkpoint;
+  }
+
+  set(id: string, value: CachedCheckpoint): void {
+    const { bytes } = value;
+    const previous = this.entries.get(id);
+    if (previous) this.bytes -= previous.bytes;
+    this.entries.delete(id);
+    if (bytes > MAX_CACHE_BYTES) return;
+    for (const [key, entry] of this.entries) {
+      if (this.bytes + bytes <= MAX_CACHE_BYTES) break;
+      this.entries.delete(key);
+      this.bytes -= entry.bytes;
+    }
+    this.entries.set(id, value);
+    this.bytes += bytes;
+  }
+}
+
+// Transactions and Kysely plugins share the database's dialect adapter. Keep
+// the cache distinct across databases, including independent embedded handles.
+const prefixes = new WeakMap<object, PrefixCache>();
+
+function prefixCache(db: Kysely<any>): PrefixCache {
+  const adapter = db.getExecutor().adapter;
+  let cache = prefixes.get(adapter);
+  if (!cache) {
+    cache = new PrefixCache();
+    prefixes.set(adapter, cache);
+  }
+  return cache;
+}
 
 function messageQuery(db: Kysely<any>, id: string) {
   return db.selectFrom('chat_messages').where('conversation_id', '=', id);
@@ -56,18 +102,14 @@ function cursorTuple(cursor: Cursor) {
   return sql`(${cursor.createdAt}::timestamptz, ${cursor.id}::text)`;
 }
 
-async function validCheckpoint(db: Kysely<any>, id: string, summary: StoredSummary | null): Promise<Checkpoint | undefined> {
-  const checkpoint = summary?.checkpoint;
-  const cursor = checkpoint?.cursor;
-  if (summary?.version !== 1 || checkpoint?.version !== 1 || !cursor || typeof cursor.createdAt !== 'string'
-    || typeof cursor.id !== 'string' || !cursor.id
-    || !Number.isSafeInteger(summary.messageCount) || summary.messageCount < SUMMARY_MIN_MESSAGES
-    || !Array.isArray(summary.openRequests) || typeof checkpoint.data !== 'string'
-    || !Number.isSafeInteger(checkpoint.messageCount) || checkpoint.messageCount < SUMMARY_MIN_MESSAGES
+async function validCheckpoint(db: Kysely<any>, id: string, summary: ConversationSummary | null): Promise<Checkpoint | undefined> {
+  const checkpoint = prefixCache(db).get(id);
+  if (!checkpoint || summary?.version !== 1 || !Number.isSafeInteger(summary.messageCount) || !Array.isArray(summary.openRequests)
     || checkpoint.messageCount > summary.messageCount || summary.messageCount - checkpoint.messageCount >= REVIEW_MESSAGE_WINDOW) return;
 
   // An out-of-order insert changes the cursor's rank. Look up that position
   // with the transcript index and transfer only the anchor, without its text.
+  const { cursor } = checkpoint;
   const anchor = await messageQuery(db, id).select(['id', sql<string>`created_at::text`.as('createdAt')])
     .orderBy('created_at', 'asc').orderBy('id', 'asc').offset(checkpoint.messageCount - 1).limit(1).executeTakeFirst();
   if (anchor?.id === cursor.id && anchor.createdAt === cursor.createdAt) return checkpoint;
@@ -82,19 +124,10 @@ async function readPage(db: Kysely<any>, id: string, cursor?: Cursor) {
 export async function readReviewSnapshot(db: Kysely<any>, id: string): Promise<ReviewSnapshot> {
   const row = await db.selectFrom('chat_conversations').select(['review_summary', conversationRevision.as('revision')])
     .where('id', '=', id).executeTakeFirstOrThrow();
-  const stored = row.review_summary as StoredSummary | null;
+  const stored = row.review_summary as ConversationSummary | null;
   const checkpoint = await validCheckpoint(db, id, stored);
-  let state: CheckpointState | undefined;
-  if (checkpoint) {
-    try {
-      const decoded = decodeCheckpointData<CheckpointState>(checkpoint.data);
-      if (Array.isArray(decoded.evidence?.fullOpenRequests) && decoded.progress && decoded.claims?.buckets) state = decoded;
-    } catch {
-      // A malformed checkpoint can be rebuilt from the transcript.
-    }
-  }
   const pages: MessageRow[][] = [];
-  let cursor = state ? checkpoint?.cursor : undefined;
+  let cursor = checkpoint?.cursor;
   for (;;) {
     const rows = await readPage(db, id, cursor);
     pages.push(rows);
@@ -102,17 +135,25 @@ export async function readReviewSnapshot(db: Kysely<any>, id: string): Promise<R
     if (last) cursor = { id: last.id, createdAt: last.createdAt };
     if (rows.length < REVIEW_MESSAGE_WINDOW) break;
   }
-  return { stored, checkpoint: state ? checkpoint : undefined, state, cursor, pages, revision: row.revision };
+  return { stored, checkpoint, cursor, pages, revision: row.revision };
 }
 
 export async function prepareReview(snapshot: ReviewSnapshot, clean: (text: string) => string): Promise<PreparedReview> {
-  const { stored, checkpoint, state, cursor, pages, revision } = snapshot;
+  const { stored, checkpoint, cursor, pages, revision } = snapshot;
+  const state = checkpoint?.state;
   const offset = checkpoint?.messageCount ?? 0;
   const messages: ReviewMessage[] = [];
   const ledger: ConversationLedger = state
-    ? { ...state.evidence, messages, messageOffset: offset, archivedClaims: readClaimArchive(state.claims) }
+    ? {
+      ...state.evidence, messages, messageOffset: offset, archivedClaims: readClaimArchive(state.claims),
+      claims: [], requests: [...state.evidence.requests], userClaims: [...state.evidence.userClaims],
+      corrections: [...state.evidence.corrections], rejectedAnswers: [...state.evidence.rejectedAnswers],
+      fullOpenRequests: [...state.evidence.fullOpenRequests ?? []],
+    }
     : { ...emptyLedger(messages), messageOffset: 0, fullOpenRequests: [] };
-  const progress: LedgerProgress = state?.progress ?? {};
+  const progress: LedgerProgress = state ? {
+    ...state.progress, beforeLatestAnswer: state.progress.beforeLatestAnswer?.slice(),
+  } : {};
   for (const rows of pages) {
     const page = rows.map(row => ({ id: row.id, role: row.role, content: clean(row.text) }));
     extendLedger(ledger, page, offset + messages.length, progress);
@@ -127,16 +168,17 @@ export async function prepareReview(snapshot: ReviewSnapshot, clean: (text: stri
       : validSummary(stored, messages);
     if (anchored) ledger.summary = stored;
   }
-  if (!cursor || messageCount < SUMMARY_MIN_MESSAGES || (checkpoint && ledger.summary?.messageCount === messageCount)) {
+  if (!cursor || messageCount < SUMMARY_MIN_MESSAGES || (checkpoint && ledger.summary?.messageCount === messageCount
+    && !Object.hasOwn(ledger.summary, 'checkpoint'))) {
     return { ledger, revision };
   }
 
   const summary = buildConversationSummary(ledger);
-  // Reuse the compressed prefix across publications. A bounded tail bridges
-  // the most recent evidence compaction and the latest publication cursor.
+  const serialized = JSON.stringify(summary);
+  // The persisted summary is the original bounded version. Exact derived
+  // evidence is reusable while cached, or rebuilt from committed messages.
   if (checkpoint && messages.length < REVIEW_MESSAGE_WINDOW) {
-    const next: StoredSummary = { ...summary, checkpoint };
-    return { ledger, revision, summary: JSON.stringify(next) };
+    return { ledger, revision, summary: serialized };
   }
   const { messages: _messages, messageOffset: _offset, summary: _prior, archivedClaims: _archive, ...evidence } = ledger;
   // Retain sources for the current request, summary retrieval and requests
@@ -146,11 +188,9 @@ export async function prepareReview(snapshot: ReviewSnapshot, clean: (text: stri
   evidence.requests = ledger.requests.filter(part => part.messageIndex === ledger.currentRequestIndex
     || retrievable.has(requestKey(part)));
   evidence.claims = [];
-  // Other conversation queries also read this JSONB column. Keep the evidence
-  // compact and decode it only on the review path.
-  const data = encodeCheckpointData({ evidence, progress, claims: extendClaimArchive(state?.claims, ledger.claims) } satisfies CheckpointState);
-  const next: StoredSummary = { ...summary, checkpoint: { version: 1, cursor, messageCount, data } };
-  return { ledger, revision, summary: JSON.stringify(next) };
+  const next = { cursor, messageCount, state: { evidence, progress, claims: extendClaimArchive(state?.claims, ledger.claims) } };
+  const prefix = { checkpoint: next, bytes: Buffer.byteLength(JSON.stringify(next)) };
+  return { ledger, revision, summary: serialized, prefix };
 }
 
 export async function commitReview(tx: Kysely<any>, id: string, prepared: PreparedReview): Promise<boolean> {
@@ -158,6 +198,8 @@ export async function commitReview(tx: Kysely<any>, id: string, prepared: Prepar
   if (!prepared.summary) {
     return Boolean(await tx.selectFrom('chat_conversations').select('id').where('id', '=', id).where(unchanged).executeTakeFirst());
   }
-  return Boolean(await tx.updateTable('chat_conversations').set({ review_summary: prepared.summary })
-    .where('id', '=', id).where(unchanged).returning('id').executeTakeFirst());
+  const updated = await tx.updateTable('chat_conversations').set({ review_summary: prepared.summary })
+    .where('id', '=', id).where(unchanged).returning('id').executeTakeFirst();
+  if (updated && prepared.prefix) prefixCache(tx).set(id, prepared.prefix);
+  return Boolean(updated);
 }

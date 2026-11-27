@@ -239,6 +239,13 @@ function extractiveEntries<T extends RequestPart>(values: readonly T[]): T[] {
     .slice(-SUMMARY_ENTRIES);
 }
 
+function storedSummaryBytes(summary: ConversationSummary): number {
+  const json = JSON.stringify(summary);
+  // PostgreSQL's JSONB text form adds a space after each field and item separator.
+  const separators = json.replace(/"(?:[^"\\]|\\.)*"/gu, '').match(/[,:]/gu)?.length ?? 0;
+  return TEXT_ENCODER.encode(json).length + separators;
+}
+
 export function buildConversationSummary(ledger: ConversationLedger, published?: ReviewMessage): ConversationSummary {
   const messageCount = (ledger.messageOffset ?? 0) + ledger.messages.length + Number(Boolean(published));
   const throughMessageId = (published ?? ledger.messages.at(-1))?.id ?? ledger.summary?.throughMessageId;
@@ -263,7 +270,7 @@ export function buildConversationSummary(ledger: ConversationLedger, published?:
     commitments: extractiveEntries(commitments),
     preferences: extractiveEntries(ledger.preferences),
   };
-  while (TEXT_ENCODER.encode(JSON.stringify(summary)).length > SUMMARY_MAX_BYTES) {
+  while (storedSummaryBytes(summary) > SUMMARY_MAX_BYTES) {
     if (summary.openRequests.length) summary.openRequests.shift();
     else if (summary.decisions.length) summary.decisions.shift();
     else if (summary.commitments.length) summary.commitments.shift();

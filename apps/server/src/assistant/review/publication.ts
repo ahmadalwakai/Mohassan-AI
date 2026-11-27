@@ -18,24 +18,29 @@ interface ReviewContext {
   clean: (text: string) => string;
 }
 
-export interface ConversationReviewLog {
+export type ConversationReviewLog = {
   version: 1;
-  action: ReviewResult['action'];
-  applied: boolean;
-  findings: ReviewFinding[];
   ms: number;
-}
+} & (
+  | { action: ReviewResult['action']; applied: boolean; findings: ReviewFinding[] }
+  | { action: 'skip'; reason: 'revision_changed'; applied: false; findings: [] }
+);
 
 const activeReview = new AsyncLocalStorage<{
   context: ReviewContext;
   ledger?: ConversationLedger;
   startedAt: number;
+  skipped?: 'revision_changed';
   replacement?: string;
 }>();
 
 export function conversationReviewForJudge(input: JudgeShadowInput, verdict: JudgeVerdict, applied: boolean): ConversationReviewLog | undefined {
   const scope = activeReview.getStore();
-  if (!scope?.ledger || input.conversationId !== scope.context.id || input.runId !== scope.context.runId) return;
+  if (!scope || input.conversationId !== scope.context.id || input.runId !== scope.context.runId) return;
+  if (scope.skipped) {
+    return { version: 1, action: 'skip', reason: scope.skipped, applied: false, findings: [], ms: performance.now() - scope.startedAt };
+  }
+  if (!scope.ledger) return;
   const withheld = applied && verdict.decision === 'withhold';
   const candidate = applied
     ? (withheld ? verdict.withholdText : verdict.fixedReply) ?? input.reply
@@ -81,10 +86,13 @@ export async function reviewJudgedReply<T extends { text: string; withheld: bool
         break;
       }
     }
-    if (!ledger) throw new Error('Conversation changed during review');
   } catch {
     reportUnavailable();
     return judgeReply();
+  }
+  if (!ledger) {
+    reportUnavailable();
+    return activeReview.run({ context, startedAt, skipped: 'revision_changed' }, judgeReply);
   }
   const scope: NonNullable<ReturnType<typeof activeReview.getStore>> = { context, ledger, startedAt };
   try {

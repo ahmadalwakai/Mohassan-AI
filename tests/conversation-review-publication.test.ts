@@ -10,7 +10,7 @@ import { createDatabase, migrate } from '@mohassan/database';
 import { describeDesktopCommand, parseDesktopCommand } from '@mohassan/desktop';
 import { createJudgeShadow, type JudgeShadowLine } from '../apps/server/src/assistant/judge-shadow.js';
 import { reviewReply } from '../apps/server/src/assistant/review/checks.js';
-import { buildConversationLedger, buildConversationSummary, splitRequest, SUMMARY_MIN_MESSAGES, type ConversationSummary, type ReviewMessage } from '../apps/server/src/assistant/review/ledger.js';
+import { buildConversationLedger, buildConversationSummary, splitRequest, SUMMARY_MAX_BYTES, SUMMARY_MIN_MESSAGES, type ConversationSummary, type ReviewMessage } from '../apps/server/src/assistant/review/ledger.js';
 import { REVIEW_MESSAGE_WINDOW, reviewJudgedReply } from '../apps/server/src/assistant/review/publication.js';
 import { createCommandChatControl, type CommandChatConfig } from '../apps/server/src/command-chat.js';
 import { developmentConversations } from '../scripts/conversation-review/dev-conversations.js';
@@ -295,33 +295,55 @@ describe('conversation review at chat publication', () => {
       prior = buildConversationSummary(buildConversationLedger(history, prior));
       const { review_summary } = await database.db.selectFrom('chat_conversations').select('review_summary')
         .where('id', '=', review.id).executeTakeFirstOrThrow();
-      expect(review_summary).toMatchObject(prior);
-      return { ...result, checkpoint: review_summary.checkpoint };
+      expect(review_summary).toEqual(prior);
+      return result;
     }
 
     const prefixLength = 2_000 - REVIEW_MESSAGE_WINDOW - 2;
-    const prefix = await publishAfter([{ role: language.role, content: language.content }, ...filler(prefixLength - 2), question]);
+    await publishAfter([{ role: language.role, content: language.content }, ...filler(prefixLength - 2), question]);
     const claim = fixture.messages[1]!;
     const buffered = await publishAfter([
       { role: claim.role, content: claim.content }, ...filler(REVIEW_MESSAGE_WINDOW - 4), question,
     ]);
-    expect(buffered.checkpoint.data).toBe(prefix.checkpoint.data);
-    expect(buffered.checkpoint.cursor).toEqual(prefix.checkpoint.cursor);
+    expect(buffered.rowsRead).toBe(REVIEW_MESSAGE_WINDOW - 1);
 
     const nextTurn = [{ role: 'assistant', content: acknowledgment }, question] satisfies ReviewMessage[];
-    const compacted = await publishAfter(nextTurn);
-    expect(compacted.checkpoint.data).not.toBe(prefix.checkpoint.data);
-    expect(compacted.checkpoint.cursor.id).toBe(history.at(-1)!.id);
+    await publishAfter(nextTurn);
 
     const warm = await publishAfter(nextTurn);
     expect(history).toHaveLength(2_000);
     expect(warm.expected.findings).toEqual(expect.arrayContaining([
       expect.objectContaining({ check: 'contradiction' }), expect.objectContaining({ code: 'reply_language' }),
     ]));
-    expect(warm.checkpoint.data).toBe(compacted.checkpoint.data);
-    expect(warm.checkpoint.cursor).toEqual(compacted.checkpoint.cursor);
     expect(warm.rowsRead).toBeGreaterThan(0);
-    expect(warm.rowsRead).toBeLessThanOrEqual(REVIEW_MESSAGE_WINDOW);
+    expect(warm.rowsRead).toBeLessThan(buffered.rowsRead);
+  });
+
+  it('keeps the stored summary under 16 KiB for a 5,000-message conversation', async () => {
+    vi.stubEnv('MOHASSAN_CONVERSATION_REVIEW_APPLY', '1');
+    const fixture = fixtures.get('en-library-contradiction-issue')!;
+    const review = await reviewFixture(fixture.draft);
+    const answers = [...fixtures.values()].flatMap(item => item.messages.filter(message => message.role === 'assistant'));
+    const initial = Array.from({ length: 4_998 }, (_, index): ReviewMessage => index % 2
+      ? { role: 'user', content: thanks }
+      : { role: 'assistant', content: answers[(index / 2) % answers.length]!.content });
+    const ending = fixture.messages.slice(-2).map(({ role, content }) => ({ role, content }));
+    const messages = [...initial, ...ending];
+    const rows = messageRows(review.id, messages);
+    const full = messages.map((message, index) => ({ ...message, id: rows[index]!.id }));
+    await database.db.insertInto('chat_messages').values(rows.slice(0, initial.length)).execute();
+    await review.publish(initial.at(-1)!.content);
+    const prior = buildConversationSummary(buildConversationLedger(full.slice(0, initial.length)));
+    await database.db.insertInto('chat_messages').values(rows.slice(initial.length)).execute();
+
+    const { rowsRead } = await review.expectFullReview(full, prior);
+    const { bytes, review_summary } = await database.db.selectFrom('chat_conversations')
+      .select(['review_summary', sql<number>`octet_length(review_summary::text)`.as('bytes')])
+      .where('id', '=', review.id).executeTakeFirstOrThrow();
+    expect(review_summary).toEqual(buildConversationSummary(buildConversationLedger(full, prior)));
+    expect(review_summary.messageCount).toBe(5_000);
+    expect(bytes).toBeLessThanOrEqual(SUMMARY_MAX_BYTES);
+    expect(rowsRead).toBeLessThanOrEqual(REVIEW_MESSAGE_WINDOW);
   });
 
   it('rebuilds a checkpoint when a newly stored message sorts before it', async () => {
@@ -363,6 +385,29 @@ describe('conversation review at chat publication', () => {
     const { expected } = await review.expectFullReview(full);
     expect(expected.findings).toContainEqual(expect.objectContaining({ code: 'reply_language' }));
     expect(fences).toBe(2);
+  });
+
+  it('records the skipped review when both fence attempts see a changed revision', async () => {
+    vi.stubEnv('MOHASSAN_CONVERSATION_REVIEW_APPLY', '1');
+    const warning = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let fences = 0;
+    try {
+      const review = await reviewFixture(draft, async id => {
+        fences++;
+        await database.db.updateTable('chat_conversations').set({ updated_at: new Date() }).where('id', '=', id).execute();
+      });
+      await seed(review.id, SUMMARY_MIN_MESSAGES);
+      const { published } = await review.publish(request);
+      expect(fences).toBe(2);
+      expect(published).toEqual({ text: draft, withheld: false });
+      expect(await judgeLines(review.id)).toMatchObject([{
+        conversationId: review.id,
+        runId: expect.any(String),
+        conversationReview: { version: 1, action: 'skip', reason: 'revision_changed', applied: false, findings: [], ms: expect.any(Number) },
+      }]);
+    } finally {
+      warning.mockRestore();
+    }
   });
 
   it('leaves waiting replies and approval prompts on the existing judge path', async () => {

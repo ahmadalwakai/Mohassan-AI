@@ -195,8 +195,9 @@ async function summarizeScenario(db: Kysely<any>, logs: JudgeShadowLine[], scena
   if (shadowLogs.length !== pairs.length || baselineLogs.length !== pairs.length
     || baselineLogs.some(line => line.conversationReview != null) || shadowLogs.some(line => {
       const item = expected.get(line.conversationId)!;
+      const review = line.conversationReview;
       return line.runId !== item.shadow.runId || line.decision !== item.example.verdict.decision
-        || line.conversationReview?.applied !== false || !Array.isArray(line.conversationReview.findings);
+        || review?.applied !== false || 'reason' in review || !Array.isArray(review.findings);
     })) throw new Error('The judge log does not match timed baseline and shadow runs.');
   const rows = await db.selectFrom('chat_messages as m').innerJoin('chat_conversations as c', 'c.id', 'm.conversation_id')
     .select(['m.conversation_id', 'm.text', 'c.review_summary'])
