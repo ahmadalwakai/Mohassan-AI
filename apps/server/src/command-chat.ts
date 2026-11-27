@@ -722,7 +722,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const current = execution.getStore();
     if (!current || current.id !== id || current.runId !== runId) throw new RunEnded();
     current.controller.signal.throwIfAborted();
-    const conversation = await tx.selectFrom('chat_conversations').selectAll().where('id','=',id).where('owner_id','=',current.ownerId).forUpdate().executeTakeFirst();
+    const conversation = await tx.selectFrom('chat_conversations').select(['status', 'active_run_id']).where('id','=',id).where('owner_id','=',current.ownerId).forUpdate().executeTakeFirst();
     // A fence can run twice inside one transaction. CURRENT_TIMESTAMP is fixed
     // at transaction start; use the DB wall clock so the precommit check cannot
     // accept a lease that expired while the transaction held its locks.
@@ -1540,7 +1540,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     // The judge sees the reply first: logged in shadow for everyone; for the owner's account its fix, or its fixed withhold
     // sentence, is what goes on. Memory publications keep their own stricter checks and are never changed here.
     // A reply the council picked from a model was already judged there.
-    const judged = modelReply || council?.changed || prejudged || !config.judgeShadow ? { text, withheld: false } : await reviewJudgedReply(work => runTransaction(id, runId, work), { id, runId, clean, allowApply: !memoryPublication && state.supervision?.contract.mode !== 'enforced' }, () => judgeReply(id, runId, text, status, !memoryPublication));
+    const judged = modelReply || council?.changed || prejudged || !config.judgeShadow ? { text, withheld: false } : await reviewJudgedReply(work => runTransaction(id, runId, work), { db, id, runId, clean, allowApply: !memoryPublication && state.supervision?.contract.mode !== 'enforced' }, () => judgeReply(id, runId, text, status, !memoryPublication));
     text = judged.text;
     // A withheld answer is not a completed task.
     if (judged.withheld && status === 'completed') status = 'partial';

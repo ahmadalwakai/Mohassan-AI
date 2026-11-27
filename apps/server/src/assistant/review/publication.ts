@@ -3,36 +3,44 @@ import { performance } from 'node:perf_hooks';
 import type { Kysely } from 'kysely';
 import type { JudgeVerdict } from '../judge.js';
 import type { JudgeShadowInput } from '../judge-shadow.js';
+import { commitReview, prepareReview, readReviewSnapshot } from './checkpoint.js';
 import { reviewReply, type ReviewFinding, type ReviewResult } from './checks.js';
-import { buildConversationLedger, buildConversationSummary, SUMMARY_MIN_MESSAGES, type ConversationLedger, type ConversationSummary, type ReviewMessage } from './ledger.js';
+import type { ConversationLedger } from './ledger.js';
 
 export { ensureChatConversationsTable } from '@mohassan/database';
+export { REVIEW_MESSAGE_WINDOW } from './checkpoint.js';
 
 interface ReviewContext {
+  db: Kysely<any>;
   id: string;
   runId: string;
   allowApply: boolean;
   clean: (text: string) => string;
 }
 
-export interface ConversationReviewLog {
+export type ConversationReviewLog = {
   version: 1;
-  action: ReviewResult['action'];
-  applied: boolean;
-  findings: ReviewFinding[];
   ms: number;
-}
+} & (
+  | { action: ReviewResult['action']; applied: boolean; findings: ReviewFinding[] }
+  | { action: 'skip'; reason: 'revision_changed'; applied: false; findings: [] }
+);
 
 const activeReview = new AsyncLocalStorage<{
   context: ReviewContext;
   ledger?: ConversationLedger;
   startedAt: number;
+  skipped?: 'revision_changed';
   replacement?: string;
 }>();
 
 export function conversationReviewForJudge(input: JudgeShadowInput, verdict: JudgeVerdict, applied: boolean): ConversationReviewLog | undefined {
   const scope = activeReview.getStore();
-  if (!scope?.ledger || input.conversationId !== scope.context.id || input.runId !== scope.context.runId) return;
+  if (!scope || input.conversationId !== scope.context.id || input.runId !== scope.context.runId) return;
+  if (scope.skipped) {
+    return { version: 1, action: 'skip', reason: scope.skipped, applied: false, findings: [], ms: performance.now() - scope.startedAt };
+  }
+  if (!scope.ledger) return;
   const withheld = applied && verdict.decision === 'withhold';
   const candidate = applied
     ? (withheld ? verdict.withholdText : verdict.fixedReply) ?? input.reply
@@ -58,33 +66,33 @@ function reportUnavailable() {
   console.error(JSON.stringify({ level: 'warn', event: 'conversation_review_unavailable' }));
 }
 
-// The summary contains only committed messages. The current candidate can
-// still be replaced by the completion fence or abandoned before publication.
-async function loadLedger(tx: Kysely<any>, { id, clean }: ReviewContext): Promise<ConversationLedger> {
-  const rows = await tx.selectFrom('chat_messages').select(['id', 'role', 'text']).where('conversation_id', '=', id)
-    .orderBy('created_at', 'asc').orderBy('id', 'asc').execute();
-  const messages: ReviewMessage[] = rows.map(row => ({ id: row.id, role: row.role, content: clean(row.text) }));
-  if (messages.length < SUMMARY_MIN_MESSAGES) return buildConversationLedger(messages);
-  const { review_summary } = await tx.selectFrom('chat_conversations').select('review_summary')
-    .where('id', '=', id).executeTakeFirstOrThrow();
-  const ledger = buildConversationLedger(messages, review_summary as ConversationSummary | undefined);
-  const summary = buildConversationSummary(ledger);
-  await tx.updateTable('chat_conversations').set({ review_summary: JSON.stringify(summary) }).where('id', '=', id).execute();
-  return ledger;
-}
-
 export async function reviewJudgedReply<T extends { text: string; withheld: boolean }>(
-  transaction: (work: (tx: Kysely<any>) => Promise<ConversationLedger>) => Promise<ConversationLedger>,
+  transaction: (work: (tx: Kysely<any>) => Promise<boolean>) => Promise<boolean>,
   context: ReviewContext,
   judgeReply: () => T,
 ): Promise<T> {
   const startedAt = performance.now();
-  let ledger: ConversationLedger;
+  let ledger: ConversationLedger | undefined;
   try {
-    ledger = await transaction(tx => loadLedger(tx, context));
+    const { db, id, clean } = context;
+    // The snapshot contains only committed messages. The judging candidate can
+    // still change at the publication fence. A concurrent update to the
+    // conversation invalidates this snapshot before it can replace the checkpoint.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const snapshot = await db.transaction().setIsolationLevel('repeatable read').execute(tx => readReviewSnapshot(tx, id));
+      const prepared = await prepareReview(snapshot, clean);
+      if (await transaction(tx => commitReview(tx, id, prepared))) {
+        ledger = prepared.ledger;
+        break;
+      }
+    }
   } catch {
     reportUnavailable();
     return judgeReply();
+  }
+  if (!ledger) {
+    reportUnavailable();
+    return activeReview.run({ context, startedAt, skipped: 'revision_changed' }, judgeReply);
   }
   const scope: NonNullable<ReturnType<typeof activeReview.getStore>> = { context, ledger, startedAt };
   try {
