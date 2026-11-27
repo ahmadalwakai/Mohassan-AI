@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { chatHttpErrorMessage, sessionFetch } from './chat-request';
 import styles from './documents-panel.module.css';
 
 /**
@@ -12,9 +13,9 @@ const SOURCE: Record<StoredDocument['source'], string> = { created: 'أنشأه 
 const MAX_UPLOAD_BYTES = 10_000_000;
 
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, { ...options, credentials: 'same-origin', cache: 'no-store', headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers } });
+  const response = await sessionFetch(path, { ...options, credentials: 'same-origin', cache: 'no-store', headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers } });
   const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(body?.error?.message ?? 'تعذر الوصول إلى ملفات PDF.');
+  if (!response.ok) throw new Error(chatHttpErrorMessage(response.status, body?.error, 'تعذر الوصول إلى ملفات PDF.'));
   return body as T;
 }
 const formatSize = (bytes: number) => bytes >= 1_000_000 ? `${(bytes / 1_000_000).toFixed(1)} ميغابايت` : `${Math.max(1, Math.round(bytes / 1000))} كيلوبايت`;

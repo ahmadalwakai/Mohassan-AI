@@ -1,4 +1,5 @@
 import type { ReminderSummary } from "@mohassan/contracts";
+import { chatHttpErrorMessage, sessionFetch } from "./chat-request";
 
 export class ReminderRequestError extends Error {
   constructor(readonly code: string | undefined, message: string) {
@@ -7,7 +8,7 @@ export class ReminderRequestError extends Error {
 }
 
 export async function reminderRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
+  const response = await sessionFetch(path, {
     ...options,
     cache: "no-store",
     credentials: "same-origin",
@@ -15,7 +16,7 @@ export async function reminderRequest<T>(path: string, options: RequestInit = {}
   });
   const body = await response.json().catch(() => null);
   if (!response.ok || !body) {
-    throw new ReminderRequestError(body?.error?.code, body?.error?.message ?? "تعذّر تحميل التذكيرات. حاول مجددًا.");
+    throw new ReminderRequestError(body?.error?.code, chatHttpErrorMessage(response.status, body?.error, "تعذّر تحميل التذكيرات. حاول مجددًا."));
   }
   return body as T;
 }

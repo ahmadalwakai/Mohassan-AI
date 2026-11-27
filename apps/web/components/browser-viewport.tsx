@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import { MousePointer2 } from 'lucide-react';
 import type { ChatBrowserActivity } from '@mohassan/contracts';
+import { sessionFetch } from './chat-request';
 import styles from './browser-viewport.module.css';
 
 const ACTION_LABELS = { move: 'تحريك', click: 'نقر', type: 'كتابة', select: 'اختيار', scroll: 'تمرير', press: 'لوحة المفاتيح' } as const;
@@ -142,7 +143,7 @@ export function BrowserViewport({ conversationId, screenUrl, title, live, runnin
       const timeout = setTimeout(() => request?.abort(), 2000);
       let nextDelay = ACTIVITY_INTERVAL_MS;
       try {
-        const response = await fetch(`/api/chat/conversations/${conversationId}/browser/activity`, {
+        const response = await sessionFetch(`/api/chat/conversations/${conversationId}/browser/activity`, {
           cache: 'no-store', credentials: 'same-origin', signal: request.signal,
         });
         if (!response.ok) { nextDelay = response.status === 429 ? 4000 : 1500; return; }

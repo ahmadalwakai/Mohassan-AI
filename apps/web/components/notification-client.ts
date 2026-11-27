@@ -14,6 +14,7 @@ import type {
 } from '@mohassan/contracts';
 import { declineNoticeOffer, noticeOfferOpen, noticePermission, requestNoticePermission } from './task-notices';
 import { announceBackgroundViewer, claimOpenBackgroundNotifications } from './background-notification-client';
+import { chatHttpErrorMessage, sessionFetch } from './chat-request';
 
 const titles: Record<NotificationKind, string> = {
   task_completed: 'اكتملت المهمة',
@@ -50,14 +51,14 @@ class NotificationRequestError extends Error {
 }
 
 export async function notificationRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
+  const response = await sessionFetch(path, {
     ...init,
     credentials: 'same-origin',
     cache: 'no-store',
     headers: init.body ? { 'Content-Type': 'application/json' } : undefined,
   });
   const body = await response.json().catch(() => null);
-  if (!response.ok) throw new NotificationRequestError(body?.error?.message ?? 'تعذّر إتمام الطلب. حاول مجددًا.', body?.error?.code);
+  if (!response.ok) throw new NotificationRequestError(chatHttpErrorMessage(response.status, body?.error, 'تعذّر إتمام الطلب. حاول مجددًا.'), body?.error?.code);
   return body as T;
 }
 

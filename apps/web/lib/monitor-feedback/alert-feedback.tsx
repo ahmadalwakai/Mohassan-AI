@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   MonitorAlertFeedbackStateSchema, type MonitorAlert, type MonitorAlertFeedback, type MonitorAlertFeedbackState,
 } from "@mohassan/contracts";
+import { sessionFetch } from "../../components/chat-request";
 import styles from "./alert-feedback.module.css";
 
 const feedbackChanged = new EventTarget();
@@ -33,7 +34,7 @@ function AlertFeedback({ alert }: { alert: MonitorAlert }) {
     setPending(true);
     setError(false);
     try {
-      const response = await fetch(`/api/chat/monitors/alerts/${encodeURIComponent(alert.id)}/feedback`, {
+      const response = await sessionFetch(`/api/chat/monitors/alerts/${encodeURIComponent(alert.id)}/feedback`, {
         method: "POST", credentials: "same-origin", cache: "no-store",
         headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
       });

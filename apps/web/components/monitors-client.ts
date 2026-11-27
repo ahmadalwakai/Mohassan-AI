@@ -1,4 +1,5 @@
 import type { MonitorCard } from "@mohassan/contracts";
+import { chatHttpErrorMessage, sessionFetch } from "./chat-request";
 
 const endpoint = "/api/chat/monitors";
 const changed = new EventTarget();
@@ -6,9 +7,9 @@ const changed = new EventTarget();
 export type MonitorAction = "approve" | "pause" | "resume" | "stop";
 
 async function request<T>(path: string, options: RequestInit, fallback: string): Promise<T> {
-  const response = await fetch(path, { ...options, credentials: "same-origin", cache: "no-store" });
+  const response = await sessionFetch(path, { ...options, credentials: "same-origin", cache: "no-store" });
   const body = await response.json().catch(() => null);
-  if (!response.ok || !body) throw new Error(body?.error?.message ?? fallback);
+  if (!response.ok || !body) throw new Error(chatHttpErrorMessage(response.status, body?.error, fallback));
   return body as T;
 }
 
