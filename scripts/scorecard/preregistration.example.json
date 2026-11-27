@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "minimum_quality_gain": null,
+  "maximum_mcnemar_p": null,
+  "maximum_regressions": {
+    "factual": {
+      "ar": null,
+      "en": null
+    }
+  },
+  "maximum_p95_increase_ms": {
+    "first_progress_ms": null,
+    "final_answer_ms": null
+  },
+  "maximum_cost": {
+    "cpu_ms_per_turn": null,
+    "peak_rss_bytes": null,
+    "model_files_bytes": null,
+    "resident_worker_bytes": null,
+    "training_gpu_hours": null
+  }
+}
