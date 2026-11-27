@@ -50,6 +50,7 @@ export interface ModelRuntimeOptions {
 
 interface Slot {
   readonly entry: ModelEntry;
+  readonly loading: AbortController;
   promise: Promise<ModelAdapter>;
   adapter?: ModelAdapter;
   users: number;
@@ -68,6 +69,19 @@ const startupBudget = (entry: ModelEntry) => Math.max(entry.resources.latencyMs,
 function positiveInteger(value: number, name: string): number {
   if (!Number.isSafeInteger(value) || value < 1) throw new RangeError(`${name} must be a positive integer`);
   return value;
+}
+
+async function waitForLoad(promise: Promise<ModelAdapter>, signal: AbortSignal): Promise<ModelAdapter> {
+  let abort!: () => void;
+  const cancelled = new Promise<never>((_, reject) => {
+    abort = () => reject(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+  });
+  try {
+    return await Promise.race([promise, cancelled]);
+  } finally {
+    signal.removeEventListener('abort', abort);
+  }
 }
 
 /** Holds CPU and memory reservations until underlying work and disposal settle. */
@@ -103,8 +117,8 @@ export class ModelRuntime {
     this.heavyAvailable = options.heavyAvailable ?? (() => true);
   }
 
-  async run(modelId: string, input: unknown): Promise<ModelRunResult> {
-    return this.execute(modelId, async (adapter, signal, timeout) => ({ output: await adapter.run(input, signal, timeout) }), false);
+  async run(modelId: string, input: unknown, signal?: AbortSignal): Promise<ModelRunResult> {
+    return this.execute(modelId, async (adapter, runSignal, timeout) => ({ output: await adapter.run(input, runSignal, timeout) }), false, signal);
   }
 
   async health(modelId: string): Promise<ModelHealthResult> {
@@ -122,12 +136,14 @@ export class ModelRuntime {
     return this.closing;
   }
 
-  private async execute<T extends object>(modelId: string, operation: (adapter: ModelAdapter, signal: AbortSignal, timeout: number) => Promise<T>, check: boolean): Promise<({ ok: true; elapsedMs: number } & T) | ModelFailure> {
+  private async execute<T extends object>(modelId: string, operation: (adapter: ModelAdapter, signal: AbortSignal, timeout: number) => Promise<T>,
+    check: boolean, caller?: AbortSignal): Promise<({ ok: true; elapsedMs: number } & T) | ModelFailure> {
     const begin = performance.now();
     const failure = (reason: ModelFailureReason, detail?: string): ModelFailure => ({ ok: false, reason, elapsedMs: performance.now() - begin, ...(detail ? { detail } : {}) });
     const entry = this.entries.get(modelId);
     if (!entry) return failure('unknown-model');
     if (this.closed) return failure('unhealthy', 'Runtime is closed');
+    if (caller?.aborted) return failure('timeout');
     if (this.cpuUsed + entry.resources.cpu > this.cpuConcurrency || (heavy(entry) && (this.heavyBusy || !this.heavyAvailable()))) return failure('busy');
     this.cpuUsed += entry.resources.cpu;
     if (heavy(entry)) this.heavyBusy = true;
@@ -139,14 +155,16 @@ export class ModelRuntime {
     let deadline: ReturnType<typeof setTimeout> | undefined;
     let expired!: (failure: ModelFailure) => void;
     const limit = new Promise<ModelFailure>(done => { expired = done; });
+    const stop = () => {
+      expired(failure('timeout'));
+      controller.abort(caller?.reason);
+    };
     const startDeadline = () => {
       clearTimeout(deadline);
-      deadline = setTimeout(() => {
-        controller.abort();
-        expired(failure('timeout'));
-      }, phaseBudget);
+      deadline = setTimeout(stop, phaseBudget);
     };
     startDeadline();
+    caller?.addEventListener('abort', stop, { once: true });
     const task = this.use(entry, controller.signal, async adapter => {
       if (performance.now() - phaseStart > phaseBudget) throw new ModelRuntimeError('timeout');
       if (!check && cold) {
@@ -175,6 +193,7 @@ export class ModelRuntime {
       return failure('unhealthy');
     } finally {
       clearTimeout(deadline);
+      caller?.removeEventListener('abort', stop);
     }
   }
 
@@ -186,7 +205,8 @@ export class ModelRuntime {
     }
     signal.throwIfAborted();
     if (!slot) {
-      const loading: Slot = { entry, users: 0, lastUse: performance.now(), invalid: false, reserved: false, loaded: false, promise: Promise.resolve().then(() => this.load(entry)) };
+      const loading: Slot = { entry, loading: new AbortController(), users: 0, lastUse: performance.now(), invalid: false,
+        reserved: false, loaded: false, promise: Promise.resolve().then(() => this.load(loading)) };
       void loading.promise.catch(() => { loading.invalid = true; });
       slot = loading;
       this.slots.set(entry.id, loading);
@@ -194,7 +214,7 @@ export class ModelRuntime {
     clearTimeout(slot.timer);
     slot.users++;
     try {
-      const adapter = await slot.promise;
+      const adapter = await (slot.loaded ? slot.promise : waitForLoad(slot.promise, signal));
       slot.loaded = true;
       signal.throwIfAborted();
       if (!(await adapter.health(signal))) throw new ModelRuntimeError('unhealthy');
@@ -207,8 +227,12 @@ export class ModelRuntime {
       slot.users--;
       slot.lastUse = performance.now();
       if (slot.users === 0) {
-        if (slot.invalid || this.closed) await this.evict(slot);
-        else {
+        if (!slot.loaded || slot.invalid || this.closed) {
+          const disposed = this.evict(slot);
+          // Only cancel startup once no callers still need the loading slot.
+          if (!slot.loaded) slot.loading.abort(signal.reason);
+          await disposed;
+        } else {
           slot.timer = setTimeout(() => { void this.evict(slot).catch(() => {}); }, this.idleMs);
           slot.timer.unref();
         }
@@ -216,10 +240,11 @@ export class ModelRuntime {
     }
   }
 
-  private async load(entry: ModelEntry): Promise<ModelAdapter> {
-    const slot = this.slots.get(entry.id)!;
+  private async load(slot: Slot): Promise<ModelAdapter> {
+    const { entry } = slot;
     const startupMs = startupBudget(entry);
-    const signal = AbortSignal.any([this.lifecycle.signal, AbortSignal.timeout(startupMs)]);
+    const signal = AbortSignal.any([this.lifecycle.signal, slot.loading.signal, AbortSignal.timeout(startupMs)]);
+    signal.throwIfAborted();
     const model = await this.resolveIn(entry, false);
     if (model.state === 'absent') throw new ModelRuntimeError('absent');
     const dependencies: ResolvedModel[] = [];
@@ -232,6 +257,7 @@ export class ModelRuntime {
       if (resolved.state === 'absent') throw new ModelRuntimeError('absent', `Dependency ${dependency.id}@${dependency.version} is absent`);
       dependencies.push(resolved);
     }
+    signal.throwIfAborted();
     await this.reserve(slot);
     const assertGpuFree = async () => {
       try {
@@ -253,6 +279,7 @@ export class ModelRuntime {
       if (heavy(entry) && !this.heavyAvailable()) throw new ModelRuntimeError('busy');
       const adapter = await this.loadAdapter(verified, { root: this.root, env: this.env, signal, memoryBudgetMiB: this.memoryBudgetMiB, dependencies, startupMs, assertGpuFree });
       slot.adapter = adapter;
+      signal.throwIfAborted();
       await adapter.warmup?.(signal);
       signal.throwIfAborted();
       return adapter;

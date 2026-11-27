@@ -1,8 +1,10 @@
-import type { Latency, MonitorHealthMetrics, ProductionMetricsResponse } from '@mohassan/contracts';
+import { replyFeedbackSources, type Latency, type MonitorHealthMetrics, type ProductionMetricsResponse } from '@mohassan/contracts';
 
 const columns = [
   'window', 'start_utc', 'end_utc', 'role', 'section', 'name', 'count', 'samples', 'p50_ms', 'p90_ms', 'p99_ms',
   '1xx', '2xx', '3xx', '4xx', '5xx', 'average', 'max', 'enabled', 'counting_only', 'snapshot_available', 'chat_available', 'p95_ms', 'rate',
+  'turns', 'changed_replies', 'chosen_by_model', 'ok', 'abstained', 'timeout', 'failed',
+  'v5_attempted', 'v5_answered', 'v5_unused_answers', 'replies', 'useful', 'wrong', 'incomplete', 'unrated',
 ] as const;
 type Row = Partial<Record<typeof columns[number], string | number | boolean | null>>;
 
@@ -55,6 +57,25 @@ export function metricsCsv(view: ProductionMetricsResponse) {
         if (phase) write({ ...base, section: 'chat_phase', name, ...latency(phase) });
       }
       for (const [name, count] of Object.entries(chat.paths)) write({ ...base, section: 'answer_path', name, count });
+      const feedback = chat.feedback;
+      if (feedback) {
+        for (const name of replyFeedbackSources) write({ ...base, section: 'reply_feedback', name, ...feedback[name] });
+      }
+    }
+    const council = data.roles.owner.chat.council;
+    if (council) {
+      const base = { ...bounds, role: 'owner', section: 'model_council' };
+      write({ ...base, name: 'summary', turns: council.turns, changed_replies: council.changedReplies,
+        ...latency(council.elapsedMs), v5_attempted: council.v5.attempted, v5_answered: council.v5.answered,
+        v5_unused_answers: council.v5.unusedAnswers });
+      const choices = new Map(Object.entries(council.chosenByModel));
+      const outcomesByModel = new Map(Object.entries(council.memberOutcomes));
+      const models = new Set([...choices.keys(), ...outcomesByModel.keys()]);
+      for (const name of [...models].sort()) {
+        const outcomes = outcomesByModel.get(name) ?? { ok: 0, abstained: 0, timeout: 0, failed: 0 };
+        write({ ...base, section: 'council_member', name, chosen_by_model: choices.get(name) ?? 0,
+          ...outcomes });
+      }
     }
     const v5 = data.roles.owner.chat.v5;
     if (v5) {

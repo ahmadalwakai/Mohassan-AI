@@ -9,6 +9,7 @@ import {
 import { Download, RefreshCw } from "lucide-react";
 import { MetricsFrame } from "./metrics-frame";
 import { hasMonitorHealth, MonitorHealth } from "./monitor-health";
+import { CouncilStats, ReplyFeedbackStats } from "./reply-quality";
 import {
   hasChatSamples, metricsCsvPath, metricsPath, requestMetrics, requestTotals, routeHistory, slowestRoutes, type MetricsState,
 } from "./metrics-data";
@@ -300,8 +301,10 @@ export function ProductionMetrics({ initialState }: { initialState: MetricsState
   }
 
   const selectedWindow = report?.windows[windowKey];
+  const quality = selectedWindow?.roles[role].chat;
   const empty = selectedWindow && Object.values(selectedWindow.roles).every(({ routes, chat }) =>
-    !routes.some(route => route.count > 0) && !hasChatSamples(chat))
+    !routes.some(route => route.count > 0) && !hasChatSamples(chat)
+    && !chat.council?.turns && !Object.values(chat.feedback ?? {}).some(source => source.replies > 0))
     && resourceMetrics.every(metric => selectedWindow.resources[metric].samples === 0) && !hasMonitorHealth(selectedWindow.monitors);
 
   return (
@@ -355,6 +358,8 @@ export function ProductionMetrics({ initialState }: { initialState: MetricsState
                   {hasMonitorHealth(selectedWindow.monitors) && <MonitorHealth metrics={selectedWindow.monitors} />}
                 </>
               )}
+              {quality?.council && <CouncilStats metrics={quality.council} />}
+              {quality?.feedback && <ReplyFeedbackStats metrics={quality.feedback} roleLabel={roleLabel[role]} />}
               <RouteCharts report={report} role={role} />
             </>
           )}

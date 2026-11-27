@@ -92,6 +92,7 @@ export async function generateV5ChatReply(
 ): Promise<string | undefined> {
   const started = performance.now();
   const deadline = started + totalTimeoutMs;
+  const callerTimedOut = () => signal?.aborted === true && signal.reason instanceof DOMException && signal.reason.name === 'TimeoutError';
   if (!isV5ChatReady(app) || messages.at(-1)?.role !== 'user') {
     recordV5ChatMetrics(app, { fallback: true });
     return;
@@ -103,7 +104,8 @@ export async function generateV5ChatReply(
   }
   const slot = await acquire(queue, deadline, signal);
   if (slot !== 'ready') {
-    recordV5ChatMetrics(app, { fallback: true, ...(slot === 'timeout' && { timeout: true, latencyMs: performance.now() - started }) });
+    const timeout = slot === 'timeout' || callerTimedOut();
+    recordV5ChatMetrics(app, { fallback: true, ...(timeout && { timeout: true, latencyMs: performance.now() - started }) });
     return;
   }
 
@@ -140,6 +142,7 @@ export async function generateV5ChatReply(
     const next = queue.waiting.shift();
     if (next) next();
     else queue.active = false;
+    timeout ||= callerTimedOut();
     recordV5ChatMetrics(app, {
       generation, stopReason, loopCut, timeout, fallback: reply === undefined,
       ...((generation || timeout) && { latencyMs: performance.now() - started }),

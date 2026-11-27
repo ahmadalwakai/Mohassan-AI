@@ -3,9 +3,10 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { ConversationSharePreview, CreatedConversationShare, ProductionMetricsResponse } from '@mohassan/contracts';
+import type { ConversationSharePreview, CreatedConversationShare, ModelCouncil, ProductionMetricsResponse } from '@mohassan/contracts';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createApplication } from '../apps/server/src/app.js';
+import { commandChatMigration } from '../apps/server/src/command-chat.js';
 import { monitorTiming } from '../apps/server/src/monitors/schedule.js';
 import { createMonitorStore } from '../apps/server/src/monitors/store.js';
 import { recordBackgroundRunOutcome } from '../apps/server/src/notifications-store.js';
@@ -190,6 +191,88 @@ it('turns off collection and disk writes with the environment flag', async () =>
       windows: { hour: { roles: { owner: { routes: [], chat: { runs: 0 } }, member: { routes: [] } } } } });
     await f.app.close();
     await expect(readdir(f.snapshots)).rejects.toMatchObject({ code: 'ENOENT' });
+  } finally {
+    await f.dispose();
+  }
+}, 60_000);
+
+it('reads council and reply feedback aggregates on request and exports them in CSV', async () => {
+  vi.stubEnv('MOHASSAN_MODEL_COUNCIL', 'owner');
+  vi.stubEnv('MOHASSAN_MODELS_ROOT', '');
+  const f = await fixture(true);
+  try {
+    const { app, db, ownerHeaders } = f;
+    const metricsURL = '/api/ops/metrics';
+    const empty = await app.inject({ url: metricsURL, headers: ownerHeaders });
+    expect(empty.statusCode).toBe(200);
+    expect(empty.json<ProductionMetricsResponse>().windows.hour.roles.owner.chat.council?.turns).toBe(0);
+
+    // Add the optional experiment column via the same schema hook, with no model worker.
+    await commandChatMigration(db, undefined, true);
+    const conversation = await app.inject({ method: 'POST', url: '/api/chat/conversations', headers: ownerHeaders, payload: {} });
+    expect(conversation.statusCode).toBe(200);
+    const conversationId = conversation.json<{ id: string }>().id;
+    const privateText = 'unexported reply and member output';
+    const createdAt = new Date(Date.now() - 1000);
+    const councilRecord = (elapsedMs: number, chosen: 'pipeline' | 'chat-v5', outcome: 'ok' | 'timeout'): ModelCouncil => ({
+      version: 1, elapsedMs, chosen, changed: chosen !== 'pipeline', reason: privateText,
+      members: [
+        { model: 'pipeline', label: 'Pipeline', round: 'answer', outcome: 'ok', elapsedMs: 0, chosen: chosen === 'pipeline' },
+        { model: 'chat-v5', label: 'v5', round: 'answer', outcome, elapsedMs, chosen: chosen === 'chat-v5',
+          ...(outcome === 'ok' && { output: privateText }) },
+      ],
+    });
+    const changed = randomUUID(), standaloneV5 = randomUUID(), kept = randomUUID(), timedOut = randomUUID();
+    await db.insertInto('chat_messages').values([
+      { id: kept, council: JSON.stringify(councilRecord(100, 'pipeline', 'ok')), experiment: null },
+      { id: timedOut, council: JSON.stringify(councilRecord(200, 'pipeline', 'timeout')), experiment: null },
+      { id: changed, council: JSON.stringify(councilRecord(300, 'chat-v5', 'ok')), experiment: 'v5' },
+      { id: standaloneV5, council: null, experiment: 'v5' },
+    ].map(fields => ({ ...fields, conversation_id: conversationId, role: 'assistant', text: privateText, created_at: createdAt }))).execute();
+    for (const [messageId, verdict] of [[changed, 'wrong'], [standaloneV5, 'useful'], [kept, 'incomplete']]) {
+      const rated = await app.inject({ method: 'POST', url: `/api/chat/conversations/${conversationId}/feedback`,
+        headers: ownerHeaders, payload: { messageId, verdict, note: privateText } });
+      expect(rated.statusCode).toBe(200);
+    }
+
+    const result = await app.inject({ url: metricsURL, headers: ownerHeaders });
+    expect(result.statusCode).toBe(200);
+    for (const { roles } of Object.values(result.json<ProductionMetricsResponse>().windows)) {
+      expect(roles.owner.chat.council).toEqual({
+        turns: 3, changedReplies: 1, chosenByModel: { pipeline: 2, 'chat-v5': 1 },
+        memberOutcomes: {
+          pipeline: { ok: 3, abstained: 0, timeout: 0, failed: 0 },
+          'chat-v5': { ok: 2, abstained: 0, timeout: 1, failed: 0 },
+        },
+        elapsedMs: { samples: 3, p50: 200, p90: 300, p99: 300 },
+        v5: { attempted: 3, answered: 2, unusedAnswers: 1 },
+      });
+      expect(roles.owner.chat.feedback).toEqual({
+        pipeline: { replies: 2, useful: 0, wrong: 0, incomplete: 1, unrated: 1 },
+        v5: { replies: 1, useful: 1, wrong: 0, incomplete: 0, unrated: 0 },
+        councilChanged: { replies: 1, useful: 0, wrong: 1, incomplete: 0, unrated: 0 },
+      });
+      expect(roles.member.chat).not.toHaveProperty('council');
+    }
+
+    const csv = await app.inject({ url: '/api/ops/metrics.csv', headers: ownerHeaders });
+    expect(csv.statusCode).toBe(200);
+    const [header, ...lines] = csv.body.trimEnd().split('\r\n');
+    const columns = header!.split(',');
+    const rows = lines.map(line => Object.fromEntries(line.split(',').map((value, index) => [columns[index], value])));
+    const hour = rows.filter(row => row.window === 'hour');
+    expect(hour).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: 'owner', section: 'model_council', name: 'summary', turns: '3', changed_replies: '1',
+        samples: '3', p50_ms: '200', p90_ms: '300', p99_ms: '300', v5_attempted: '3', v5_answered: '2', v5_unused_answers: '1' }),
+      expect.objectContaining({ role: 'owner', section: 'council_member', name: 'chat-v5', chosen_by_model: '1',
+        ok: '2', abstained: '0', timeout: '1', failed: '0' }),
+      expect.objectContaining({ role: 'owner', section: 'reply_feedback', name: 'councilChanged', replies: '1',
+        useful: '0', wrong: '1', incomplete: '0', unrated: '0' }),
+      expect.objectContaining({ role: 'member', section: 'reply_feedback', name: 'pipeline', replies: '0', unrated: '0' }),
+    ]));
+    for (const output of [result.body, csv.body]) {
+      for (const forbidden of [conversationId, changed, standaloneV5, kept, timedOut, privateText]) expect(output).not.toContain(forbidden);
+    }
   } finally {
     await f.dispose();
   }

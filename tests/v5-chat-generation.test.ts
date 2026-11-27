@@ -125,4 +125,21 @@ describe('owner v5 generation', () => {
     activeResult.reject(new ModelTransportError('timeout'));
     await expect(active).resolves.toBeUndefined();
   });
+
+  it('records a caller deadline as a timeout and releases the worker slot for the next reply', async () => {
+    const deadline = new AbortController();
+    request.mockImplementationOnce(({ signal }: { signal: AbortSignal }) => new Promise((_, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    }));
+    const active = generateV5ChatReply(app, messages, deadline.signal);
+    const queued = generateV5ChatReply(app, messages);
+    await Promise.resolve();
+    expect(request).toHaveBeenCalledTimes(1);
+
+    deadline.abort(new DOMException('Fixture deadline', 'TimeoutError'));
+    await expect(active).resolves.toBeUndefined();
+    await expect(queued).resolves.toBe('مرحباً');
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(record).toHaveBeenNthCalledWith(1, app, expect.objectContaining({ generation: true, timeout: true, fallback: true }));
+  });
 });

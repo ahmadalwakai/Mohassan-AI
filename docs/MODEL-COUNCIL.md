@@ -85,7 +85,7 @@ The second run, 19:41 UTC, on this PC's CPU (`council-questions-2026-11-26T19-41
 
 On this set the council did not raise accuracy. It kept six wrong model answers from replacing right ones. These results set the rule above: a model answer needs the pages and a second member.
 
-The production server is an ARM CPU, so its times will differ. They are not measured here.
+This PC run did not enable v5. The owner’s [production metrics page](/ops/metrics) reads the stored council records for each window and shows the measured elapsed p50, p90 and p99, the selected models and member outcomes. The v5 usage counts show how many times v5 participated, how many times it returned an answer and how many of those answers the council did not select. Reply feedback is grouped by reply publication time and uses each reply’s latest rating.
 
 ## Switches and rollback
 
