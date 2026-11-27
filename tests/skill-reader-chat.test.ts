@@ -3,9 +3,10 @@ import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentBrowser, SearchProvider } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
+import { builtinSkills } from '../packages/skills/src/builtin/index.ts';
 import { buildSkillSource } from '../packages/skills/src/importer.ts';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
-import { createSkillReader, type SkillReaderCandidate } from '../apps/server/src/assistant/skill-reader.js';
+import { buildSkillReaderIndex, createSkillReader, type SkillReaderCandidate } from '../apps/server/src/assistant/skill-reader.js';
 
 /** The shipped skills, served as if they were the owner's active, inspected skills. */
 async function shippedSkills(): Promise<{ candidates: SkillReaderCandidate[]; bodies: Map<string, string> }> {
@@ -29,10 +30,15 @@ describe('active skills in the model-free conversation', () => {
   beforeAll(async () => {
     database = await createDatabase(); await migrate(database.db);
     const { candidates, bodies } = await shippedSkills();
+    const ads = builtinSkills.find(({ contract }) => contract.slug === 'google-ads-campaign')!;
+    const { slug, name, description, category, version } = ads.contract;
+    candidates.push({ id: `id-${slug}`, slug, name, description, category, version, contentHash: 'c'.repeat(64) });
+    bodies.set(`id-${slug}`, ads.instructions);
+    const index = buildSkillReaderIndex(candidates);
     const browser = { setCheckpointStore() {}, async bindAccount() {}, async hasPage() { return false; }, async close() {} } as unknown as AgentBrowser;
     const base = { browser, models: { fast: [], deep: [], vision: '' }, searchProvider: { name: 'recorded-search', search } as SearchProvider };
     withSkills = await createCommandChatControl(database.db, { ...base,
-      skillAnswer: createSkillReader({ candidates: async () => candidates, instructions: async (_ownerId, id) => { reads.push(id); return bodies.get(id) ?? null; } }) });
+      skillAnswer: createSkillReader({ candidates: async () => candidates, index: async () => index, instructions: async (_ownerId, id) => { reads.push(id); return bodies.get(id) ?? null; } }) });
     withoutSkills = await createCommandChatControl(database.db, base);
   });
   beforeEach(() => { search.mockClear(); reads.length = 0; });
@@ -73,6 +79,20 @@ describe('active skills in the model-free conversation', () => {
     expect(search).not.toHaveBeenCalled();
     expect(result.text.startsWith('**مراجعة الكود البرمجي**')).toBe(true);
     expect(result.trail.find(entry => entry.action === 'skill_read')?.result).toContain('code-review');
+  });
+
+  // Campaign and skill fixtures at the production base (retrieved 2026-11-27).
+  // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/tests/assistant-campaign-request.test.ts
+  // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/tests/google-ads-skill.test.ts
+  it.each([
+    'I have a nail salon in Bristol, want more clients, spend 10 pounds per day',
+    'أريد حملة إعلانات جوجل',
+  ])('loads the active campaign guide without a chat or Ads model: %s', async goal => {
+    const result = await run(withSkills, goal);
+    expect(result.error).toBeNull();
+    expect(search).not.toHaveBeenCalled();
+    expect(reads).toContain('id-google-ads-campaign');
+    expect(result.trail.find(entry => entry.action === 'skill_read')?.result).toContain('google-ads-campaign');
   });
 
   it('leaves a plain fact question to the web search', async () => {
