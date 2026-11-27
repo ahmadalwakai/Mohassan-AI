@@ -241,7 +241,16 @@ function DeleteDialog({ target, busy, error, onCancel, onConfirm }: { target: Su
 /** Owner-only views a failed turn can point to. The executor is a separate local experiment, never a stand-in for the chat model. */
 export type AssistantToolView = "integrations" | "executor" | "desktop";
 
-export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifications }: { name: string; onAdvanced: () => void; onOpenTool?: (view: AssistantToolView) => void; onSignOut: () => void; notifications: NotificationControls }) {
+export function AssistantApp({ name, accountCapabilities, onAdvanced, onOpenTool, onRun, onSignOut, notifications }: {
+  name: string;
+  accountCapabilities: { imageAttachments: boolean };
+  onAdvanced: () => void;
+  onOpenTool?: (view: AssistantToolView) => void;
+  onRun?: () => void;
+  onSignOut: () => void;
+  notifications: NotificationControls;
+}) {
+  const { imageAttachments } = accountCapabilities;
   const [history, setHistory] = useState<Summary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [conversation, setConversation] = useState<Conversation | null>(null);
@@ -250,6 +259,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(0);
+  const attachmentGeneration = useRef(0);
   const fileInput = useRef<HTMLInputElement>(null);
   const [browserAccount,setBrowserAccount]=useState("");
   const [busy, setBusy] = useState(false);
@@ -495,6 +505,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
       const result = await operation();
       setConversation((current) => isNewerSnapshot(current, result) ? result : current);
       setSelectedId(result.id);
+      if (result.run && result.run.id !== conversation?.run?.id) onRun?.();
       // A sidebar refresh failure must not make a successful send look rejected.
       await refreshHistory().catch(() => {});
       return true;
@@ -523,19 +534,24 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
 
   /** Image files from the picker, a paste or a drop: shrunk in the browser, then uploaded for the own reader. */
   async function uploadFiles(list: Iterable<File>) {
+    if (!imageAttachments) return;
     const files = [...list].filter((file) => /^image\/(?:png|jpeg|webp|gif|bmp)$/.test(file.type)).slice(0, Math.max(0, MAX_ATTACHMENTS - attachments.length));
     if (!files.length) return;
+    const generation = attachmentGeneration.current;
     setError("");
     setUploading((count) => count + files.length);
     for (const file of files) {
       try {
         const encoded = await encodeForUpload(file);
+        if (generation !== attachmentGeneration.current) return;
         const result = await api<{ id: string; width: number; height: number; url: string }>("/api/chat/images", { method: "POST", body: JSON.stringify(encoded) });
+        if (generation !== attachmentGeneration.current) return;
         setAttachments((current) => current.length >= MAX_ATTACHMENTS ? current : [...current, { id: result.id, width: result.width, height: result.height, url: result.url, name: file.name || "صورة" }]);
       } catch (caught) {
+        if (generation !== attachmentGeneration.current) return;
         setError(messageOf(caught));
       } finally {
-        setUploading((count) => count - 1);
+        if (generation === attachmentGeneration.current) setUploading((count) => count - 1);
       }
     }
     composer.current?.focus();
@@ -548,6 +564,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
   }
   function onDrop(event: { dataTransfer: DataTransfer | null; preventDefault(): void }) {
     event.preventDefault();
+    if (!imageAttachments) return;
     const files = [...(event.dataTransfer?.files ?? [])];
     if (files.length) void uploadFiles(files);
   }
@@ -578,6 +595,9 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
     setSelectedId(null);
     setConversation(null);
     setDraft("");
+    attachmentGeneration.current += 1;
+    setAttachments([]);
+    setUploading(0);
     setBrowserAccount("");
     setError("");
     setSidebarOpen(false);
@@ -643,14 +663,16 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
     || conversation?.messages.some(message => message.role === "user" && ADS_WORDS.test(message.text)));
   const showBrowser = Boolean(conversation?.browser && browserOpen);
   const firstName = name.trim().split(/\s+/)[0];
-  const form = <form className={styles.composer} onSubmit={send} onPaste={onPaste} onDrop={onDrop} onDragOver={(event) => event.preventDefault()}>
+  const form = <form className={styles.composer} onSubmit={send} onPaste={imageAttachments ? onPaste : undefined} onDrop={onDrop} onDragOver={(event) => event.preventDefault()}>
     {!selectedId?<details className={styles.browserAccount}><summary>حساب المتصفح: {browserAccount||'الافتراضي'}</summary><label htmlFor="browser-account">اسم جلسة الحساب</label><input id="browser-account" dir="ltr" value={browserAccount} maxLength={128} pattern="[a-zA-Z0-9_-]{1,128}" placeholder="work-account" disabled={busy} onChange={event=>setBrowserAccount(event.target.value)}/><small>اتركه فارغًا للحساب الافتراضي، أو استخدم اسمًا بحروف إنجليزية وأرقام لفصل حسابات المواقع.</small></details>:null}
     {attachments.length || uploading ? <div className={styles.attachments}>
       {attachments.map((item) => <span key={item.id} className={styles.attachment}><img src={item.url} alt={item.name} /><button type="button" aria-label="إزالة الصورة" onClick={() => setAttachments((current) => current.filter((other) => other.id !== item.id))}><X size={12} /></button></span>)}
       {uploading ? <span className={styles.attachmentBusy} aria-label="جارٍ رفع الصورة"><AgentActivity variant="spinner" /></span> : null}
     </div> : null}
-    <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" multiple hidden onChange={(event) => { const files = event.currentTarget.files; if (files) void uploadFiles(files); event.currentTarget.value = ""; }} />
-    <button type="button" className={styles.attach} aria-label="إرفاق صورة" title="أرفق صورة ليقرأها موحسن" disabled={blocked || running || attachments.length >= MAX_ATTACHMENTS} onClick={() => fileInput.current?.click()}><ImagePlus size={18} /></button>
+    {imageAttachments ? <>
+      <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" multiple hidden onChange={(event) => { const files = event.currentTarget.files; if (files) void uploadFiles(files); event.currentTarget.value = ""; }} />
+      <button type="button" className={styles.attach} aria-label="إرفاق صورة" title="أرفق صورة ليقرأها موحسن" disabled={blocked || running || attachments.length >= MAX_ATTACHMENTS} onClick={() => fileInput.current?.click()}><ImagePlus size={18} /></button>
+    </> : null}
     <label className={styles.hidden} htmlFor="assistant-message">رسالتك</label>
     <textarea
       id="assistant-message" ref={composer} dir="auto" rows={1} maxLength={4000} value={draft} autoFocus

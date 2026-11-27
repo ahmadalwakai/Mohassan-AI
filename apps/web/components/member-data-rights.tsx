@@ -276,16 +276,17 @@ function PendingMemberDeletion({ deletion, signedIn }: { deletion: MemberDeletio
 }
 
 type MemberDataAccess = Access & { deletion?: MemberDeletion; dataOnly?: boolean };
-type MemberToolsProps = { access: Access; onChat: () => void; onSignOut: () => void };
+type MemberToolsProps = { access: Access; initialSiteId?: string | null; onChat: () => void; onSignOut: () => void };
 
 export function shouldMountMemberDataAccess(access: MemberDataAccess | null, advanced: boolean) {
   return !access || Boolean(access.deletion || access.dataOnly) || (access.role === "member" && advanced);
 }
 
-export function MemberDataAccessMount({ access, error, tools: Tools, onChat, onSignOut }: {
+export function MemberDataAccessMount({ access, error, tools: Tools, initialSiteId, onChat, onSignOut }: {
   access: MemberDataAccess | null;
   error: string;
   tools: ComponentType<MemberToolsProps>;
+  initialSiteId?: string | null;
   onChat: () => void;
   onSignOut: () => void;
 }) {
@@ -302,6 +303,6 @@ export function MemberDataAccessMount({ access, error, tools: Tools, onChat, onS
   </main>;
   return <div className={styles.memberToolsFrame}>
     <div className={styles.memberToolsData}><MemberAccountData onDeletionScheduled={setScheduledDeletion} /></div>
-    <Tools access={access} onChat={onChat} onSignOut={onSignOut} />
+    <Tools access={access} initialSiteId={initialSiteId} onChat={onChat} onSignOut={onSignOut} />
   </div>;
 }

@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import type { ImageReading } from '@mohassan/vision';
 import { composeImageReply, readingForTrail } from './assistant/image-reading.js';
+import { imageReadingAvailable } from './chat-image-capability.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { FastifyInstance } from 'fastify';
 import { sql, type Kysely, type Transaction } from 'kysely';
@@ -1136,7 +1137,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const facts: Record<(typeof chatCapabilityIds)[number], boolean> = {
       computation: true, web: true, browser: true, memory: Boolean(tools?.memory), knowledge: Boolean(config.knowledgeSearch),
       documents: Boolean(config.documents), sites: Boolean(config.sites), skills: Boolean(config.skillAnswer), planner: true, letters: true,
-      imageReading: Boolean(config.imageReader?.available), ads: Boolean(config.adsModel) && full, pc: Boolean(tools?.computer) && full,
+      imageReading: imageReadingAvailable(full, config.imageReader), ads: Boolean(config.adsModel) && full, pc: Boolean(tools?.computer) && full,
     };
     return { chatModel: hasChatModel() || (full && Boolean(config.fullAccess && config.v5Chat?.ready())), available: chatCapabilityIds.filter(capability => facts[capability]),
       ...(monitor && await monitor.availableTo(ownerId) ? { smartMonitors: true, ...(monitor.v2 ? { smartMonitorsV2: true as const } : {}) } : {}),
@@ -2672,7 +2673,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const selfFacts: SelfFacts = {
         chatModel: hasChatModel(), web: true, browser: true, computation: true, memory: Boolean(tools?.memory), knowledge: Boolean(config.knowledgeSearch),
         documents: Boolean(config.documents), sites: Boolean(config.sites), skills: Boolean(config.skillAnswer), ads: Boolean(config.adsModel) && fullReach(),
-        imageReading: Boolean(config.imageReader?.available), pc: Boolean(tools?.computer) && fullReach(), planner: true, letters: true,
+        imageReading: imageReadingAvailable(fullReach(), config.imageReader), pc: Boolean(tools?.computer) && fullReach(), planner: true, letters: true,
       };
       const intrinsicSelf = intrinsicAllowed && !intrinsicRuntime && !intrinsicConversation ? evaluateSelfQuestion(actionRequest, selfFacts) : null;
       // Several requests in one message, each answered by the host itself (assistant/local-sequence.ts): «كم حاصل 17 × 23؟ ثم

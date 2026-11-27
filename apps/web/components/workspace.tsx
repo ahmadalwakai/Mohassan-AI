@@ -326,19 +326,31 @@ export function Workspace() {
   const [refreshKey, setRefreshKey] = useState(0);
   const refresh = useCallback(() => setRefreshKey((key) => key + 1), []);
   const [access, setAccess] = useState<Access | null>(null);
+  const [accessRevision, setAccessRevision] = useState(0);
+  const refreshAccess = useCallback(() => setAccessRevision((revision) => revision + 1), []);
+  const advancedWasOpen = useRef(false);
+  const member = access?.role === "member";
   const [inviteToken, setInviteToken] = useState<string | null>(null);
   useEffect(() => { const match = /^#invite=([A-Za-z0-9_-]{43})$/.exec(location.hash); if (match) setInviteToken(match[1]!); }, []);
   const closeInvite = useCallback(() => { setInviteToken(null); history.replaceState(null, "", location.pathname); }, []);
   useEffect(() => {
     if (boot !== "ready" || !session) { setAccess(null); return; }
-    let active = true;
-    request<Access>("/api/access").then(value => { if (active) setAccess(value); }).catch((caught) => {
-      if (!active) return;
+    const controller = new AbortController();
+    request<Access>("/api/access", { signal: controller.signal }).then(value => {
+      if (controller.signal.aborted) return;
+      setAccess(value);
+      if (value.role === "member") setError("");
+    }).catch((caught) => {
+      if (controller.signal.aborted) return;
       if (caught instanceof ApiError && [401, 403].includes(caught.status)) { setSession(null); setBoot("signin"); setError(caught.status === 403 ? caught.message : ""); }
       else setError(errorMessage(caught));
     });
-    return () => { active = false; };
-  }, [boot, session]);
+    return () => controller.abort();
+  }, [boot, session, accessRevision]);
+  useEffect(() => {
+    if (advanced && !advancedWasOpen.current && member) refreshAccess();
+    advancedWasOpen.current = advanced;
+  }, [advanced, member, refreshAccess]);
   const owner = access?.role === "owner";
 
   useEffect(() => {
@@ -404,8 +416,9 @@ export function Workspace() {
   if (boot === "unconfigured") return <main className="boot-screen"><Brand compact /><span className="empty-icon"><ShieldCheck size={28} /></span><h1>يلزم إعداد حساب المالك</h1><p>إنشاء الحساب الأول متاح من بيئة الخادم فقط. بعد إتمامه، أعد المحاولة للدخول إلى مساحة العمل.</p><Button className="primary-button" onClick={() => { void retryBoot(); }}><RefreshCw size={16} />إعادة المحاولة</Button></main>;
   if (boot === "setup" || boot === "signin") return <AuthScreen needsSetup={boot === "setup"} onAuthenticated={(value) => { setSession(value); setBoot("ready"); }} onRetry={() => { void request<{ needsSetup: boolean; setupAvailable?: boolean }>("/api/setup").then((value) => { if (!value.needsSetup) setBoot("signin"); }).catch(() => {}); }} />;
 
-  if (shouldMountMemberDataAccess(access, advanced)) return <MemberDataAccessMount access={access} error={error} tools={MemberTools} onChat={() => setAdvanced(false)} onSignOut={() => { void signOut(); }} />;
-  if (!advanced || !owner) return <AssistantApp name={session?.user.name ?? "بك"} onAdvanced={() => setAdvanced(true)} onOpenTool={owner ? (target) => { setView(target); setAdvanced(true); } : undefined} onSignOut={() => { void signOut(); }} notifications={notifications} />;
+  if (shouldMountMemberDataAccess(access, advanced)) return <MemberDataAccessMount access={access} error={error} tools={MemberTools} initialSiteId={siteHash} onChat={() => setAdvanced(false)} onSignOut={() => { void signOut(); }} />;
+  if (!advanced || !owner) return <AssistantApp name={session?.user.name ?? "بك"} accountCapabilities={{ imageAttachments: owner }} onRun={member ? refreshAccess : undefined}
+    onAdvanced={() => setAdvanced(true)} onOpenTool={owner ? (target) => { setView(target); setAdvanced(true); } : undefined} onSignOut={() => { void signOut(); }} notifications={notifications} />;
 
   const tasks = snapshot?.tasks ?? [];
   const capabilities = snapshot?.capabilities ?? [];

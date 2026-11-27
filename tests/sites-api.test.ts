@@ -181,7 +181,7 @@ describe('sites API', () => {
   });
 
   it('lets a member build and preview a site but not publish it', async () => {
-    const { app, headers, base, application } = await boot();
+    const { app, headers, base, application } = await boot(async () => { throw new Error('Listing sites must not call Vercel.'); });
     const invite = await app.inject({ method: 'POST', url: '/api/members/invites', headers, payload: { name: 'Member', email: 'member@example.test' } });
     const token = new URL(invite.json().url).hash.replace('#invite=', '');
     await app.inject({ method: 'POST', url: '/api/invites/accept', headers: base, payload: { token, name: 'Member', password: 'Member-password-000042' } });
@@ -189,6 +189,14 @@ describe('sites API', () => {
     const member = { ...base, cookie: [login.headers['set-cookie']].flat().filter(Boolean).map(value => String(value).split(';')[0]).join('; ') };
     const access = await app.inject({ method: 'GET', url: '/api/access', headers: member });
     expect(access.json().services).toContain('sites');
+    // Publishing requires owner access, retrieved 2026-11-27.
+    // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/apps/server/src/sites.ts#L310-L314
+    const memberList = await app.inject({ url: '/api/sites', headers: member });
+    expect(memberList.statusCode, memberList.body).toBe(200);
+    expect(memberList.json().publish.available).toBe(false);
+    const ownerList = await app.inject({ url: '/api/sites', headers });
+    expect(ownerList.statusCode, ownerList.body).toBe(200);
+    expect(ownerList.json().publish.available).toBe(true);
     const created = await app.inject({ method: 'POST', url: '/api/sites/draft', headers: member, payload: draft });
     expect(created.statusCode, created.body).toBe(200);
     expect((await app.inject({ method: 'GET', url: `/api/sites/${created.json().id}`, headers: member })).statusCode).toBe(200);

@@ -289,7 +289,10 @@ export type SitesControl = Awaited<ReturnType<typeof createSitesControl>>;
 interface RouteOptions { control: SitesControl; owner: (request: any) => Promise<{ id: string }>; role: (request: any) => Promise<WorkspaceRole> }
 export async function registerSiteRoutes(app: FastifyInstance, { control, owner, role }: RouteOptions) {
   const id = (value: string) => z.uuid().parse(value);
-  app.get('/api/sites', async request => ({ sites: await control.list((await owner(request)).id), publish: { available: control.publishAvailable(), provider: control.publisherKind } }));
+  app.get('/api/sites', async request => ({
+    sites: await control.list((await owner(request)).id),
+    publish: { available: await role(request) === 'owner' && control.publishAvailable(), provider: control.publisherKind },
+  }));
   app.post('/api/sites', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async request => {
     const user = await owner(request);
     const body = z.object({ brief: SiteBriefSchema, conversationId: z.uuid().optional() }).strict().parse(request.body);

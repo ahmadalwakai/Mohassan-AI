@@ -10,6 +10,15 @@ import { commandChatMigration } from '../apps/server/src/command-chat.ts';
 import { MEMBER_ROUTES, PUBLIC_ROUTES, migrateMembers } from '../apps/server/src/members.ts';
 import { memberRunsToday, migrateMemberQuota } from '../apps/server/src/member-run-quota.ts';
 
+vi.mock('../apps/server/src/image-reader.js', () => ({
+  createImageReader: async () => ({
+    available: true,
+    modelId: 'test-image-reader',
+    async read() { throw new Error('A capability question should not read an image.'); },
+    async close() {},
+  }),
+}));
+
 /** Members are invited people with cloud services only. Every other route must refuse them. */
 describe('workspace members over disposable local state', () => {
   let application: Awaited<ReturnType<typeof createApplication>> | undefined, directory = '', ownerCookie = '', memberCookie = '', memberId = '';
@@ -234,6 +243,27 @@ describe('workspace members over disposable local state', () => {
     expect(await quota()).toEqual({ dailyRuns: 3, used: 0 });
     expect((await app().inject(requests[denied]!)).statusCode).toBe(200);
     expect(await quota()).toEqual({ dailyRuns: 3, used: 1 });
+  });
+
+  it('advertises image reading only to the owner, in chat capabilities and self-knowledge', async () => {
+    // Owner-only image contract and direct answer wording, retrieved 2026-11-27.
+    // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/packages/contracts/src/command-chat.ts#L81
+    // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/apps/server/src/assistant/self-knowledge.ts#L398-L401
+    const conversations = '/api/chat/conversations';
+    const list = await app().inject({ url: conversations, headers: headers(memberCookie) });
+    expect(list.statusCode, list.body).toBe(200);
+    expect(list.json().capabilities.available).not.toContain('imageReading');
+    const ownerList = await app().inject({ url: conversations, headers: headers() });
+    expect(ownerList.statusCode, ownerList.body).toBe(200);
+    expect(ownerList.json().capabilities.available).toContain('imageReading');
+
+    const ask = async (cookie: string) => {
+      const response = await app().inject({ method: 'POST', url: conversations, headers: headers(cookie), payload: { goal: 'Are you able to read text from images?' } });
+      expect(response.statusCode, response.body).toBe(200);
+      return (await settle(response.json().id, cookie)).messages.at(-1);
+    };
+    expect(await ask(memberCookie)).toMatchObject({ role: 'assistant', text: 'Reading text from images is not configured in this conversation now.' });
+    expect(await ask(ownerCookie)).toMatchObject({ role: 'assistant', text: 'Yes. Attach an image to your message and I will read the text in it.' });
   });
 
   it('signs out a disabled member everywhere and lets the owner restore access', async () => {
