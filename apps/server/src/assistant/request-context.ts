@@ -4,8 +4,9 @@ import { returnedTo } from './return-to.js';
 import { explicitKnowledgeDocumentRequest } from './knowledge-document-request.js';
 import { parseQuestionRewriteRequest } from './question-rewrite-request.js';
 import { assessRequestScope, parseRequestScopeAssessment, requestOperationText, RequestScopeAssessmentSchema, reviewPublicProjection, parseUserRequestConstraints, maskRequestLiteralData, isEntireLiteralRequest, type UserRequestConstraints, type RequestScopeAssessment } from './request-scope.js';
-import { factualNumberText, questionCoreferenceText, startsFactualQuestion, stripArabicEntityConjunction } from './public-question-syntax.js';
+import { factualNumberText, questionCoreferenceText, startsFactualQuestion } from './public-question-syntax.js';
 import { noHistory } from './response-policy-signals.js';
+import { stripArabicEntityConjunction } from './public-question-syntax.js';
 
 /**
  * A small, deterministic context boundary, not a replacement language model.
