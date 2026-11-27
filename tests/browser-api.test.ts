@@ -1,6 +1,7 @@
 import {beforeAll,afterAll,describe,it,expect} from 'vitest';
 import {createServer,type Server} from 'node:http';
 import {createApplication} from '../apps/server/src/app.js';
+import {replyLanguage} from '../apps/server/src/assistant/reply-check.js';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 
@@ -25,6 +26,32 @@ describe('browser authenticated API integration',()=>{
     expect(navigation.statusCode).toBe(200);expect(navigation.json().observation.title).toBe('API browser fixture');
     const detail=await application.app.inject({url:`/api/browser/sessions/${session.id}`,headers:headers()});expect(detail.json().observation.id).toBe(navigation.json().observation.id);
     expect((await application.app.inject({method:'POST',url:`/api/browser/sessions/${session.id}/actions`,headers:headers(),payload:{action:'execute',script:'arbitrary'}})).statusCode).toBe(400);
+  });
+  it('localizes standalone browser engine errors using the request preference and preserves the event diagnostic', async () => {
+    const created = await application.app.inject({ method: 'POST', url: '/api/browser/sessions', headers: headers(), payload: { title: 'Browser locale fixture', allowedOrigins: [origin] } });
+    expect(created.statusCode).toBe(200);
+    const url = `/api/browser/sessions/${created.json().id}`;
+    const read = (preference?: string) => application.app.inject({
+      method: 'POST', url: `${url}/actions`,
+      headers: preference ? { ...headers(), 'accept-language': preference } : headers(),
+      payload: { action: 'read', expectedObservationId: null },
+    });
+
+    const original = await read();
+    expect(original.statusCode).toBe(409);
+    const diagnostic = original.json().error.message;
+    expect(replyLanguage(diagnostic).replyLang).toBe('ar');
+    for (const [preference, language] of [['ar-SY;q=0.5, en-GB;q=0.8', 'en'], ['en;q=0, ar-SY;q=0.5', 'ar'], ['fr, *;q=0.8', 'ar']]) {
+      const localized = await read(preference);
+      expect(localized.statusCode).toBe(409);
+      const error = localized.json().error;
+      expect(error.code).toBe('BROWSER_SESSION_STALE');
+      expect(replyLanguage(error.message).replyLang).toBe(language);
+    }
+
+    const detail = await application.app.inject({ url, headers: headers() });
+    const eventMessages = detail.json().events.filter((event: { kind: string }) => event.kind === 'error').map((event: { message: string }) => event.message);
+    expect(eventMessages).toEqual(Array(4).fill(diagnostic));
   });
   it('works under the actual tsx development runner without serialized host closure helpers',async()=>{
     const code=`process.env.NODE_ENV='development';const {BrowserEngine}=await import('./packages/browser/src/index.ts');const engine=new BrowserEngine({testOrigins:[${JSON.stringify(origin)}]});try{await engine.open('actual-tsx',[${JSON.stringify(origin)}]);const observation=await engine.navigate('actual-tsx',${JSON.stringify(origin)});console.log(JSON.stringify({title:observation.title,text:observation.text}));}finally{await engine.close();}`;

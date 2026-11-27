@@ -1,3 +1,5 @@
+import { searchFailureReply, type SearchFailure } from '@mohassan/contracts/reply-messages';
+import { SearchProvidersError } from './search-provider-failure.js';
 import { AgentEffectHeld, BrowserError, compileQuery, publicSearchScan, publicSearchText, safeResumeUrl, webFreshnessText, type AgentAction, type AgentElement, type AgentPage, type AgentRequestPermit, type SearchHit } from '@mohassan/browser';
 import { directRoute, namedSite, sensitiveAction } from './brain.js';
 import { hostOf, readingLabel, siteName } from './activity.js';
@@ -1354,14 +1356,6 @@ export const noLiveSource = (query: string, lang: 'ar' | 'en' = /[؀-ۿ]/u.test(
   ? `لم أتمكن من الوصول إلى مصدر حديث ومرتبط بسؤالك «${query}» بعد تجربة البحث في الويب. إن أرسلت رابط موقع مناسب أفتحه وأقرأ المعلومة منه.`
   : `I could not reach a current source relevant to “${query}” after trying web search. Send a suitable website link and I can open it and read the information there.`;
 
-/**
- * The search request itself failed: the providers that read the question did not answer (`detail` names each one and how,
- * as the shared engine reports it). Not the same as a search that answered with nothing relevant.
- */
-export const searchFailed = (query: string, detail: string, lang: 'ar' | 'en' = /[؀-ۿ]/u.test(query) ? 'ar' : 'en') => lang === 'ar'
-  ? `تعذّر البحث عن «${query}»: مصادر البحث لم تستجب الآن (${detail}). هذا فشل في الطلب، لا بحث بلا نتائج. أعد المحاولة بعد قليل.`
-  : `The search for “${query}” failed: the search sources did not answer just now (${detail}). This is a failed request, not a search without results. Please try again shortly.`;
-
 const noSearchSource = (query: string, lang: 'ar' | 'en' = /[؀-ۿ]/u.test(query) ? 'ar' : 'en') => isLiveWebQuestion(query) ? noLiveSource(query, lang) : lang === 'ar'
   ? `لم أجد في المصادر المتاحة لي (ويكيبيديا والواجهات الموثقة) نتائج مرتبطة بسؤالك «${query}». أرسل رابط موقع مناسب أو حدد اسم الجهة التي تريد البحث لديها.`
   : `I found no results relevant to “${query}” in the sources available to me (Wikipedia and documented APIs). Send a suitable website link or name the organization to search.`;
@@ -1441,7 +1435,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
   const ownPage = (page: { url: string; title: string }, entity: readonly string[]) => ownUrls.has(withoutHash(page.url)) || isOwnArticle(page.title, entity);
   type SearchResult = { title: string; url: string };
   type SearchBatch = { results: SearchResult[]; retrySubject?: () => Promise<SearchResult[]> };
-  const engine = async (query: string, ask = false): Promise<SearchBatch | { failed: string } | 'unavailable'> => {
+  const engine = async (query: string, ask = false): Promise<SearchBatch | { failed: readonly SearchFailure[] } | 'unavailable'> => {
     const publicQuery = query.normalize('NFKC').replace(/\p{Cf}/gu, '');
     const decoded = publicSearchScan(publicQuery);
     if (publicSearchText(publicQuery) !== publicQuery || publicSearchText(decoded) !== decoded || (decoded.match(/https?:\/\/\S+/gi) ?? []).some(url => safeResumeUrl(url) === null)) {
@@ -1453,12 +1447,12 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
     const topic = topicWords(query);
     // The search providers did not answer (unavailable, rate limited, invalid answer): a failed request, told apart from a
     // search that answered with nothing about the question.
-    let providerFailure: string | null = null;
+    let providerFailure: readonly SearchFailure[] | null = null;
     const lookup = async (words: string) => {
       let hits: SearchHit[] = [];
       try { hits = await io.search!(words, 6); }
       catch (error) {
-        if (error instanceof BrowserError && error.code === 'RESEARCH_PROVIDERS_FAILED') providerFailure = error.message;
+        if (error instanceof BrowserError && error.code === 'RESEARCH_PROVIDERS_FAILED') providerFailure = error instanceof SearchProvidersError ? error.failures : [];
         // Cancellation, rejected query policy and lost execution authority must stop the run.
         else if (!(error instanceof BrowserError) || error.code !== 'RESEARCH_SEARCH_UNAVAILABLE') throw error;
       }
@@ -1584,7 +1578,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
           // The shared engine over HTTP: a results list and no browser page.
           const found = await engine(step.query, step.ask);
           if (found === 'unavailable') return { kind: 'done', status: 'blocked', text: noSearchSource(step.query, plan.lang) };
-          if ('failed' in found) return { kind: 'done', status: 'blocked', text: searchFailed(step.query, found.failed, plan.lang) };
+          if ('failed' in found) return { kind: 'done', status: 'blocked', text: searchFailureReply(step.query, found.failed, plan.lang) };
           searched = found.results;
           retrySubject = found.retrySubject;
         } else {

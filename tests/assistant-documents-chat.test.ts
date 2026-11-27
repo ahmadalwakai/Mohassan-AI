@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AgentBrowser } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
 import { describeDesktopCommand, parseDesktopCommand, type DesktopCommand } from '@mohassan/desktop';
+import { replyLanguage } from '../apps/server/src/assistant/reply-check.js';
 import { migrateAuth } from '../apps/server/src/auth.js';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
 import { createDocumentControl, migrateDocuments, type DocumentControl } from '../apps/server/src/documents.js';
@@ -55,6 +56,22 @@ describe('PDF files from the chat', () => {
     await control.settled(id);
     return control.detail(ownerId, id);
   }
+
+  it.each(['en', 'ar'] as const)('localizes a PDF worker error in %s', async lang => {
+    const file = path.join(root, 'invalid.pdf');
+    // A PDF header reaches the worker, but without any objects there is no page tree to load.
+    await writeFile(file, '%PDF-1.7\n% test fixture\n');
+    const goal = lang === 'ar' ? `رقّم صفحات ملف «${file}»` : `Add page numbers to "${file}".`;
+    const { id } = await owner.create(OWNER, { goal });
+    const detail = await settle(owner, OWNER, id);
+    expect(detail.status).toBe('idle');
+    const reply = detail.messages.at(-1)!.text;
+    expect(replyLanguage(reply).replyLang, reply).toBe(lang);
+    // The original PDF_INVALID diagnostic was verified 2026-11-27.
+    // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/packages/pdf/src/edit.ts#L20
+    expect(reply).toContain(lang === 'ar' ? 'ملف PDF غير صالح أو تعذرت قراءته.' : 'The PDF is invalid or could not be read.');
+    expect(await documents.list(OWNER, id)).toHaveLength(0);
+  });
 
   // Real Chromium renders and pdf-lib workers: generous budgets, so a busy machine does not fail the test.
   it('asks one card, builds the file from the answers, then edits it on request', { timeout: 120_000 }, async () => {

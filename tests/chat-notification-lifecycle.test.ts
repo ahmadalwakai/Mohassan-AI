@@ -3,6 +3,7 @@ import type { AgentBrowser } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
+import { replyLanguage } from '../apps/server/src/assistant/reply-check.js';
 
 describe('chat notification lifecycle', () => {
   let database: Awaited<ReturnType<typeof createDatabase>>;
@@ -80,7 +81,11 @@ describe('chat notification lifecycle', () => {
     })]);
   });
 
-  it('commits and enqueues a run deadline failure without waiting for another request', async () => {
+  // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/apps/server/src/command-chat.ts#L4062 (retrieved 2026-11-27)
+  it.each([
+    { lang: 'en', goal: 'Open https://notifications-fixture.test/ and read the page.', text: /took too long/iu },
+    { lang: 'ar', goal: 'افتح https://notifications-fixture.test/ واقرأ الصفحة.', text: /استغرقت هذه المهمة وقتًا طويلًا/u },
+  ])('commits and enqueues a $lang run deadline failure without waiting for another request', async ({ lang, goal, text }) => {
     const schedule = globalThis.setTimeout;
     let fireDeadline: (() => void) | undefined;
     const timers = vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback, delay, ...args) => {
@@ -92,7 +97,7 @@ describe('chat notification lifecycle', () => {
         fireDeadline?.();
         throw new Error('The fixture stopped at the chat deadline.');
       });
-      const { id } = await chat.create(ownerId, { goal: 'Open https://notifications-fixture.test/ and read the page.' });
+      const { id } = await chat.create(ownerId, { goal });
       await chat.settled(id);
 
       expect(fireDeadline).toBeDefined();
@@ -101,7 +106,9 @@ describe('chat notification lifecycle', () => {
       expect(run.status).toBe('failed');
       const conversation = await database.db.selectFrom('chat_conversations').select('error')
         .where('id', '=', id).executeTakeFirstOrThrow();
-      expect(conversation.error).toContain('استغرقت هذه المهمة وقتًا طويلًا');
+      expect(conversation.error).toMatch(text);
+      expect(replyLanguage(conversation.error ?? '').replyLang).toBe(lang);
+      if (lang === 'en') expect(conversation.error).not.toMatch(/\p{Script=Arabic}/u);
       expect(await outcomes(id)).toEqual([expect.objectContaining({
         kind: 'task_failed', task_id: run.id, user_id: ownerId, conversation_id: id,
       })]);

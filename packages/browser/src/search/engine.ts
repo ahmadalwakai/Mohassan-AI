@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { indexedCopySnippet } from '@mohassan/contracts/reply-messages';
 import { BrowserError, SafeNetwork } from '../network.js';
 import type { SearchHit, SearchProvider } from '../research.js';
 import { compileQuery, rankResults, type RankedHit } from './ranking.js';
@@ -113,6 +114,6 @@ export class SearchEngine implements SearchProvider {
   async search(question:string,limit:number,signal?:AbortSignal,context?:SearchContext): Promise<SearchHit[]> {
     const result=await this.execute(question,limit,signal,context);
     if (!result.hits.length) throw new BrowserError('RESEARCH_SEARCH_UNAVAILABLE','لم يُرجع البحث مصادر مرتبطة بالسؤال قابلة للقراءة. افتح موقع الخدمة مباشرة أو أضف رابطًا للمصدر.',502);
-    return result.hits.map(hit=>hit.coverage==='local_only'?{...hit,snippet:`نسخة مفهرسة بتاريخ ${hit.fetchedAt}. ${hit.snippet}`} : hit);
+    return result.hits.map(hit=>hit.coverage==='local_only'?{...hit,snippet:indexedCopySnippet(question,hit.fetchedAt,hit.snippet)} : hit);
   }
 }

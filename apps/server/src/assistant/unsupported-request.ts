@@ -1,3 +1,5 @@
+import { requestLanguage, searchRefusalMessage } from '@mohassan/contracts/reply-messages';
+
 /**
  * Honest limits before any search. Requests that no capability of the model-free brain can perform
  * (drawing, playing media, booking, buying, calling, sending) used to become a web search: «ارسم لي صورة قطة»
@@ -114,7 +116,7 @@ export function imageSpecification(request: string, earlier: readonly string[] =
 export function unsupportedRequest(request: string, earlier: readonly string[] = []): UnsupportedRequest | null {
   if (typeof request !== 'string' || !request.trim() || request.length > 600) return null;
   const text = fold(request);
-  const lang: UnsupportedRequest['lang'] = /[؀-ۿ]/u.test(request) ? 'ar' : 'en';
+  const lang = requestLanguage(request);
   if (IMAGE.test(text)) return { kind: 'image', lang };
   if (MEDIA.test(text)) return { kind: 'media', lang };
   if (ACT.test(text)) return { kind: 'act', lang };
@@ -162,13 +164,4 @@ export function unsupportedReply(found: UnsupportedRequest): string {
  * The source guard refused to turn the request into a public search. Before, the run ended as «تعذّر»
  * with the guard's message and no reply at all (8 of 107 real requests on 2026-11-22). This is the reply instead.
  */
-export function searchRefusedReply(request: string, query: string, code: string, message: string): string {
-  const ar = /[؀-ۿ]/u.test(request);
-  const shown = query.trim().slice(0, 80);
-  if (code === 'ASSISTANT_SEARCH_SOURCE') {
-    return ar
-      ? `لم أبحث في الويب عن «${shown}»: يبدو الطلب متعلقًا بمعلومات خاصة، أو بمرجع غير محدد، أو بفعل لا أنفّذه بنفسي، ولا أحوّل مثل هذا إلى بحث عام.\n\nإن كان سؤالًا عامًا فاكتبه سؤالًا كاملًا مثل «ما هو …؟»، أو أرسل رابط الموقع المقصود وأقرأه لك.`
-      : `I did not search the web for “${shown}”: the request looks tied to private information, an unspecified reference, or an action I do not perform myself, and I do not turn such requests into a public search.\n\nIf it is a general question, write it in full, such as “what is …?”, or send the website’s link and I will read it for you.`;
-  }
-  return message;
-}
+export const searchRefusedReply = searchRefusalMessage;
