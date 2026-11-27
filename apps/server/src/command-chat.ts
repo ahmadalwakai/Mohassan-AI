@@ -1846,7 +1846,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       await work.approve(ownerId, pending.id);
       for (;;) {
         await assertActive();
-        const outcome = await work.outcome(ownerId, pending.id);
+        const outcome = await work.outcome(ownerId, pending.id, pending.tool === 'code_change' && fullReach() && !hasChatModel());
         if (outcome.settled) return outcome.text;
         await sleep(Math.max(10, config.taskPollMs ?? 1000), signal);
       }
@@ -2617,14 +2617,15 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const pending = state.pendingTask;
         state.pendingTask = null;
         await saveState(runId, state);
+        let outcome: string | undefined;
         try {
-          const result = await followTask(ownerId, id, runId, pending, signal);
-          state.trail.push({ step: state.steps, action: `${pending.tool} ${pending.label}`, result: clean(result).slice(0, 1100), changed: true });
+          outcome = clean(await followTask(ownerId, id, runId, pending, signal));
+          state.trail.push({ step: state.steps, action: `${pending.tool} ${pending.label}`, result: outcome.slice(0, 1100), changed: true });
         } catch (error) {
           if (!(error instanceof BrowserError)) throw error;
           state.trail.push({ step: state.steps, action: `${pending.tool} ${pending.label}`, result: `failed: ${clean(error.message)}`, changed: false });
         }
-        if (!hasChatModel() && pending.tool === 'code_change') { const reply = codingOutcomeReply(state.trail.at(-1)?.result ?? '', pending.label, request); await finish(id, runId, state, vault.scrub(id, reply.text), reply.status); return; }
+        if (!hasChatModel() && fullReach() && pending.tool === 'code_change') { const reply = codingOutcomeReply(outcome ?? state.trail.at(-1)?.result ?? '', pending.label, request); await finish(id, runId, state, vault.scrub(id, reply.text), reply.status); return; }
       }
       if (state.pendingComputer) {
         const pending = state.pendingComputer;

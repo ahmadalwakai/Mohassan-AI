@@ -6,19 +6,11 @@ import { BrowserError } from '@mohassan/browser';
 import { CodingEngine, createRepairDemoProject, explainCheckRun, generateDeterministicEdits, snapshotHash, type CodingCheckResult } from '@mohassan/coding';
 import { createApplication } from '../apps/server/src/app.js';
 import { answerNoModelCodeRead, recognizeCodeRead } from '../apps/server/src/assistant/no-model-coding.js';
+import { REAL_OUTPUT } from './fixtures/coding-test-output.js';
 
 const NAME = 'مشروع تجربة الجمع';
 const demo = { id: 'p-demo', name: NAME };
 const shop = { id: 'p-shop', name: 'Shop API' };
-// Real output of the repair demo's tests in the Windows AppContainer sandbox (Node 24), 2026-11-27; user folder renamed.
-const work = 'file:///C:/Users/runner/AppData/Local/Temp/mohassan-sandbox-c1C0rp/work';
-const REAL_OUTPUT = [
-  '', '✖ adds positive values (0.6578ms)', '✖ adds negative values (0.1019ms)', 'ℹ tests 2', 'ℹ suites 0', 'ℹ pass 0', 'ℹ fail 2', 'ℹ cancelled 0',
-  'ℹ skipped 0', 'ℹ todo 0', 'ℹ duration_ms 54.9709', '', '✖ failing tests:', '', 'test at test\\sum.test.mjs:5:1', '✖ adds positive values (0.6578ms)',
-  '  ReferenceError: rightHandVaule is not defined', `      at sum (${work}/src/sum.ts:2:26)`, `      at TestContext.<anonymous> (${work}/test/sum.test.mjs:5:49)`,
-  '      at Test.runInAsyncScope (node:async_hooks:227:14)', '', 'test at test\\sum.test.mjs:6:1', '✖ adds negative values (0.1019ms)',
-  '  ReferenceError: rightHandVaule is not defined', `      at sum (${work}/src/sum.ts:2:26)`, `      at TestContext.<anonymous> (${work}/test/sum.test.mjs:6:49)`, '',
-].join('\n');
 const PATHS = ['README.md', 'package.json', 'src/sum.ts', 'test/sum.test.mjs'];
 const checked: CodingCheckResult = {
   projectId: demo.id, baseCommit: 'a'.repeat(40), testFiles: ['test/sum.test.mjs'],

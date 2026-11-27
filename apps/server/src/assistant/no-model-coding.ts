@@ -5,6 +5,7 @@ import { addEvidence, appendStep, planStep, settleStep, startStep, tryEnterPhase
 import type { BrainState } from './brain.js';
 import type { RequestRoutingDecision } from './routing-decision.js';
 import type { AssistantTools } from './tools.js';
+import { codingOutcomeReportText } from './coding-outcome-report.js';
 import { reviewWorkRequestScope } from './work-request-scope.js';
 
 /**
@@ -104,7 +105,7 @@ export function codingOutcomeReply(outcome: string, label: string, request: stri
   const name = label.replace(/^تعديل (?:مشروع )?/u, '').trim() || label;
   const project = lang === 'ar' ? `«${name}»` : `"${name}"`;
   const unchanged = lang === 'ar' ? 'مشروعك الأصلي لم يتغيّر ولم يُدمج شيء.' : 'Your original project is unchanged and nothing was merged.';
-  const withSummary = (text: string) => summary ? `${text}\n\n${summary}` : text;
+  const withSummary = (text: string) => [text, summary, codingOutcomeReportText(field, lang)].filter(Boolean).join('\n\n');
   if (status === 'completed' && result === 'ready_for_review') return {
     status: 'completed',
     text: withSummary(lang === 'ar'
@@ -115,12 +116,13 @@ export function codingOutcomeReply(outcome: string, label: string, request: stri
       + (lang === 'ar' ? '\n\nإن كان طلبك تغييرًا في المنطق فلم يُنفَّذ؛ ذلك يحتاج نموذجًا لا يعمل الآن.'
         : '\n\nIf you asked for a logic change, it was not made; that needs a model, which is not running now.'),
   };
-  if (status === 'completed' && (result === 'tests_failed' || result === 'review_failed')) return {
+  if ((status === 'failed' || status === 'completed') && (result === 'tests_failed' || result === 'review_failed')) return {
     status: 'partial',
     text: withSummary(lang === 'ar'
       ? `طبّقت الإصلاحات المثبتة على ${project} في نسخة معزولة، لكن ${result === 'tests_failed' ? 'الاختبارات فشلت بعدها' : 'المراجعة المستقلة لم تجتزها'}، فلم أحفظ فرعًا للمراجعة. النسخة المعزولة محفوظة في قسم المهام.`
       : `I applied the proven fixes to ${project} in an isolated copy, but ${result === 'tests_failed' ? 'the tests failed afterwards' : 'the independent review did not pass'}, so no review branch was saved. The isolated copy is kept in the Tasks section.`)
-      + `\n\n${unchanged}`,
+      + (result === 'tests_failed' ? (lang === 'ar' ? '\n\nلم أجد إصلاحًا مؤكدًا آخر. إصلاح المنطق يحتاج إلى نموذج.'
+        : '\n\nI found no further proven fix. A logic fix needs a model.') : '') + `\n\n${unchanged}`,
   };
   if (error && NO_PROVEN_FIX.test(error)) return {
     status: 'blocked',
