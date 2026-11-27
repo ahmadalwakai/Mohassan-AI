@@ -24,6 +24,8 @@ export interface JudgeShadowInput extends JudgeInput {
    * the owner's, whose text already lives in the database under its own access rules. Default true.
    */
   keepText?: boolean;
+  /** Run the judge and conversation review without writing an individual observation. */
+  keepObservation?: boolean;
 }
 export interface JudgeShadowLine {
   at: string;
@@ -103,6 +105,10 @@ export function createJudgeShadow(options: { logFile: string; now?: () => Date }
         const verdict = judge(input);
         const applied = Boolean(input.applyFix && verdict.decision === 'fix' && verdict.fixedReply?.trim())
           || Boolean(input.applyWithhold && verdict.decision === 'withhold' && verdict.withholdText?.trim());
+        if (input.keepObservation === false) {
+          conversationReviewForJudge(input, verdict, applied);
+          return verdict;
+        }
         const keep = keepJudgeShadowText(input, verdict);
         const quoted = (line: JudgeVerdict['lead']) => keep || !line ? line : { ...line, text: '' };
         write({

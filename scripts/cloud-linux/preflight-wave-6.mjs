@@ -6,6 +6,7 @@ import { userInfo } from 'node:os';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual, parseArgs, parseEnv } from 'node:util';
+import { memberCouncilModelStorePresent, memberCouncilPreflightConfig } from './model-council-preflight.ts';
 
 const deploymentEnv = '/etc/mohassan/server.env';
 const appRoot = fileURLToPath(new URL('../../', import.meta.url));
@@ -107,7 +108,7 @@ function checkOwnerV5Config(path) {
 
 async function runtimeChecks() {
   if (!check('runtime uses an unprivileged service account', () => process.getuid() !== 0)) return;
-  const { python, apnsKeyPath, metricsDirectory, v5ConfigPath } = JSON.parse(readFileSync(0, 'utf8'));
+  const { python, apnsKeyPath, metricsDirectory, v5ConfigPath, modelCouncilStore } = JSON.parse(readFileSync(0, 'utf8'));
   check('trusted Python 3.11+ and libseccomp.so.2 under the service account', () => serviceCanUseInterpreter(python));
   const { chromium } = await import('playwright').catch(() => ({}));
   check('locked Playwright Chromium is installed and executable by the service account', () => {
@@ -127,6 +128,8 @@ async function runtimeChecks() {
     return statSync(directory).isDirectory();
   });
   if (v5ConfigPath) checkOwnerV5Config(v5ConfigPath);
+  if (modelCouncilStore !== undefined) check('member council model store is accessible to the service account', () =>
+    memberCouncilModelStorePresent(modelCouncilStore));
 }
 
 async function preflight() {
@@ -147,6 +150,9 @@ async function preflight() {
     env = parseEnv(readFileSync(envFile, 'utf8'));
     return true;
   })) return;
+
+  const memberCouncil = memberCouncilPreflightConfig(env);
+  if (memberCouncil) check('member council concurrency and queue limits are set', () => memberCouncil.hasLimits);
 
   check('DATABASE_URL names the local PostgreSQL service', () => {
     const url = URL.parse(env.DATABASE_URL ?? '');
@@ -193,7 +199,8 @@ async function preflight() {
     input: JSON.stringify({ python: env.TEST_DRIVEN_CODING_PYTHON || '/usr/bin/python3',
       apnsKeyPath: apns.every(Boolean) ? apns[2] : undefined,
       metricsDirectory: ownerTrial ? env.PRODUCTION_METRICS_DIR || '/var/lib/mohassan/production-metrics' : undefined,
-      v5ConfigPath: v5Enabled ? resolve(appRoot, env.MOHASSAN_MODEL_WORKER_CONFIG?.trim() || '.data/model-worker.json') : undefined }),
+      v5ConfigPath: v5Enabled ? resolve(appRoot, env.MOHASSAN_MODEL_WORKER_CONFIG?.trim() || '.data/model-worker.json') : undefined,
+      modelCouncilStore: memberCouncil?.modelStore }),
     timeout: v5Enabled ? 120_000 : 10_000, encoding: 'utf8',
   });
   if (child.stdout) process.stdout.write(child.stdout);

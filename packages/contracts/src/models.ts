@@ -26,9 +26,23 @@ export const ModelInfoSchema = z.object({
 }).strict();
 export type ModelInfo = z.infer<typeof ModelInfoSchema>;
 
+const count = z.number().int().nonnegative();
+/** In-memory member council outcomes since server start, with one count per attempt. */
+const MemberCouncilMetricsSchema = z.object({
+  /** The council completed and kept the pipeline's reply. */
+  completed: count,
+  /** The council completed and selected a model's reply. */
+  changed: count,
+  skippedLoad: count,
+  skippedDeadline: count,
+  failed: count,
+}).strict();
+export type MemberCouncilMetrics = z.infer<typeof MemberCouncilMetricsSchema>;
+
 export const ModelListSchema = z.object({
   models: z.array(ModelInfoSchema).max(128),
   council: z.boolean(),
+  memberCouncil: MemberCouncilMetricsSchema.optional(),
 }).strict();
 export type ModelList = z.infer<typeof ModelListSchema>;
 

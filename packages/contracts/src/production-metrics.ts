@@ -1,4 +1,5 @@
 import type {RunPhase, TerminalRunPhase} from './agent-run';
+import type {MemberCouncilMetrics} from './models';
 
 export const trafficRoles = ['owner', 'member'] as const;
 export type TrafficRole = (typeof trafficRoles)[number];
@@ -86,4 +87,9 @@ export type MetricsView = {
   hourlyRoutes: {startMs: number; endMs: number; roles: Record<TrafficRole, RouteMetrics[]>}[];
 };
 
-export type ProductionMetricsResponse = MetricsView & {enabled: boolean; snapshotAvailable: boolean; chatAvailable: boolean};
+export type ProductionMetricsResponse = MetricsView & {
+  enabled: boolean;
+  snapshotAvailable: boolean;
+  chatAvailable: boolean;
+  memberCouncil?: MemberCouncilMetrics;
+};

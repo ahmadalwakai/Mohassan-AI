@@ -6,6 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { ConversationSharePreview, CreatedConversationShare, ProductionMetricsResponse } from '@mohassan/contracts';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createApplication } from '../apps/server/src/app.js';
+import { attachMemberCouncilMetrics, createMemberCouncilMetrics } from '../apps/server/src/assistant/member-council-metrics.js';
 import { monitorTiming } from '../apps/server/src/monitors/schedule.js';
 import { createMonitorStore } from '../apps/server/src/monitors/store.js';
 import { recordBackgroundRunOutcome } from '../apps/server/src/notifications-store.js';
@@ -64,6 +65,15 @@ it('keeps JSON and CSV owner-only and records request and chat data without priv
     expect(first.statusCode).toBe(200);
     expect(first.json<ProductionMetricsResponse>()).toMatchObject({ enabled: true, snapshotAvailable: true,
       windows: { hour: { roles: { owner: { routes: [] }, member: { routes: [] } } } } });
+    expect(first.json()).not.toHaveProperty('memberCouncil');
+    const council = createMemberCouncilMetrics();
+    attachMemberCouncilMetrics(app, council);
+    council.record('completed');
+    council.record('completed');
+    council.record('changed');
+    council.record('skippedLoad');
+    council.record('skippedDeadline');
+    council.record('failed');
 
     const invitation = await app.inject({ method: 'POST', url: '/api/members/invites', headers: ownerHeaders,
       payload: { name: member.name, email: member.email } });
@@ -125,6 +135,7 @@ it('keeps JSON and CSV owner-only and records request and chat data without priv
     }
     const report = measured.json<ProductionMetricsResponse>();
     expect(report.chatAvailable).toBe(true);
+    expect(report.memberCouncil).toEqual({ completed: 2, changed: 1, skippedLoad: 1, skippedDeadline: 1, failed: 1 });
     const hour = report.windows.hour;
     expect(hour.roles.owner.chat).toMatchObject({ runs: 1, firstProgress: { samples: 1 }, finalAnswer: { samples: 1 },
       paths: { local_computation: 1 } });
@@ -149,6 +160,8 @@ it('keeps JSON and CSV owner-only and records request and chat data without priv
     expect(csv.body).toContain('owner,request,POST /api/chat/conversations/:id/messages,1,1');
     expect(csv.body).toContain('member,request,GET /api/access,1,1');
     expect(csv.body).toContain('owner,answer_path,local_computation,1');
+    expect(csv.body).toContain('process,,,member,model_council,completed,2');
+    expect(csv.body).toContain('process,,,member,model_council,skippedLoad,1');
 
     await app.close();
     const files = (await readdir(f.snapshots, { recursive: true })).filter(file => file.endsWith('.jsonl'));

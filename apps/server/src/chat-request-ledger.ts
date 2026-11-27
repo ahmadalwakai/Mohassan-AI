@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { sql, type Kysely } from 'kysely';
 import { BrowserError } from '@mohassan/browser';
+import { isInvitedMemberAccount } from './assistant/member-council-privacy.js';
 
 type Claim = { ownerId: string; key: string; createdAt: Date };
 const activeRequest = new AsyncLocalStorage<Claim | undefined>();
@@ -33,11 +34,13 @@ export async function commitChatRequest(tx: Kysely<any>, ownerId: string, conver
 export async function cacheChatResponse(db: Kysely<any>, claim: Claim, response: unknown, replayFromConversation = false) {
   await db.transaction().execute(async tx => {
     const id = payloadConversationId(response);
-    const containsExperimentalReply = Boolean(response && typeof response === 'object' && 'messages' in response
-      && Array.isArray(response.messages) && response.messages.some(message => message?.experiment === 'v5'));
+    const messages = response && typeof response === 'object' && 'messages' in response && Array.isArray(response.messages)
+      ? response.messages : [];
+    const containsPrivateRecord = messages.some(message => message?.experiment === 'v5')
+      || (messages.some(message => message?.council) && await isInvitedMemberAccount(tx, claim.ownerId));
     const live = id ? await tx.selectFrom('chat_conversations').select('id').where('owner_id', '=', claim.ownerId)
       .where('id', '=', id).forShare().executeTakeFirst() : null;
-    await tx.updateTable('chat_request_keys').set({ status: 'done', response: id && (!live || replayFromConversation || containsExperimentalReply) ? marker(id) : JSON.stringify(response ?? null) })
+    await tx.updateTable('chat_request_keys').set({ status: 'done', response: id && (!live || replayFromConversation || containsPrivateRecord) ? marker(id) : JSON.stringify(response ?? null) })
       .where('owner_id', '=', claim.ownerId).where('request_key', '=', claim.key).where('created_at', '=', claim.createdAt).execute();
   });
 }

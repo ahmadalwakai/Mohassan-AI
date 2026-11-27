@@ -6,6 +6,7 @@ import {
 } from '@mohassan/contracts';
 import type { WorkspaceRole } from './members.js';
 import type { BrainState } from './assistant/brain.js';
+import { isInvitedMemberAccount } from './assistant/member-council-privacy.js';
 import {
   conversationPublicToolQuotes, conversationRunPrivacy, hasConversationPromptPrivacy, visibleConversationText, type ConversationPrivateOrigin,
 } from './conversation-share-privacy.js';
@@ -130,12 +131,16 @@ function summary(row: ShareSummaryRow): ConversationShareSummary {
 }
 
 export function createConversationShareStorage(db: Kysely<any>, now: () => number = Date.now) {
-  async function requireShareableConversation(tx: Kysely<any>, conversationId: string) {
+  async function requireShareableConversation(tx: Kysely<any>, conversationId: string, ownerId: string) {
     const experimental = await tx.selectFrom('chat_messages as m').select('m.id')
       .where('m.conversation_id', '=', conversationId)
-      // A reply the owner's model council took from an experimental model is the same kind of owner-only reply as v5's.
+      // A model-chosen council reply is private to the account, like an experimental v5 reply.
       .where(sql<boolean>`(to_jsonb(m)->>'experiment' = 'v5' OR to_jsonb(m)->'council'->>'changed' = 'true')`).limit(1).executeTakeFirst();
-    if (experimental) throw failure(409, 'CONVERSATION_SHARE_EXPERIMENTAL', 'هذه المحادثة تتضمن ردًا تجريبيًا خاصًا بحساب المالك.');
+    if (!experimental) return;
+    const message = await isInvitedMemberAccount(tx, ownerId)
+      ? 'تتضمن هذه المحادثة ردًا اختارته النماذج، لذلك لا يمكن مشاركتها.'
+      : 'هذه المحادثة تتضمن ردًا تجريبيًا خاصًا بحساب المالك.';
+    throw failure(409, 'CONVERSATION_SHARE_EXPERIMENTAL', message);
   }
 
   async function ownedSnapshot(ownerId: string, conversationId: string, forSharing = false) {
@@ -145,7 +150,7 @@ export function createConversationShareStorage(db: Kysely<any>, now: () => numbe
       const conversation = await tx.selectFrom('chat_conversations').select(['title', 'created_at'])
         .where('id', '=', conversationId).where('owner_id', '=', ownerId).executeTakeFirst();
       if (!conversation) return null;
-      if (forSharing) await requireShareableConversation(tx, conversationId);
+      if (forSharing) await requireShareableConversation(tx, conversationId, ownerId);
       const messages: StoredMessage[] = await tx.selectFrom('chat_messages').select(['role', 'text', 'created_at', 'run_id'])
         .select(sql<boolean>`CASE WHEN jsonb_typeof(images) = 'array' THEN jsonb_array_length(images) > 0 ELSE false END`.as('has_images'))
         .where('conversation_id', '=', conversationId).orderBy('created_at').orderBy('id').execute();
@@ -175,7 +180,7 @@ export function createConversationShareStorage(db: Kysely<any>, now: () => numbe
       const conversation = await tx.selectFrom('chat_conversations').select('id')
         .where('id', '=', conversationId).where('owner_id', '=', ownerId).forShare().executeTakeFirst();
       if (!conversation) throw failure(404, 'CHAT_NOT_FOUND', 'لم يُعثر على المحادثة.');
-      await requireShareableConversation(tx, conversationId);
+      await requireShareableConversation(tx, conversationId, ownerId);
       if (role === 'member') {
         const settings = await tx.selectFrom('conversation_share_settings').select('member_sharing_enabled')
           .where('id', '=', SETTINGS_ID).forShare().executeTakeFirstOrThrow();

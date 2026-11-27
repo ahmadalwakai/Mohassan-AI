@@ -67,6 +67,9 @@ export function metricsCsv(view: ProductionMetricsResponse) {
     monitor(bounds, data.monitors);
   }
   if (view.completedMonitorWeek) monitor(period('completed_monitor_week', view.completedMonitorWeek), view.completedMonitorWeek.monitors);
+  for (const [name, count] of Object.entries(view.memberCouncil ?? {})) {
+    write({ window: 'process', role: 'member', section: 'model_council', name, count });
+  }
   for (const hour of view.hourlyRoutes) {
     const bounds = period('hourly_route', hour);
     for (const [role, routes] of Object.entries(hour.roles)) {

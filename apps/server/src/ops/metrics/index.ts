@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Kysely } from 'kysely';
 import { registerChatMetricsRefresh } from './chat-refresh.js';
 import type { MetricWindow } from '@mohassan/contracts';
+import { readMemberCouncilMetrics } from '../../assistant/member-council-metrics.js';
 import { metricsCsv } from './csv.js';
 import { registerMonitorMetrics } from './monitor-events.js';
 import { readMonitorFeedbackMetrics } from './monitor-feedback.js';
@@ -76,7 +77,8 @@ export async function registerProductionMetrics(
     } catch {
       // Keep the other metrics available when the feedback counts cannot be read.
     }
-    return report;
+    const memberCouncil = readMemberCouncilMetrics(app);
+    return { ...report, ...(memberCouncil && { memberCouncil }) };
   }
 
   return {

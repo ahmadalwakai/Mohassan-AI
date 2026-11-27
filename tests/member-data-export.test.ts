@@ -11,7 +11,9 @@ import { GoogleAdsBriefSchema } from '@mohassan/contracts';
 import { buildOperations, operationsHash, summarizeOperations } from '@mohassan/google-ads';
 import { listZip } from '@mohassan/sites';
 import { createApplication } from '../apps/server/src/app.ts';
+import { commandChatMigration } from '../apps/server/src/command-chat.ts';
 import { createMemberDataExport } from '../apps/server/src/member-data-export.ts';
+import { memberCouncilFixture } from './fixtures/member-council.ts';
 import { addPlatformMemberData } from './fixtures/platform-member-data.ts';
 
 const exportUrl = '/api/member-data/export';
@@ -195,7 +197,7 @@ describe('signed-in account exports', () => {
         field: 'Safe fixture value', text: `Connected as ${adsSecrets.login_customer_id}` } }),
     }).execute();
 
-    return { message, png, imageId, siteImageId, document, documentId, documentName, files, adsName, campaign: summary!.campaignName, platform,
+    return { conversationId, message, png, imageId, siteImageId, document, documentId, documentName, files, adsName, campaign: summary!.campaignName, platform,
       secrets: [...Object.values(oauthSecrets), ...Object.values(adsSecrets), ...platform.secrets, apiKey, privateConfig, copiedCookie, credential.password as string],
     };
   }
@@ -324,5 +326,46 @@ describe('signed-in account exports', () => {
     await db().deleteFrom('member_data_exports').where('user_id', '=', member.id).execute();
     const exporter = createMemberDataExport(db(), { documentsDir, maxBytes: fullExport.rawPayload.byteLength - 1 });
     await expect(exporter.prepare(member.id)).rejects.toMatchObject({ statusCode: 413, code: 'MEMBER_EXPORT_TOO_LARGE' });
+  });
+
+  it('includes only the member’s saved council in their account archive after rollback', async () => {
+    // Apply the same persisted migration that remains in place when member council is switched off.
+    await commandChatMigration(db(), undefined, false, true);
+    const ownCouncil = memberCouncilFixture('Private council excerpt for the requesting member');
+    const otherCouncil = memberCouncilFixture('Private council excerpt for the other member');
+    const ownerCouncil = memberCouncilFixture('Private council excerpt for the owner');
+    const modelReply = 'Fixture reply chosen by the council';
+    const rows = [[ownData.conversationId, ownCouncil], [otherData.conversationId, otherCouncil], [ownerData.conversationId, ownerCouncil]] as const;
+    const messageIds = rows.map(() => randomUUID());
+    await db().insertInto('chat_messages').values(rows.map(([conversationId, council], index) => ({
+      id: messageIds[index]!, conversation_id: conversationId, role: 'assistant', text: modelReply, council: JSON.stringify(council),
+    }))).execute();
+    try {
+      const archiveResponse = await app().inject({ url: exportUrl, headers: headers(member.cookie) });
+      expect(archiveResponse.statusCode).toBe(200);
+      const archive = readArchive(archiveResponse.rawPayload);
+      const messages = readTable(archive, 'chat_messages');
+      expect(messages.find(row => row.id === messageIds[0])).toMatchObject({ text: modelReply, council: ownCouncil });
+      expect(messages.find(row => row.role === 'user')).not.toHaveProperty('council');
+      expect(contains(archive, otherCouncil.members[0]!.output!)).toBe(false);
+      expect(contains(archive, ownerCouncil.members[0]!.output!)).toBe(false);
+
+      const ownerResponse = await app().inject({ url: exportUrl, headers: headers(owner.cookie) });
+      expect(ownerResponse.statusCode).toBe(200);
+      const ownerArchive = readArchive(ownerResponse.rawPayload);
+      expect(contains(ownerArchive, ownCouncil.members[0]!.output!)).toBe(false);
+      expect(readTable(ownerArchive, 'chat_messages').find(row => row.id === messageIds[2])).not.toHaveProperty('council');
+
+      const path = `/api/chat/conversations/${ownData.conversationId}`;
+      const share = await app().inject({ method: 'POST', url: `${path}/share/preview`, headers: headers(member.cookie), payload: {} });
+      expect(share.statusCode).toBe(409);
+      expect(share.json().error).toEqual({ code: 'CONVERSATION_SHARE_EXPERIMENTAL', message: 'تتضمن هذه المحادثة ردًا اختارته النماذج، لذلك لا يمكن مشاركتها.' });
+      const transcript = await app().inject({ url: `${path}/export?format=markdown`, headers: headers(member.cookie) });
+      expect(transcript.statusCode).toBe(200);
+      expect(transcript.body).toContain(modelReply);
+      expect(transcript.body).not.toContain(ownCouncil.members[0]!.output);
+    } finally {
+      await db().deleteFrom('chat_messages').where('id', 'in', messageIds).execute();
+    }
   });
 });
