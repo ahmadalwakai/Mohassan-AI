@@ -2,7 +2,8 @@ import { performance } from 'node:perf_hooks';
 import type { ModelCouncil, ModelCouncilMember } from '@mohassan/contracts';
 import { ModelRelationsManager, type TurnDecisionLog, type TurnObservation } from '../../../../packages/model-relations/src/manager.js';
 import type { ModelRunResult } from '../../../../packages/model-relations/src/runtime.js';
-import { comparable, judge, type JudgeDecision, type JudgeEvidence } from './judge.js';
+import { comparable, judge, type JudgeDecision, type JudgeEvidence, type JudgeVerdict } from './judge.js';
+import type { JudgeShadowInput } from './judge-shadow.js';
 
 /**
  * The owner's model council: for one finished turn, the trained models that fit it speak in three rounds, and a fixed
@@ -50,6 +51,12 @@ export interface CouncilOutcome {
   chosen: string;
   changed: boolean;
   council: ModelCouncil;
+  /** Run-local evidence and judge assessment for the selected answer. */
+  truthPublication?: {
+    question: string;
+    previous: string | null;
+    publication: Pick<JudgeShadowInput, 'evidence' | 'priorVerdict' | 'truthOnly'>;
+  };
 }
 
 export interface CouncilSearchResult {
@@ -255,6 +262,7 @@ export interface Candidate {
   outcome: ModelCouncilMember['outcome'];
   ms: number;
   judge?: JudgeDecision;
+  verdict?: JudgeVerdict;
   inEvidence?: boolean;
   agreements: number;
   note?: string;
@@ -317,13 +325,13 @@ export function createModelCouncil(options: ModelCouncilOptions) {
     const ar = arabic(turn.question);
     const members: ModelCouncilMember[] = [];
     const pipelineText = turn.pipeline.text.trim();
-    const judgeOf = (reply: string, status: string, evidence: readonly JudgeEvidence[]): JudgeDecision | undefined => {
+    const judgeOf = (reply: string, status: string, evidence: readonly JudgeEvidence[]): JudgeVerdict | undefined => {
       try {
-        return judge({ question: turn.question, previous: turn.previous, reply, status, ...(evidence.length ? { evidence } : {}) }).decision;
+        return judge({ question: turn.question, previous: turn.previous, reply, status, ...(evidence.length ? { evidence } : {}) });
       } catch { return undefined; }
     };
     const pipelineStands = turn.pipeline.status === 'completed' && pipelineText.length > 0
-      && judgeOf(pipelineText, turn.pipeline.status, turn.evidence) !== 'withhold';
+      && judgeOf(pipelineText, turn.pipeline.status, turn.evidence)?.decision !== 'withhold';
 
     // Understanding: the organizer's own stage models, bounded by its turn budget.
     const understood = await capped(() => organizer.inspect({
@@ -396,7 +404,8 @@ export function createModelCouncil(options: ModelCouncilOptions) {
     const evidenceText = evidence.map(item => item.text).join('\n');
     for (const candidate of candidates) {
       if (candidate.outcome !== 'ok' || !candidate.text) continue;
-      candidate.judge = judgeOf(candidate.text, candidate.model === PIPELINE ? turn.pipeline.status : 'completed', evidence);
+      candidate.verdict = judgeOf(candidate.text, candidate.model === PIPELINE ? turn.pipeline.status : 'completed', evidence);
+      candidate.judge = candidate.verdict?.decision;
       if (evidenceText && candidate.model !== PIPELINE) candidate.inEvidence = states(evidenceText, candidate.text);
     }
     for (const candidate of candidates) {
@@ -426,6 +435,10 @@ export function createModelCouncil(options: ModelCouncilOptions) {
       status: changed ? 'completed' : turn.pipeline.status,
       chosen,
       changed,
+      ...(changed ? { truthPublication: {
+        question: turn.question, previous: turn.previous,
+        publication: { evidence, priorVerdict: winner?.verdict, truthOnly: true },
+      } } : {}),
       council: {
         version: 1, chosen, changed, reason: changed || decision.chosen === PIPELINE ? decision.reason
           : 'لم يكن لجواب العضو المختار نص يُرسل، فبقي رد المحرك.',

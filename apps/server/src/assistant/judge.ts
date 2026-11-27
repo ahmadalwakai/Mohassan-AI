@@ -24,12 +24,19 @@ export type ReplyKind = 'answer' | 'quote' | 'list' | 'computed' | 'memory' | 'q
 export type JudgeCode = ReplyFindingCode
   | 'lead_meta' | 'lead_ui' | 'lead_off_topic' | 'lead_needs_number' | 'lead_needs_name' | 'fragment_lead' | 'lead_not_best'
   | 'definition_form_missing' | 'duration_unit_missing' | 'self_question_from_web' | 'local_intent_abstained' | 'page_subject_mismatch' | 'subject_missing'
-  | 'unsupported_sentence' | 'evidence_unavailable';
+  | 'unsupported_sentence' | 'evidence_unavailable' | 'truth_check_failed';
 /** block: the reply must not go out as it is. fix: a mechanical repair exists. review: counted for the owner. info: a note. */
 export type JudgeSeverity = 'block' | 'fix' | 'review' | 'info';
 export type JudgeDecision = 'send' | 'fix' | 'withhold';
 export interface JudgeFinding { code: JudgeCode; severity: JudgeSeverity; line: number; excerpt: string; detail: string }
-export interface JudgeEvidence { kind: 'page' | 'memory' | 'knowledge' | 'computed'; text: string; url?: string; title?: string }
+export interface JudgeEvidence {
+  kind: 'page' | 'memory' | 'knowledge' | 'computed';
+  text: string;
+  url?: string;
+  title?: string;
+  /** The council's existing fallback when a search hit's page could not be read. */
+  searchSnippet?: true;
+}
 export interface JudgeInput {
   question: string;
   reply: string;
@@ -67,7 +74,7 @@ export const SEVERITY: Record<JudgeCode, JudgeSeverity> = {
   language_mismatch: 'review', foreign_heading: 'fix', byline_lead: 'fix', site_chrome: 'fix', duplicate_line: 'fix', lead_without_answer: 'review',
   lead_meta: 'block', lead_ui: 'review', lead_off_topic: 'block', lead_needs_number: 'block', lead_needs_name: 'review', fragment_lead: 'review', lead_not_best: 'fix',
   definition_form_missing: 'review', duration_unit_missing: 'block', self_question_from_web: 'block', local_intent_abstained: 'review', page_subject_mismatch: 'review',
-  subject_missing: 'block', unsupported_sentence: 'block', evidence_unavailable: 'info',
+  subject_missing: 'block', unsupported_sentence: 'block', evidence_unavailable: 'info', truth_check_failed: 'block',
 };
 const ORDER: JudgeSeverity[] = ['block', 'fix', 'review', 'info'];
 

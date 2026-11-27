@@ -1418,7 +1418,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       .map(page => ({ kind: 'page' as const, url: page.url, title: page.title, text: page.text.slice(0, 200_000) }));
   }
   /** `asked`: one part of a message of several questions is judged on its own question, with the part before it as the previous turn. */
-  function judgeReply(id: string, runId: string, reply: string, status: string, allowChange = false, asked?: { question: string; previous: string | null }): { text: string; withheld: boolean } {
+  function judgeReply(id: string, runId: string, reply: string, status: string, allowChange = false, asked?: { question: string; previous: string | null; publication?: NonNullable<CouncilOutcome['truthPublication']>['publication'] }): { text: string; withheld: boolean } {
     const unchanged = { text: reply, withheld: false };
     if (!config.judgeShadow) return unchanged;
     const current = execution.getStore();
@@ -1428,7 +1428,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const applyFix = Boolean(allowChange && config.judgeFixForOwner && current.full);
       const applyWithhold = Boolean(allowChange && config.judgeWithholdForOwner && current.full);
       const verdict = config.judgeShadow.observe({ conversationId: id, runId, question: asked?.question ?? current.request, previous: asked ? asked.previous : current.previousRequest ?? null, reply, status,
-        applyFix, applyWithhold, keepText: config.judgeLogText !== 'owner' || Boolean(current.full), ...(evidence.length ? { evidence } : {}) });
+        applyFix, applyWithhold, keepText: config.judgeLogText !== 'owner' || Boolean(current.full), ...(evidence.length ? { evidence } : {}), ...asked?.publication, scrubTruthText: value => vault.scrub(id, value) });
       if (applyWithhold && verdict?.decision === 'withhold' && verdict.withholdText?.trim()) return { text: verdict.withholdText, withheld: true };
       if (applyFix && verdict?.decision === 'fix' && verdict.fixedReply?.trim()) return { text: verdict.fixedReply, withheld: false };
     } catch { /* The judge never stops a run. */ }
@@ -1492,7 +1492,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const read = await Promise.all(ranked.map(async hit => {
       const page = config.readPage ? await config.readPage(hit.url, signal, { live }).catch(() => null) : null;
       if (page && page !== 'disallowed' && page.text.trim()) return { kind: 'page' as const, url: page.url, title: page.title || hit.title, text: page.text.slice(0, 200_000) };
-      return hit.snippet?.trim() ? { kind: 'page' as const, url: hit.url, title: hit.title, text: hit.snippet } : null;
+      return hit.snippet?.trim() ? { kind: 'page' as const, url: hit.url, title: hit.title, text: hit.snippet, searchSnippet: true as const } : null;
     }));
     const pages = read.filter((page): page is NonNullable<typeof page> => page !== null);
     return pages.length ? { pages } : { pages: [], note: 'لم تُقرأ أي صفحة من نتائج البحث.' };
@@ -1540,7 +1540,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     // The judge sees the reply first: logged in shadow for everyone; for the owner's account its fix, or its fixed withhold
     // sentence, is what goes on. Memory publications keep their own stricter checks and are never changed here.
     // A reply the council picked from a model was already judged there.
-    const judged = modelReply || council?.changed || prejudged || !config.judgeShadow ? { text, withheld: false } : await reviewJudgedReply(work => runTransaction(id, runId, work), { id, runId, clean, allowApply: !memoryPublication && state.supervision?.contract.mode !== 'enforced' }, () => judgeReply(id, runId, text, status, !memoryPublication));
+    const judged = prejudged || !config.judgeShadow || ((modelReply || council?.changed) && !(config.judgeShadow.truthMode && council?.truthPublication)) ? { text, withheld: false } : await reviewJudgedReply(work => runTransaction(id, runId, work), { id, runId, clean, allowApply: !council?.changed && !memoryPublication && state.supervision?.contract.mode !== 'enforced' }, () => judgeReply(id, runId, text, status, !memoryPublication, council?.truthPublication));
     text = judged.text;
     // A withheld answer is not a completed task.
     if (judged.withheld && status === 'completed') status = 'partial';
@@ -1555,7 +1555,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (current.active_run_id !== runId || current.status !== 'running') throw new RunEnded();
       // Owner-only at the fenced publication boundary: v5's text and the council's record are kept for an owner account only.
       const owner = Boolean((modelReply || council) && source && await config.accountFullAccess?.(source.ownerId, tx));
-      const experiment = modelReply && owner ? 'v5' as const : undefined;
+      const experiment = modelReply && owner && !judged.withheld ? 'v5' as const : undefined;
       const councilRecord = council && owner ? council.council : undefined;
       if (campaignEnd && campaignTask) await appendCampaignEvent(tx, { conversationId: id, runId, taskId: campaignTask }, campaignEnd);
       // The earlier checkpoint may have waited for a database connection. Review

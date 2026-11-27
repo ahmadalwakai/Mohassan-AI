@@ -48,6 +48,14 @@ python3 -B scripts/dev-bench/compare.py \
 
 When a repeated baseline proves that a reply value varies, supply `--baseline-repeat` with that baseline's coordinated receipt and `--reply-masks` with a JSON array. Each entry names `version`, `caseId`, 1-based `turn`, and a `values` object with the exact `baseline`, `baselineRepeat` and `flagsOff` literals. Each literal must occur once in its specified reply. The comparator requires identical surrounding text and records hashes of the masked values.
 
+## Factual reply check comparison
+
+In one invocation, pass three `--arm` arguments for the baseline, candidate in shadow, and candidate with enforcement. Use the same candidate SHA in the latter two and the same common flags across the run. Add `--set shadow:MOHASSAN_TRUTH_CHECK=shadow` and `--set enabled:MOHASSAN_TRUTH_CHECK=on` when the candidate arms are named `shadow` and `enabled`.
+
+Use `--skip-scratch-models` to set `MOHASSAN_SCRATCH_CLASSIFIERS=0` and omit the checked-in artifacts from the disposable checkouts. The shadow classifier then has no artifacts to load. [Scratch classifier artifacts, retrieved 2026-11-27](https://github.com/ahmadalwakai/Mohassan-AI/tree/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/packages/scratch-classifiers/models)
+
+Both candidate receipts capture the production judge's truth decisions. A withhold counts as published when its replacement appears in the observed reply. `summary.json` counts affected turns, including turns with multiple withhold decisions. The benchmark scores the whole turn's reply. An answer-stage failure on the matching shadow turn counts as a save, and an answer with no such failure counts as a false alarm. Draft matching ignores the wall-clock read time appended to a source line. A turn without a matching shadow draft is reported as unmatched. Native development scores keep the original replies and every benchmark check.
+
 ## Smart monitor comparison
 
 Run the three arms together with `--offline --audit-monitors` in a network-disabled container. Apply [PR #95's arm C settings](../../docs/INTEGRATION-WAVE-5-2026-11-25.md#three-arm-development-run) and `MOHASSAN_MONITORS_ENABLED=1` to every arm. Set `MOHASSAN_MONITORS_V2=0` on the pinned monitor baseline and the candidate's flags-off arm, and set it to `1` on the same candidate commit in the flags-on arm.
