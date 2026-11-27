@@ -52,6 +52,8 @@ On Windows, `(Get-FileHash -Algorithm SHA256 path\to\file).Hash.ToLowerInvariant
 
 ### Reply behavior
 
+Own-model route observation, follow-up observation, and reply phrasing serve only full-reach owner accounts.
+
 The route observer scores the three highest B0 candidates from the local router artifacts. The follow-up observer scores the conversation turn types when earlier user turns are available. The server compares the choices with the host route and the existing conversation parser. Neither choice changes the reply or grants permission to use a tool.
 
 Phrasing can replace the first sentence of a sourced search answer when the judge has approved the quote and the generated sentence passes a second support check against that quote. The initial policy preserves every word and permits only whitespace and terminal-period changes. The displayed source and qualifications stay attached. If generation or review fails, the quote remains the answer. The provider's stream is for internal consumers and the chat publishes only after review.

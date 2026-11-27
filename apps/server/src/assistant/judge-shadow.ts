@@ -8,12 +8,13 @@ import { keepJudgeShadowText } from './judge-shadow-privacy.js';
  * The judge in shadow: the chat sends what it sends, and this records what the judge would have decided about it,
  * one JSON line per reply, for the owner's review and the report (`npx tsx scripts/judge/shadow-report.ts`). Like
  * the router and conversation-state shadows it changes nothing: it never throws into the chat, a failed write is
- * dropped, and the reply text is truncated. Wiring it is two lines in command-chat.ts finish(); see
- * docs/HANDOVER-2026-11-22-JUDGE-SHADOW.md.
+ * dropped, and the reply text is truncated. See docs/HANDOVER-2026-11-22-JUDGE-SHADOW.md.
  */
 export interface JudgeShadowInput extends JudgeInput {
   conversationId: string;
   runId: string;
+  /** Defaults to pipeline. A model reply uses the model's id. */
+  origin?: string;
   /** The host will send the judge's fixed reply when the decision is fix (owner's own account only, by the owner's word of 2026-11-22). */
   applyFix?: boolean;
   /** The host will send the judge's withhold text when the decision is withhold (owner's own account only, by the owner's word of 2026-11-22). */
@@ -29,6 +30,7 @@ export interface JudgeShadowLine {
   at: string;
   conversationId: string;
   runId: string;
+  origin: string;
   question: string;
   /** The user's previous turn when the host knew it; null for a first turn or a reply finished before the history was read. */
   previous: string | null;
@@ -106,7 +108,7 @@ export function createJudgeShadow(options: { logFile: string; now?: () => Date }
         const keep = keepJudgeShadowText(input, verdict);
         const quoted = (line: JudgeVerdict['lead']) => keep || !line ? line : { ...line, text: '' };
         write({
-          at: now().toISOString(), conversationId: input.conversationId, runId: input.runId,
+          at: now().toISOString(), conversationId: input.conversationId, runId: input.runId, origin: input.origin ?? 'pipeline',
           question: keep ? input.question.slice(0, MAX_TEXT) : '', previous: keep && input.previous ? input.previous.slice(0, MAX_TEXT) : null, reply: keep ? input.reply.slice(0, MAX_REPLY) : '', status: input.status ?? null,
           decision: verdict.decision, applied, withholdText: keep ? verdict.withholdText : null, kind: verdict.kind, lang: verdict.lang, intent: verdict.frame.intent, answerType: verdict.frame.answerType, sourced: verdict.sourced,
           codes: verdict.codes, findings: keep ? verdict.findings : verdict.findings.map(finding => ({ ...finding, excerpt: '', detail: '' })), lead: quoted(verdict.lead), best: quoted(verdict.best),

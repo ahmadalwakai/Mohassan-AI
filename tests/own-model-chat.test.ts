@@ -6,7 +6,7 @@ import { ROUTES } from '../apps/server/src/assistant/router.js';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
 import type { OwnModelGates } from '../apps/server/src/own-model-gates.js';
 
-it('observes both decisions in chat and sends the host quote when model phrasing fails review', async () => {
+it('observes decisions and attempts phrasing for the owner while members receive the host quote', async () => {
   const database = await createDatabase();
   const url = 'https://own-model-fixture.test/japan';
   const quote = 'Tokyo is the capital of Japan and the largest city in the country.';
@@ -41,12 +41,16 @@ it('observes both decisions in chat and sends the host quote when model phrasing
   let control: Awaited<ReturnType<typeof createCommandChatControl>> | undefined;
   try {
     await migrate(database.db);
+    const owner = 'own-model-chat-fixture';
+    const member = 'own-model-member-fixture';
+    const goal = 'What is the capital of Japan?';
+    const followUp = 'And what is its population?';
     control = await createCommandChatControl(database.db, {
       models: { fast: [], deep: [], vision: '' }, browser, ownModel, searchProvider: { name: 'fixture', search },
       readPage: async () => ({ url, title: 'Capital of Japan', text: evidence, status: 200 }),
+      fullAccess: async ownerId => ownerId === owner,
     });
-    const owner = 'own-model-chat-fixture';
-    const { id } = await control.create(owner, { goal: 'What is the capital of Japan?' });
+    const { id } = await control.create(owner, { goal });
     await control.settled(id);
     const first = await control.detail(owner, id);
     expect(first.error).toBeNull();
@@ -58,13 +62,31 @@ it('observes both decisions in chat and sends the host quote when model phrasing
       expect(record).toHaveBeenCalledWith(expect.objectContaining({ capability: 'route-choice', outcome: 'chosen', agreed: false }));
     });
 
-    await control.send(owner, id, { text: 'And what is its population?' });
+    await control.send(owner, id, { text: followUp });
     await control.settled(id);
     expect(search).toHaveBeenCalledTimes(2);
     expect((await control.detail(owner, id)).error).toBeNull();
     await vi.waitFor(() => {
       expect(record).toHaveBeenCalledWith(expect.objectContaining({ capability: 'follow-up-turn-type', outcome: 'chosen', agreed: true }));
     });
+
+    choose.mockClear();
+    generate.mockClear();
+    const observe = vi.spyOn(ownModel, 'observe');
+    const phrase = vi.spyOn(ownModel, 'phrase');
+    const { id: memberId } = await control.create(member, { goal });
+    await control.settled(memberId);
+    const memberFirst = await control.detail(member, memberId);
+    expect(memberFirst.error).toBeNull();
+    expect(memberFirst.messages.at(-1)?.text).toBe(first.messages.at(-1)?.text);
+
+    await control.send(member, memberId, { text: followUp });
+    await control.settled(memberId);
+    expect((await control.detail(member, memberId)).error).toBeNull();
+    expect(observe).not.toHaveBeenCalled();
+    expect(phrase).not.toHaveBeenCalled();
+    expect(choose).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
   } finally {
     await control?.shutdown();
     await database.close();

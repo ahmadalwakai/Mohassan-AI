@@ -119,13 +119,14 @@ describe('deliberation', () => {
   });
 
   it('searches the web on the backend when the pipeline read nothing and found nothing, then sends the grounded answer', async () => {
-    const search = vi.fn(async () => ({ pages: [page(PARIS, 'Capital of France guide', 'https://travel.example/france-capital')] }));
+    const pages = [page(PARIS, 'Capital of France guide', 'https://travel.example/france-capital')];
+    const search = vi.fn(async () => ({ pages }));
     const models = runner({ 'reading-v3-last': { ok: true, output: { text: ' Paris\nQuestion:', stopReason: 'length' }, elapsedMs: 40 } });
     // v5 says the same thing, so the reading model's answer is grounded and backed by a second member.
     const council = createModelCouncil({ runner: models, v5: async () => 'The capital of France is Paris.' });
     const outcome = await council.deliberate(turn({ pipeline: { text: 'لم أجد جواباً.', status: 'blocked' }, search }));
     expect(search).toHaveBeenCalledWith('What is the capital of France?', expect.any(AbortSignal));
-    expect(outcome).toMatchObject({ changed: true, chosen: 'reading-v3-last', status: 'completed' });
+    expect(outcome).toMatchObject({ changed: true, chosen: 'reading-v3-last', status: 'completed', evidence: pages });
     expect(outcome.text).toContain('Paris');
     expect(outcome.text).toContain('Source: Capital of France guide — https://travel.example/france-capital');
     expect(outcome.text).toContain('reading model v3');
