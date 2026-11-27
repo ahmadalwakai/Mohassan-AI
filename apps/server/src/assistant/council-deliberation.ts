@@ -207,7 +207,7 @@ function exceeds(weight: number, other: number): boolean {
 }
 
 export function decideCouncilDiscussion(input: DiscussionInput): Discussion {
-  const proposals = input.proposals.slice(0, MAX_PROPOSALS);
+  const proposals = Array.from(new Map(input.proposals.map(proposal => [proposal.member, proposal])).values()).slice(0, MAX_PROPOSALS);
   const members = new Set(proposals.map(proposal => proposal.member));
   const checks: CouncilCheck[] = [];
   const verified = new Set<string>();
@@ -267,8 +267,8 @@ export function decideCouncilDiscussion(input: DiscussionInput): Discussion {
   if (input.allowReplacement !== false && best && exceeds(best.support, pipelineSupport) && (!ranked[1] || exceeds(best.support, ranked[1].support))) {
     return { proposals, checks, votes, decision: {
       chosen: best.winner.member,
-      reasonAr: 'تحقّق الحكم من الاقتباس، وأيّد الجوابَ عضوان على الأقل، وتجاوز وزن تأييده وزن جواب المحرك وأي جواب منافس.',
-      reasonEn: 'The judge verified the cited evidence. At least two members agreed, and their combined weight exceeded the pipeline and any competing answer.',
+      reasonAr: 'تحقّق الحكم من الاقتباس، وأيّد الجوابَ عضوان على الأقل، وتجاوز وزن تأييده وزن جواب المحرك وأي جواب منافس مستوفٍ للشروط.',
+      reasonEn: 'The judge verified the cited evidence. At least two members agreed, and their combined weight exceeded the pipeline and any other eligible answer.',
     } };
   }
 

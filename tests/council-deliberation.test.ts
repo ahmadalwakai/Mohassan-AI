@@ -70,8 +70,9 @@ describe('council deliberation rounds', () => {
   it('keeps the pipeline for equal support, a lone answer, and missing comparable receipts', () => {
     expect(discussion({ votes: { pipeline: measured(0.3), 'reader-a': measured(0.1), 'reader-b': measured(0.2) } }).decision.chosen)
       .toBe('pipeline');
+    const lone = proposeCouncilAnswers(candidates.slice(0, 2), [page]);
     expect(discussion({
-      proposals: proposeCouncilAnswers(candidates.slice(0, 2), [page]),
+      proposals: [...lone, lone[1]!],
       votes: { pipeline: measured(0.2), 'reader-a': measured(0.9) },
     }).decision.chosen).toBe('pipeline');
     expect(discussion({ votes: { 'reader-a': measured(0.9), 'reader-b': measured(0.9) } }).decision.chosen).toBe('pipeline');

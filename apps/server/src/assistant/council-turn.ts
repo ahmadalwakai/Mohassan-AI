@@ -125,7 +125,8 @@ export async function deliberateCouncilTurn(options: ModelCouncilOptions, turn: 
   const started = performance.now();
   const deadline = started + (options.budgetMs ?? 45_000);
   const language = questionLanguage(turn.question);
-  const receiptLanguage: CouncilLanguage = /[\p{L}&&[^\p{Script=Latin}\p{Script=Arabic}]]/v.test(turn.question) ? 'other' : language;
+  const letterOutsideSupportedScripts = /(?=\p{L})(?!\p{Script=Latin}|\p{Script=Arabic})/u.test(turn.question);
+  const receiptLanguage: CouncilLanguage = letterOutsideSupportedScripts ? 'other' : language;
   const mayPropose = turn.baseline.refusal === 'allow';
   let evidence = turn.evidence;
   let domain = domainFor(turn, evidence);

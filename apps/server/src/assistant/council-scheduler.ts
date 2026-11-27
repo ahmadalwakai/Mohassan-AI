@@ -177,7 +177,7 @@ export function createCouncilSchedule(options: CouncilScheduleOptions) {
       }
       const started = performance.now();
       const cap = options.capMs?.(role, entry) ?? entry.resources.latencyMs;
-      const result = await withinBudget(Math.min(deadline, started + cap), options.signal, signal => {
+      const result = await withinBudget<T>(Math.min(deadline, started + cap), options.signal, signal => {
         const work = Promise.resolve().then(() => {
           signal.throwIfAborted();
           return runner(entry, role, signal);
