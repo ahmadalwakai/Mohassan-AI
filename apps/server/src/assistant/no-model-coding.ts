@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
 import { BrowserError } from '@mohassan/browser';
 import type { CheckFailure, CodingCheckResult, ImportsLookup, ProjectSearchResult } from '@mohassan/coding';
+import { readRenameGoal } from '../../../../packages/coding/src/rename.ts';
 import { addEvidence, appendStep, planStep, settleStep, startStep, tryEnterPhase, type RunLedger } from './agent-run.js';
 import type { BrainState } from './brain.js';
 import type { RequestRoutingDecision } from './routing-decision.js';
 import type { AssistantTools } from './tools.js';
+import { requestOperationText } from './request-scope.js';
 import { reviewWorkRequestScope } from './work-request-scope.js';
 
 /**
@@ -56,7 +58,7 @@ export function chooseCodingProject(request: string, projects: readonly CodingPr
 
 // A request to change code that the routing regexes miss because it names the project instead of saying «كود»/"code".
 // «صحح» also corrects text, so like the others it counts only with a registered project named and the scope review passed.
-const EDIT_VERB = /(?:^|\s)(?:اصلح|صلح|صحح|عدل|نسق|رتب|حسن)(?=\s|$)|\b(?:fix|repair|format|lint)\b/u;
+const EDIT_VERB = /^(?<rename>اعد تسميه|غير اسم|rename)(?=\s)|(?:^|\s)(?:اصلح|صلح|صحح|عدل|نسق|رتب|حسن)(?=\s|$)|\b(?:fix|repair|format|lint)\b/u;
 
 export function codingTargetReply(target: Exclude<CodingTarget, { kind: 'project' }>, lang: Lang): string {
   if (target.kind === 'none') return lang === 'ar'
@@ -73,18 +75,31 @@ export async function prepareNoModelCoding(request: string, routing: Pick<Reques
     understanding: Parameters<typeof reviewWorkRequestScope>[2], work: AssistantTools['work'], ownerId: string,
     runId: string): Promise<NoModelCodingStart | null> {
   const routed = routing?.handler === 'coding';
-  if (routed ? routing.availability !== 'ready' : !EDIT_VERB.test(foldProjectText(request))) return null;
+  const edit = EDIT_VERB.exec(foldProjectText(requestOperationText(request)));
+  const rename = Boolean(edit?.groups?.rename);
+  if (routed ? routing.availability !== 'ready' : !edit) return null;
   if (!work?.code || !work.inventory || !reviewWorkRequestScope(request, 'code_prepare', understanding).allowed) return null;
-  const target = chooseCodingProject(request, await work.inventory(ownerId));
-  // Outside the coding route only a request that names a registered project is this path's.
-  if (!routed && !(target.kind === 'project' && target.named)) return null;
+  const parsedRename = rename ? readRenameGoal(request) : undefined;
+  const projectText = rename ? (typeof parsedRename === 'object' ? parsedRename.project : undefined) : request;
+  if (!projectText) return null;
+  const target = chooseCodingProject(projectText, await work.inventory(ownerId));
+  // A rename and any fallback outside the coding route require a named registered project.
+  if ((!routed || rename) && !(target.kind === 'project' && target.named)) return null;
   if (target.kind !== 'project') return { kind: 'reply', text: codingTargetReply(target, languageOf(request)), status: 'blocked' };
+  if (rename) {
+    const phrase = foldProjectText(projectText), name = foldProjectText(target.project.name);
+    if (phrase !== name && phrase.replace(/^(?:مشروع|المشروع|(?:the )?project)\s+/u, '') !== name) return null;
+  }
   const key = createHash('sha256').update(`code_change|${target.project.id}|${request}`).digest('hex').slice(0, 32);
   const task = await work.code(ownerId, { id: target.project.id, goal: request }, `chat-task:${runId}:${key}`, runId);
-  // The owner approves knowing what can happen: the no-model tools ignore a logic goal (packages/coding/src/deterministic.ts).
   return { kind: 'approval', task: { id: task.id, label: task.label, tool: 'code_change' }, prompt: task.prompt,
-    detail: `${task.detail}\n${PROVEN_ONLY[languageOf(request)]}` };
+    detail: `${task.detail}\n${(rename ? PROVEN_RENAME : PROVEN_ONLY)[languageOf(request)]}` };
 }
+
+const PROVEN_RENAME: Record<Lang, string> = {
+  ar: 'تُعرض نتيجة إعادة التسمية للمراجعة بعد التحقق من المراجع واجتياز الفحوص في نسخة معزولة.',
+  en: 'The rename is offered for review after the references are verified and the isolated project passes its checks.',
+};
 
 const PROVEN_ONLY: Record<Lang, string> = {
   ar: 'من دون نموذج تُطبَّق الإصلاحات المؤكدة فقط: تشخيصات TypeScript ذات الإصلاح المعروف، وإصلاحات ESLint، والتنسيق عند طلبه. لا يُنفَّذ أي تغيير في المنطق.',

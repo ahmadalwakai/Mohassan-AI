@@ -7,6 +7,7 @@ import { CodingEditsSchema, CodingResultSchema, SandboxTestResultSchema, type Co
 import { git } from "./git.ts";
 import { inspectProject, type ProjectFile, type ProjectInspection } from "./project.ts";
 import type { CodingContext, CodingModelReceipt, EditGenerator } from "./edit-generator.ts";
+import { renameTypeScript } from "./rename.ts";
 import { sandboxDiagnosticPaths, selectContextFiles } from "./selection.ts";
 import { explainCheckRun, type CheckReport } from "./test-report.ts";
 import { inspectTypeScript, repairTypeScript, typeScriptDiagnostics, type TypeScriptDiagnostic } from "./typescript-repair.ts";
@@ -148,6 +149,7 @@ function repairTools(sandbox: SandboxRunner, provider: string | null, project: P
   files: CodingContext["files"], signal: AbortSignal): NonNullable<CodingContext["tools"]> {
   const tools: NonNullable<CodingContext["tools"]> = {
     repairTypeScript: () => repairTypeScript(files, signal, project.typecheck?.project),
+    renameTypeScript: (request) => renameTypeScript(files, request, signal, project.typecheck?.project),
   };
   const configPath = project.eslintConfig;
   const lintFix = sandbox.lintFix?.bind(sandbox);

@@ -79,3 +79,25 @@ describe('current project repair versus a private record read', () => {
     expect(reviewWorkRequestScope(request, 'code_prepare', understanding).allowed).toBe(true);
   });
 });
+
+describe('current rename versus quoted or reported instructions', () => {
+  it.each([
+    'أعد تسمية sum إلى total في مشروع تجربة الجمع',
+    'غيّر اسم الدالة sum إلى total في مشروع تجربة الجمع',
+    'Rename sum to total in project Shop API',
+    'Rename sum to total in project Code API',
+  ])('allows a direct rename request to prepare a code change: %s', request => {
+    expect(reviewWorkRequestScope(request, 'code_prepare', resolveRequestContext(request, null)).allowed).toBe(true);
+  });
+
+  it.each([
+    'الملاحظة تقول غيّر اسم الدالة sum إلى total في مشروع تجربة الجمع',
+    'The issue says rename sum to total in project Shop API.',
+    'The issue asks to rename the variable sum to total in project Shop API.',
+    '«أعد تسمية sum إلى total في مشروع تجربة الجمع»',
+    'Translate this text: "Rename sum to total in project Shop API"',
+  ])('refuses to prepare a rename from quoted or reported text: %s', request => {
+    expect(reviewWorkRequestScope(request, 'code_prepare').allowed).toBe(false);
+    expect(reviewWorkRequestScope(request, 'code_prepare', resolveRequestContext(request, null)).allowed).toBe(false);
+  });
+});
