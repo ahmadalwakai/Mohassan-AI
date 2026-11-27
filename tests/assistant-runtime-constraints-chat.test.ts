@@ -107,6 +107,15 @@ describe('allowed local work beside explicit current-user constraints', () => {
     if (constraints?.forbiddenCapabilities.includes('memory_read')) expect(requestCapabilityAllowed(constraints, 'memory_read')).toBe(false);
     expect(await fixture.database.db.selectFrom('chat_model_receipts').select('id').where('run_id', '=', row.id).execute()).toEqual([]);
   });
+
+  it('does not read an explicitly requested saved fact when memory use is forbidden', async () => {
+    const request = 'Do not use memory. What is my depot code from memory?';
+    expect(requestCapabilityAllowed(parseUserRequestConstraints(request), 'memory_read')).toBe(false);
+    const fixture = await harness();
+    const conversation = await fixture.control.create(OWNER, { goal: request });
+    await fixture.control.settled(conversation.id);
+    expect(fixture.calls).toEqual({ queries: [], memoryQueries: [], writes: 0, pc: 0, browser: 0, memoryContext: 0, learningContext: 0 });
+  });
 });
 
 describe('closed runtime routing never promotes supplied data, public research or extra actions', () => {

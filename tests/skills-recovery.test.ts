@@ -1,15 +1,25 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { basename, join, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer, type Server } from 'node:http';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
+let tempRoot:string|undefined;
 let directory:string|undefined;
 let server:Server|undefined;
 const children=new Set<ChildProcess>();
 const browserChildren=new Set<ChildProcess>();
+beforeAll(async()=>{
+  // Exercise the worker's temp-root checks with the same non-default directory as its parent.
+  tempRoot=await mkdtemp(join(await realpath(tmpdir()),'mohassan-recovery-tests-'));
+  vi.stubEnv(process.platform==='win32'?'TEMP':'TMPDIR',tempRoot);
+});
+afterAll(async()=>{
+  vi.unstubAllEnvs();
+  if(tempRoot)await rm(tempRoot,{recursive:true,force:true});
+});
 afterEach(async()=>{
   for(const child of children){if(child.exitCode===null&&child.signalCode===null){
     if(browserChildren.has(child)&&child.connected){
@@ -25,7 +35,7 @@ afterEach(async()=>{
 function worker(mode:string,phase:string,browserOrigin?:string){
   const args=browserOrigin?[resolve('tests/fixtures/skill-browser-crash-worker.ts'),directory!,phase,browserOrigin]:[resolve('tests/fixtures/skill-crash-worker.ts'),directory!,mode,phase];
   const child=spawn(process.execPath,['--import','tsx',...args],{cwd:resolve('.'),windowsHide:true,stdio:['ignore','pipe','pipe','ipc'],
-    env:{SystemRoot:process.env.SystemRoot,PATH:process.env.PATH,TEMP:process.env.TEMP,TMP:process.env.TMP,NODE_ENV:'test',
+    env:{SystemRoot:process.env.SystemRoot,PATH:process.env.PATH,TEMP:process.env.TEMP,TMP:process.env.TMP,TMPDIR:process.env.TMPDIR,NODE_ENV:'test',
       ...(browserOrigin?{PLAYWRIGHT_BROWSERS_PATH:process.env.PLAYWRIGHT_BROWSERS_PATH}:{})}});
   children.add(child);let errors='';child.stderr!.on('data',data=>{errors+=String(data).slice(0,4000);});
   if(browserOrigin)browserChildren.add(child);

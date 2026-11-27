@@ -63,6 +63,7 @@ const PROVIDED = /(?:^|\s)(?:هذا|هذه|التالي|التاليه|المر�
 const CONTENT_OBJECT = /(?:^|\s)(?:نص|النص|جمله|الجمله|رساله|الرساله|ملاحظه|الملاحظه|فقره|الفقره|وثيقه|الوثيقه|ملف|الملف)(?=\s|[\p{P}]|$)|\b(?:text|sentence|message|note|paragraph|document|file|content)\b/iu;
 const MEMORY_ACTION = /^(?:تذكر|تتذكر|احفظ|استرجع|استعد|remember|recall)(?=\s|[\p{P}]|$)/iu;
 const OWNED_RECORD = /(?:^|\s)[وبلكف]{0,2}(?:تفضيلات|ملاحظات|سجلات|مواعيد|بيانات|ملفات|حسابات|رسائل|تقارير|وثائق|دفاتر|شركت|متجر|عملاء|عملائ|مشروع|ذاكرت)(?:ي|نا)(?=\s|[\p{P}]|$)|\b(?:my|our)\s+(?:saved|stored|recorded|personal|private)\b|\b(?:my|our)\s+(?:(?:previous)\s+){0,2}(?:name|company|business|account|preferences?|notes?|records?|appointments?|files?|reports?|documents?|messages?|customers?|clients?|projects?|memory|memories|password|address)\b/iu;
+const OWNED_MEMORY_QUESTION = /^what(?:['’]s| is| was) (?:my|our) [^.!?;:\r\n]{1,120} from memory[.!?]*$/iu;
 const PRIOR_RELATION = /(?:^|\s)(?:(?:قلت|ذكرت|اخبرت|اعطيت|ارسلت)(?:ه|ها|هم)?\s*(?:لك|ك|اليك)|(?:قلت|ذكرت|اخبرت|اعطيت|ارسلت)(?:ك|ك به|ك بها))(?=\s|[\p{P}]|$)|(?:^|\s)(?:من ذاكرتك|في ذاكرتك|في الذاكره|فاكر|بتتذكر|تتذكر)(?=\s|[\p{P}]|$)|\b(?:did\s+)?(?:i|we)\s+(?:tell|give|send|mention|provide|share|ask|told|gave|sent|mentioned|provided|shared|asked)\s+(?:it\s+|that\s+)?(?:to\s+)?you\b|\b(?:you (?:saved|stored|recorded|remembered)|(?:from|in) (?:our|my|the) (?:earlier|previous|saved|stored) (?:conversation|chat|notes?|records?))\b/iu;
 const LOCAL_SURFACE = /(?:^|\s)(?:نافذه|النافذه|النوافذ|نوافذ|شاشه|الشاشه|شريط المهام|سطح المكتب|الطرفيه|الكمبيوتر|الحاسوب|جهازي|حاسوبي|كمبيوتري|برنامج|البرنامج|برساله الخطا|رساله الخطا|ملف|الملف)(?=\s|[\p{P}]|$)|\b(?:window|screen|taskbar|desktop|terminal|computer|pc|application|spreadsheet|dialog|error message|file)\b/iu;
 const LOCAL_ANCHOR = /(?:^|\s)(?:المفتوح|المفتوحه|مفتوح|مفتوحه|ظاهر|الظاهر|ظاهره|معروض|المعروض|المعروضه|قدامك|امامك|عندي|علي جهازي|علي الكمبيوتر|المحلي|المحليه|المشاركه)(?=\s|[\p{P}]|$)|\b(?:currently (?:open|shared|visible)|visible|displayed|shared|on (?:my|the) (?:screen|computer|pc|desktop)|in (?:my|the) (?:open|local|shared)|my (?:computer|pc|desktop))\b/iu;
@@ -171,7 +172,7 @@ export function assessRequestScope(value: string, options: RequestScopeOptions =
     return make('supplied_content', 'transform', 'writing', ['supplied_transformation']);
   }
   if (currentComputerRead) return make('local_state', 'lookup', 'pc', ['visible_local_surface']);
-  const memoryAction = MEMORY_ACTION.test(outer), owned = OWNED_RECORD.test(outer), prior = PRIOR_RELATION.test(outer);
+  const memoryAction = MEMORY_ACTION.test(outer), owned = OWNED_RECORD.test(outer), prior = PRIOR_RELATION.test(outer) || OWNED_MEMORY_QUESTION.test(outer);
   const describeLocal = DESCRIBE_LOCAL.test(outer);
   const local = LOCAL_SURFACE.test(outer) && (LOCAL_ANCHOR.test(outer) || describeLocal
     || LOCAL_ACT.test(outer) && !explicitPublic && !PUBLIC_SOURCE.test(outer) && !hasPublicDocument);

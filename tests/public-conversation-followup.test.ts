@@ -101,6 +101,20 @@ describe('public conversation follow-up query refinement', () => {
   });
 
   it.each([
+    { earlier: 'ما هو أطول نهر في العالم؟', request: 'وكم طوله؟' },
+    { earlier: 'What is the tallest mountain?', request: 'And its height?' },
+  ])('leaves a property of a ranked subject to the answer-entity handler: $earlier', ({ earlier, request }) => {
+    expect(publicConversationFollowup(inputFor([earlier], request))).toBeNull();
+  });
+
+  it.each([
+    { earlier: 'أخبرني عن قطر', request: 'وكم عدد سكانها؟', query: 'عدد سكان قطر' },
+    { earlier: 'Tell me about Qatar', request: 'And its population?', query: 'population of Qatar' },
+  ])('uses the named subject after a general request: $earlier', ({ earlier, request, query }) => {
+    expect(publicConversationFollowup(inputFor([earlier], request))).toBe(query);
+  });
+
+  it.each([
     { earlier: 'من ذاكرتي، ما مدينتي المفضلة؟', request: 'وما عدد سكانها؟' },
     { earlier: 'What is my saved city?', request: 'And its population?' },
     { earlier: 'ما عاصمة استراليا؟', request: 'افتح موقعها' },

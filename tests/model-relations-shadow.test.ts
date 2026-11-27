@@ -4,11 +4,23 @@ import { join } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
 import { describe, expect, it, vi } from 'vitest';
 import { type BrainState } from '../apps/server/src/assistant/brain.js';
-import { createModelRelationsObserver } from '../apps/server/src/assistant/model-relations-shadow.js';
+import { modelRelationsManager } from '../apps/server/src/assistant/model-relations-arbiter.js';
+import { createModelRelationsObserver, observeModelRelations } from '../apps/server/src/assistant/model-relations-shadow.js';
 import { ModelRelationsManager } from '../packages/model-relations/src/manager.js';
 import type { ModelRunResult } from '../packages/model-relations/src/runtime.js';
 
 describe('published chat model relations', () => {
+  it('keeps the shared observer away from the checkout during ordinary tests', async () => {
+    const inspect = vi.spyOn(modelRelationsManager, 'inspect').mockRejectedValue(new Error('Unexpected shared observer'));
+    try {
+      observeModelRelations('test-run', undefined, { request: 'Fixture request' }, 'Fixture reply', 'completed');
+      await setImmediate();
+      expect(inspect).not.toHaveBeenCalled();
+    } finally {
+      inspect.mockRestore();
+    }
+  });
+
   it('schedules a decision receipt off the publication path and omits private content', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'mohassan-relations-shadow-'));
     const logFile = join(directory, 'shadow.jsonl');

@@ -1,5 +1,7 @@
-import { afterEach, beforeAll, afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
+import { statSync } from 'node:fs';
 import type { AgentBrowser, SearchProvider } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
@@ -18,6 +20,26 @@ const prompt = [
 ].join('\n');
 
 afterEach(() => vi.unstubAllEnvs());
+
+function systemPythonSkipReason(): string | undefined {
+  const executable = '/usr/bin/python3';
+  const metadata = statSync(executable, { throwIfNoEntry: false });
+  if (!metadata?.isFile()) return `requires system Python at ${executable}`;
+  if (metadata.uid !== 0 || (metadata.mode & 0o6000) !== 0) {
+    return `requires a root-owned Python without set-ID bits at ${executable} (found UID ${metadata.uid})`;
+  }
+
+  // Check the host prerequisite independently so launcher regressions still fail the tests.
+  const version = execFileSync(executable, ['-I', '-B', '-S', '--version'], {
+    env: {}, encoding: 'utf8', timeout: 2_500,
+  });
+  const match = /^Python (\d+)\.(\d+)/u.exec(version);
+  if (!match) throw new Error(`Could not read the system Python version at ${executable}`);
+  const major = Number(match[1]), minor = Number(match[2]);
+  if (major < 3 || (major === 3 && minor < 11)) {
+    return `requires Python 3.11 or newer at ${executable} (found ${major}.${minor})`;
+  }
+}
 
 describe('routing requests that supply Python assertions', () => {
   it('preserves the assertions and never uses them as a public query', () => {
@@ -67,17 +89,28 @@ describe.skipIf(process.platform !== 'linux' || process.geteuid?.() === 0)('veri
   const forbiddenIO = vi.fn(async () => { throw new Error('This request uses only its assertion examples'); });
   let database: Awaited<ReturnType<typeof createDatabase>>;
   let control: Awaited<ReturnType<typeof createCommandChatControl>>;
+  let missingPython: string | undefined;
 
   beforeAll(async () => {
+    missingPython = systemPythonSkipReason();
     database = await createDatabase({});
     await migrate(database.db);
     const browser = { setCheckpointStore() {}, async bindAccount() {}, async hasPage() { return false; },
       act: forbiddenIO, observe: forbiddenIO, screen: forbiddenIO, async close() {},
     } as unknown as AgentBrowser;
-    control = await createCommandChatControl(database.db, {
-      browser, searchProvider: { name: 'python-no-network', search: forbiddenIO } as SearchProvider,
-      models: { fast: [], deep: [], vision: '' }, recordExperiences: false,
-    });
+    vi.stubEnv('TEST_DRIVEN_CODING_PYTHON', undefined);
+    try {
+      control = await createCommandChatControl(database.db, {
+        browser, searchProvider: { name: 'python-no-network', search: forbiddenIO } as SearchProvider,
+        models: { fast: [], deep: [], vision: '' }, recordExperiences: false,
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  beforeEach(() => {
+    vi.stubEnv('TEST_DRIVEN_CODING_PYTHON', undefined);
   });
 
   afterAll(async () => {
@@ -97,7 +130,8 @@ describe.skipIf(process.platform !== 'linux' || process.geteuid?.() === 0)('veri
     return { status: run.status, text: detail.messages.at(-1)?.text, verification: run.state.codingVerification };
   }
 
-  it('publishes a verified function when enabled', async () => {
+  it('publishes a verified function when enabled', async ({ skip }) => {
+    if (missingPython) skip(missingPython);
     vi.stubEnv('TEST_DRIVEN_CODING_ENABLED', 'true');
     const result = await ask(` ${prompt}\n`);
     expect(result.status).toBe('completed');
@@ -106,7 +140,8 @@ describe.skipIf(process.platform !== 'linux' || process.geteuid?.() === 0)('veri
     expect(result.text).toMatch(/```python\ndef combine_amounts\([^)]*\):\n/u);
   });
 
-  it('withholds a declaration on contradictory assertions and when the flag is off', async () => {
+  it('withholds a declaration on contradictory assertions', async ({ skip }) => {
+    if (missingPython) skip(missingPython);
     vi.stubEnv('TEST_DRIVEN_CODING_ENABLED', 'true');
     const contradicts = 'Write a Python function that offsets an integer.\nassert displace(28) == 31\nassert displace(28) == 32';
     const rejected = await ask(contradicts);
@@ -115,14 +150,17 @@ describe.skipIf(process.platform !== 'linux' || process.geteuid?.() === 0)('veri
     expect(rejected.text).toContain('assertion');
     expect(rejected.text).toContain('Please share');
     expect(rejected.text).not.toMatch(/\bdef\s+\w+/u);
+  });
 
+  it('withholds a declaration when the verifier is disabled', async () => {
     vi.stubEnv('TEST_DRIVEN_CODING_ENABLED', 'false');
     expect(await ask(prompt)).toEqual({
       status: 'blocked', text: 'I can’t verify Python assertions in an isolated process in this session.', verification: { reason: 'disabled' },
     });
   });
 
-  it('does not discard an unsupported assertion before supported examples', async () => {
+  it('does not discard an unsupported assertion before supported examples', async ({ skip }) => {
+    if (missingPython) skip(missingPython);
     vi.stubEnv('TEST_DRIVEN_CODING_ENABLED', 'true');
     const request = prompt.replace('assert combine_amounts(13, -4)', 'assert False\nassert combine_amounts(13, -4)');
     const result = await ask(request);

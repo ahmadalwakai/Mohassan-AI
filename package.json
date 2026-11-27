@@ -23,6 +23,7 @@
     "build": "npm run build --workspace @mohassan/web",
     "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck --workspace @mohassan/web",
     "test": "vitest run",
+    "test:gate": "tsx scripts/check-production.ts",
     "test:e2e": "playwright test",
     "ai:check": "tsx scripts/check-ai.ts",
     "coding:check": "tsx scripts/check-coding.ts",

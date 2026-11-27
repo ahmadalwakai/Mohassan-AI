@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import { hostnameWords } from './fixtures/ads-goal-grammar.js';
 import { grammarIssues, makeGrammarGoals } from '../scripts/ads-training/goal-grammar.js';
 import { checkGoal } from '../scripts/ads-training/goal.js';
 import { pointerToGoal } from '../scripts/ads-training/pointer.js';
 
 describe('goal grammar training sentences', () => {
+  it('uses fixture words in generated campaign URLs', () => {
+    const { rows } = makeGrammarGoals({ count: 400, split: 'train', seed: 11, language: 'en' });
+    expect(rows.some(row => hostnameWords.some(word => row.output.url?.includes(word)))).toBe(true);
+  });
+
   it('labels the objective in the family-business frame and avoids contradictory currency declarations', () => {
     const { rows } = makeGrammarGoals({ count: 1800, split: 'train', seed: 71, language: 'en', naturalShare: 1, otherShare: 0 });
     const explicit = rows.filter(row => /launch ads for our family .*our objective is/i.test(row.input.message));
