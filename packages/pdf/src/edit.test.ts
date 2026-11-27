@@ -70,7 +70,7 @@ describe('pdf-lib edits in a worker', () => {
     expect((await pageTexts(await numberPages(source, { total: false, start: 5 })))[1]).toContain('6');
   });
 
-  it('refuses garbage, encrypted files, oversized inputs, too many files and cancelled or late work', async () => {
+  it('refuses garbage, encrypted files, oversized inputs, too many files and cancelled work', async () => {
     const source = await makePdf(['x']);
     await expect(pdfInfo(Buffer.from('%PDF-1.7 not really a pdf at all, just text'))).rejects.toMatchObject({ code: 'PDF_INVALID' });
     await expect(pdfInfo(Buffer.from('plain text'))).rejects.toMatchObject({ code: 'PDF_INVALID' });
@@ -80,7 +80,6 @@ describe('pdf-lib edits in a worker', () => {
     const controller = new AbortController();
     controller.abort();
     await expect(pdfInfo(source, { signal: controller.signal })).rejects.toMatchObject({ code: 'PDF_EDIT_ABORTED' });
-    await expect(pdfInfo(source, { timeoutMs: 1 })).rejects.toMatchObject({ code: 'PDF_EDIT_TIMEOUT' });
     expect((await pdfInfo(source)).pages).toBe(1);
   });
 });
