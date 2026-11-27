@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import subprocess
 
+from council_bench import summarize_council
 from runner import run_arm
 
 
@@ -207,6 +208,13 @@ def main():
             'receiptSha256': digest(receipt_path.read_bytes()),
             'versions': {version: result['summary'] for version, result in versions.items()},
         }
+        if settings.get('MOHASSAN_MODEL_COUNCIL') == 'owner':
+            council = {
+                version: summarize_council(result['scores']) for version, result in versions.items()
+            }
+            require(all(group['turnsByAreaAndLanguage'] for group in council.values()),
+                    f'{name}: expected an owner council record on each development split')
+            run_summary['arms'][name]['council'] = council
         for version, result in versions.items():
             overall = result['summary']['overall']
             print(f'{name} {version}: {overall["passed"]}/{overall["total"]}', flush=True)

@@ -6,7 +6,7 @@
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sourceFingerprint } from '@mohassan/google-ads';
 import { createApplication } from '../apps/server/src/app.js';
 import { MAX_ASK_ROUNDS, pageLines } from '../apps/server/src/assistant/ads-model-chat.js';
@@ -23,9 +23,10 @@ const MESSAGE = 'make ads for kerbsidetyres.co.uk in Wigan, £20 a day';
 
 describe('own Ads model: ask once, then create the campaign PAUSED', () => {
   const open: Awaited<ReturnType<typeof createApplication>>[] = [];
-  afterEach(async () => { await Promise.all(open.splice(0).map(item => item.app.close())); });
+  afterEach(async () => { vi.unstubAllEnvs(); await Promise.all(open.splice(0).map(item => item.app.close())); });
 
   it('asks every missing fact in one message, then signs in and creates the campaign without another stop', async () => {
+    vi.stubEnv('MOHASSAN_MODEL_COUNCIL', 'owner');
     const directory = await mkdtemp(join(tmpdir(), 'mohassan-ads-own-'));
     const sourceDir = join(directory, 'src');
     await mkdir(sourceDir, { recursive: true });
@@ -72,6 +73,9 @@ describe('own Ads model: ask once, then create the campaign PAUSED', () => {
     expect(detail.question.prompt).toMatch(/1\. ما الخدمة[\s\S]*2\. ماذا تريد من الإعلان/);
     expect(detail.question.prompt).not.toContain('في أي دولة');
     expect(detail.question.prompt).toContain('الدولة: المملكة المتحدة');
+    expect(detail.messages.at(-1).council).toMatchObject({ chosen: 'pipeline', changed: false, members: expect.arrayContaining([
+      expect.objectContaining({ model: 'google-ads-pointer' }),
+    ]) });
     expect(google.mutations).toHaveLength(0);
 
     // 2. One answer; the next stop is Google's own sign-in page, nothing in between.

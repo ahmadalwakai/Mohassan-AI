@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { AgentBrowser } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
 import { memoryMigration } from '@mohassan/memory';
 import type { ImageReading } from '@mohassan/vision';
 import { migrateAuth } from '../apps/server/src/auth.js';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
+import { createModelCouncil } from '../apps/server/src/assistant/model-council.js';
+import { getModelEntry } from '../packages/model-relations/src/registry.js';
 
 /** A message with images is read by the own reader and answered at once; the bytes never leave the database. */
 const OWNER = 'image-messages-owner';
@@ -85,6 +87,45 @@ describe('chat messages with images', () => {
     expect(followUp.messages).toHaveLength(4);
     expect(followUp.messages[3].text).toContain('التسليم خلال 3 أيام');
     expect(first).toBeDefined();
+  });
+
+  it('stores other image readings with the owner reply and checks access when publishing', async () => {
+    const pipelineReading = reading(['السعر 150 ريال']);
+    const secondReading = reading(['السعر 151 ريال']);
+    const run = vi.fn(async () => ({ ok: true as const, output: secondReading, elapsedMs: 0 }));
+    const modelCouncil = createModelCouncil({
+      runner: { run },
+      registry: [getModelEntry('ocr-v2')!],
+      resolve: async entry => ({ entry, state: entry.state, artifacts: [] }),
+    });
+    const accountFullAccess = vi.fn(async (ownerId: string) => ownerId === OWNER);
+    const imageChat = await createCommandChatControl(database.db, {
+      browser, modelCouncil, recordExperiences: false, models: { fast: [], deep: [], vision: '' },
+      imageReader: { available: true, modelId: pipelineReading.modelId, read: async () => pipelineReading },
+      fullAccess: async ownerId => ownerId === OWNER,
+      accountFullAccess,
+    });
+    async function sendImage(ownerId: string) {
+      const upload = await imageChat.uploadImage(ownerId, { mimeType: 'image/png', data: await png() });
+      return imageChat.create(ownerId, { goal: 'كم السعر؟', images: [upload.id] });
+    }
+    try {
+      const ownerReply = (await sendImage(OWNER)).messages.at(-1);
+      expect(ownerReply?.text).toContain(pipelineReading.text);
+      expect(ownerReply?.council).toMatchObject({ chosen: 'pipeline', changed: false, members: expect.arrayContaining([
+        expect.objectContaining({ model: 'ocr-v2', outcome: 'ok', output: secondReading.text }),
+      ]) });
+      expect(run).toHaveBeenCalledOnce();
+
+      accountFullAccess.mockResolvedValueOnce(false);
+      const revokedReply = (await sendImage(OWNER)).messages.at(-1);
+      expect(revokedReply?.text).toContain(pipelineReading.text);
+      expect(revokedReply).not.toHaveProperty('council');
+      expect((await sendImage(OTHER)).messages.at(-1)).not.toHaveProperty('council');
+      expect(run).toHaveBeenCalledTimes(2);
+    } finally {
+      await imageChat.shutdown?.();
+    }
   });
 
   it('refuses unknown images, another owner’s images and a server without a reader', async () => {

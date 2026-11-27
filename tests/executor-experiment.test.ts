@@ -153,6 +153,21 @@ describe('direct executor runs', () => {
     expect(result).toMatchObject({ status: 'candidate', verification: { status: 'rejected' } });
   });
 
+  it('collects council advice on validated direct tasks without changing the verified candidate', async () => {
+    await writeCheckpoint();
+    const values = [7, -42];
+    const text = JSON.stringify({ values: values.map(String) });
+    const record = { version: 1 as const, chosen: 'pipeline', changed: false, reason: 'Advice recorded', elapsedMs: 0, members: [] };
+    const deliberate = vi.fn(async () => ({ text, status: 'completed' as const, chosen: 'pipeline', changed: false, council: record }));
+    const executor = control({ transport: fakeTransport(candidate(text)).factory, council: () => ({ deliberate }) });
+    const capability = 'json.transform.v1:integers-to-strings';
+    const result = await executor.run({ runId: randomUUID(), mode: 'direct', capability, fields: { values } });
+    expect(result).toMatchObject({ candidate: { text }, verification: { status: 'passed' }, council: record });
+    expect(deliberate).toHaveBeenCalledWith(expect.objectContaining({
+      advisory: true, codeTask: { capability, fields: { values } }, pipeline: { text, status: 'completed' },
+    }));
+  });
+
   it('stops on missing context before calling the model', async () => {
     await writeCheckpoint();
     const transport = fakeTransport(candidate('{}'));

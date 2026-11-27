@@ -61,6 +61,7 @@ import { generateV5ChatReply, isV5ChatReady } from './v5-chat.js';
 import { createModelCouncil } from './assistant/model-council.js';
 import { registerModelsRoutes } from './models-routes.js';
 import { createModelRuntime } from '../../../packages/model-relations/src/runtime.js';
+import { loadCouncilModelAdapter } from './assistant/council-runners.js';
 import { modelRoots } from '../../../packages/model-relations/src/registry.js';
 import { createServerOwnModelReply } from './assistant/own-model-reply.js';
 import { createAdsLab, createAdsModelWorker, registerAdsLabRoutes, type AdsLabConfig } from './ads-lab.js';
@@ -377,7 +378,8 @@ export async function createApplication(config: AppConfig) {
   await registerInferenceRoutes(app,{control:inference,owner});
   // The local executor uses only Mohassan's own model. No external AI provider is wired in:
   // assisted mode stays off until reasoning runs locally (owner decision, 2026-11-12).
-  const executor=createExecutorControl({config:config.executor??executorConfigFromEnv({},process.cwd(),true),sandbox:coding.sandbox});
+  const executor=createExecutorControl({config:config.executor??executorConfigFromEnv({},process.cwd(),true),sandbox:coding.sandbox,
+    council: () => modelCouncil });
   await registerExecutorRoutes(app,{control:executor,owner});
   app.addHook('onClose',async()=>{executor.shutdown();});
   // index.ts starts the own-model worker after app.ready(), when Fastify no longer accepts hooks: register its stop now.
@@ -500,10 +502,10 @@ export async function createApplication(config: AppConfig) {
   // The owner's model council and models page (assistant/model-council.ts, models-routes.ts) share one model runtime. It
   // reads the server's model store (MOHASSAN_MODELS_ROOT) before the checkout, and starts a model's worker on first use.
   const modelStoreRoots = modelRoots(process.cwd());
-  const modelRuntime = createModelRuntime({ artifactRoots: modelStoreRoots, idleMs: 15 * 60_000 });
+  const modelRuntime = createModelRuntime({ artifactRoots: modelStoreRoots, idleMs: 15 * 60_000, loadAdapter: loadCouncilModelAdapter });
   app.addHook('onClose', async () => { await modelRuntime.close(); });
   const modelCouncil = process.env.MOHASSAN_MODEL_COUNCIL === 'owner' ? createModelCouncil({ runner: modelRuntime,
-    ...(config.v5Chat === 'owner' ? { v5: (history: readonly { role: 'user' | 'assistant'; content: string }[], signal: AbortSignal) => generateV5ChatReply(app, history, signal) } : {}) }) : undefined;
+    ...(config.v5Chat === 'owner' ? { v5Ready: () => isV5ChatReady(app), v5: (history: readonly { role: 'user' | 'assistant'; content: string }[], signal: AbortSignal) => generateV5ChatReply(app, history, signal) } : {}) }) : undefined;
   const chat=await createCommandChatControl(database.db,{...(modelCouncil?{modelCouncil}:{}),...(shadowRouter?{shadowRouter}:{}),...(conversationShadow?{conversationShadow}:{}),...(judgeShadow?{judgeShadow,judgeFixForOwner:judgeConfig.fixForOwner,judgeWithholdForOwner:judgeConfig.withholdForOwner,judgeLogText:judgeConfig.logText}:{}),...(imageReader.available?{imageReader}:{}),...(mind?{mind,mindDeps}:{}),...(adsModel?{adsModel}:{}),sites:{createFromBrief:(ownerId,brief,options)=>sites.create(ownerId,{brief,conversationId:options.conversationId,role:options.role,draftWriteFence:options.draftWriteFence}),command:(ownerId,siteId,input)=>sites.command(ownerId,siteId,input),detail:(ownerId,siteId)=>sites.detail(ownerId,siteId),roleOf:ownerId=>roleOf(database.db,ownerId),link:siteId=>`${new URL(config.webOrigin).origin}/#sites=${siteId}`},...(desktop?{desktop:{parse:(text:string)=>clarifyDesktopFile(text,value=>desktop.parse(value)),describe:(command,lang)=>desktop.describe(command,lang),execute:(command,options)=>desktop.execute(command,options)}}:{}),...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),apiKey:config.groqApiKey,tools:assistantTools,documents:{control:documents,link:documentLink},inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,readPage,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',accountFullAccess:(ownerId,tx)=>lockOwnerToolAccess(tx,ownerId),accountActive:async(ownerId,tx)=>{const role=await roleOf(tx,ownerId);if(role!=='member')return role!==null;return Boolean(await tx.selectFrom('workspace_members').select('user_id').where('user_id','=',ownerId).where('role','=','member').where('disabled_at','is',null).forShare().executeTakeFirst());},memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
     ownModel: createServerOwnModelReply(app),
     ...(config.v5Chat === 'owner' ? { v5Chat: {
