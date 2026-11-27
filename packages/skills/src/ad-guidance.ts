@@ -1,5 +1,7 @@
 import { foldText } from './stems.ts';
 
+// Advertising cues and guide slugs are from PR #2 (retrieved 2026-11-27).
+// https://github.com/ahmadalwakai/Mohassan-AI/blob/8889496feb36b2a7975c58835a4ffad68a6edbfa/packages/skills/src/ad-guidance.ts
 export const AD_GUIDANCE_SLUGS = ['google-ads-campaign', 'copywriting'] as const;
 
 const AD_SUBJECT = String.raw`(?:google ads|adwords|adverts?|advertisements?|ad campaigns?|search campaigns?|paid search|ppc|ad copy|ad groups?|ads?(?!\s+block(?:er|ing)s?\b))`;

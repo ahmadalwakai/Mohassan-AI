@@ -2,6 +2,8 @@ import { AD_GUIDANCE_SLUGS, wantsAdGuidance } from '../../../../packages/skills/
 import { isGenericRoutingWord } from '../../../../packages/skills/src/router.js';
 import type { SkillMatch, SkillReaderCandidate } from './skill-reader.js';
 
+// Preserve the production reader's verification window (retrieved 2026-11-27).
+// https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/apps/server/src/assistant/skill-reader.ts#L364
 export const READER_MATCH_WINDOW = 3;
 
 /** Prioritize evidence about the topic while retaining generic matches as fallbacks. */
