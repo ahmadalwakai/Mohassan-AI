@@ -4,12 +4,15 @@ import { z } from 'zod';
 import type { SearchOutcome } from './engine.js';
 
 export const SEARCH_POLICY_VERSION = 'owner-sql-public-web-v5';
-export const PROVIDER_INTERVALS: Readonly<Record<string, number>> = Object.freeze({ 'Bing RSS': 1000, 'DuckDuckGo HTML': 1000, Wikipedia: 1000, 'Stack Exchange': 1000, Crossref: 1000, 'Hacker News': 1000, arXiv: 3000 });
+export const PROVIDER_INTERVALS: Readonly<Record<string, number>> = Object.freeze({ 'Bing RSS': 1000, 'DuckDuckGo HTML': 1000, Wikipedia: 1000, 'Stack Exchange': 1000, Crossref: 1000, 'Hacker News': 1000, arXiv: 3000, 'Brave Search': 1000 });
+// The monthly reset is relative to receipt. Brave rate-limit guide, checked 2026-11-27.
+// https://api-dashboard.search.brave.com/documentation/guides/rate-limiting
+export const BRAVE_RATE_LIMIT_WINDOW_MS = 2_592_000_000;
 export const searchHash = (text: string) => createHash('sha256').update(text).digest('hex');
 export const searchOwner = (ownerId: string) => z.string().min(1).max(200).parse(ownerId);
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const cachedOutcome = z.object({
-  hits: z.array(z.object({ title: z.string().max(240), url: z.string().url().max(2500), snippet: z.string().max(2000),
+  hits: z.array(z.object({ title: z.string().max(240), url: z.string().url().max(2500), snippet: z.string().max(2000), pageAge: z.string().max(80).optional(),
     providers: z.array(z.string().max(100)).max(10), relevance: z.literal('lexical'), score: z.number().finite(),
     coverage: z.literal('local_only').optional(), freshness:z.literal('indexed_snapshot').optional(), fetchedAt: z.iso.datetime().optional(), expiresAt: z.iso.datetime().optional(),
     contentHash: hash.optional(), sourceHash: hash.optional(), trust: z.literal('untrusted').optional(),
@@ -81,7 +84,8 @@ export class SqlSearchStore implements SearchCacheStore,SearchProviderAdmission 
   async releaseProvider(provider:string,token:string,retryAfterMs=0):Promise<boolean> {
     if(!Object.hasOwn(PROVIDER_INTERVALS,provider))throw new Error('SEARCH_ADMISSION_PROVIDER_INVALID');
     const minimum=PROVIDER_INTERVALS[provider]!;
-    const delay=Math.max(minimum,Math.min(86400000,Number.isFinite(retryAfterMs)?retryAfterMs:minimum));
+    const maximum=provider==='Brave Search'?BRAVE_RATE_LIMIT_WINDOW_MS:86_400_000;
+    const delay=Math.max(minimum,Math.min(maximum,Number.isFinite(retryAfterMs)?retryAfterMs:minimum));
     const changed=await this.db.updateTable('search_provider_admission').set({active_token:null,acquired_at:null,next_allowed_at:sql`clock_timestamp() + ${delay} * interval '1 millisecond'`})
       .where('provider','=',provider).where('active_token','=',token).returning('provider').executeTakeFirst();
     return Boolean(changed);

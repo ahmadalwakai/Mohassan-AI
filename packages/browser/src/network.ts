@@ -12,6 +12,11 @@ export interface NetworkAddress {address:string;family:4|6}
 export interface NetworkPolicy {testOrigins?:string[];resolver?:(hostname:string)=>Promise<NetworkAddress[]>;userAgent?:string}
 export interface SafeResponse {status:number;headers:Record<string,string>;body:Buffer;url:string}
 
+// Brave's documented POST endpoint, checked 2026-11-27.
+// https://api-dashboard.search.brave.com/api-reference/web/search/post
+export const BRAVE_WEB_SEARCH_URL = 'https://api.search.brave.com/res/v1/web/search';
+const BRAVE_RATE_LIMIT_HEADERS = ['x-ratelimit-limit', 'x-ratelimit-policy', 'x-ratelimit-remaining', 'x-ratelimit-reset'];
+
 export function isPublicAddress(address:string):boolean {
   if(isIP(address)===4){
     const [a,b,c]=address.split('.').map(Number);
@@ -64,13 +69,14 @@ export class SafeNetwork {
     const browser=options.browser===true;
     const {url,address}=await this.pin(input,options.allowedOrigins),maximum=options.maxBytes??(browser?64_000_000:2_000_000);
     const method=options.method??'GET';
+    const braveWebSearch=!browser&&method==='POST'&&url.href===BRAVE_WEB_SEARCH_URL;
     if(!(browser?BROWSER_METHODS:['GET','HEAD','POST']).includes(method)||options.body&&Buffer.byteLength(options.body)>(browser?8_000_000:16000))throw new BrowserError('BROWSER_METHOD_DENIED','نوع الطلب أو حجمه خارج نطاق القراءة والموافقة.');
     const userAgent=this.policy.userAgent??'MohassanAI-Research/1.0 (+https://www.mohassansy.com)';
     if(!browser&&(!userAgent.trim()||userAgent.length>250||/[\r\n\u0000-\u001f]/.test(userAgent)))throw new BrowserError('BROWSER_USER_AGENT_INVALID','هوية قارئ المصادر غير صالحة.');
     const headers:Record<string,string>=browser?{}:{'user-agent':userAgent,'accept-encoding':'identity',accept:'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5'};
     for(const [key,value] of Object.entries(options.headers??{})){
       const name=key.toLowerCase();
-      if(browser?!name.startsWith(':')&&!CONNECTION_HEADERS.has(name):['accept','accept-language','content-type','cookie','if-none-match','if-modified-since'].includes(name)&&value.length<16000)headers[name]=value;
+      if(browser?!name.startsWith(':')&&!CONNECTION_HEADERS.has(name):(['accept','accept-language','content-type','cookie','if-none-match','if-modified-since'].includes(name)||braveWebSearch&&name==='x-subscription-token')&&value.length<16000)headers[name]=value;
     }
     if(browser)headers['accept-encoding']='gzip, br';
     if(options.body)headers['content-length']=String(Buffer.byteLength(options.body));
@@ -83,7 +89,10 @@ export class SafeNetwork {
         const encoding=String(response.headers['content-encoding']??'').toLowerCase();
         if(!['','identity','gzip','br','deflate'].includes(encoding)){response.destroy();reject(new BrowserError('BROWSER_ENCODING_DENIED','أعاد الموقع ترميزًا غير مدعوم ضمن حدود القراءة.',502));return;}
         const resultHeaders:Record<string,string>={};
-        for(const key of browser?Object.keys(response.headers).filter(name=>!CONNECTION_HEADERS.has(name)&&name!=='content-encoding'):['content-type','location','set-cookie','content-language','retry-after','etag','last-modified','x-robots-tag','cache-control','vary','access-control-allow-origin','access-control-allow-credentials','access-control-expose-headers']){const value=response.headers[key];if(value)resultHeaders[key]=Array.isArray(value)?value.join('\n'):value;}
+        const readableHeaders = browser ? Object.keys(response.headers).filter(name=>!CONNECTION_HEADERS.has(name)&&name!=='content-encoding')
+          : ['content-type','location','set-cookie','content-language','retry-after','etag','last-modified','x-robots-tag','cache-control','vary','access-control-allow-origin','access-control-allow-credentials','access-control-expose-headers'];
+        if (braveWebSearch) readableHeaders.push(...BRAVE_RATE_LIMIT_HEADERS);
+        for(const key of readableHeaders){const value=response.headers[key];if(value)resultHeaders[key]=Array.isArray(value)?value.join('\n'):value;}
         if(/attachment/i.test(response.headers['content-disposition']??'')&&!options.allowAttachment){response.destroy();reject(new BrowserError('BROWSER_DOWNLOAD_DENIED','التنزيلات غير مفعلة في جلسة القراءة.'));return;}
         let total=0;const chunks:Buffer[]=[];
         response.on('data',(chunk:Buffer)=>{total+=chunk.length;if(total>maximum){response.destroy();reject(new BrowserError('BROWSER_RESPONSE_TOO_LARGE','تجاوزت الصفحة حد حجم القراءة.'));}else chunks.push(chunk);});

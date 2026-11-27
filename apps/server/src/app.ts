@@ -181,7 +181,7 @@ export async function createApplication(config: AppConfig) {
   const searchNetwork=new SafeNetwork(config.browser),searchStore=new SqlSearchStore(database.db),searchIndex=new LocalPublicIndex(database.db,searchNetwork);
   // publicWeb:false — the scraped engines are out: bing.com/robots.txt forbids /search and html.duckduckgo.com answers
   // with a human check (measured 2026-11-22, artifacts/perf/2026-11-22/search-providers). The documented APIs remain.
-  const searchProvider=config.browser?.searchProvider??new SearchEngine(searchNetwork,{store:searchStore,localIndex:searchIndex,admission:searchStore,publicWeb:false});
+  const searchProvider=config.browser?.searchProvider??new SearchEngine(searchNetwork,{store:searchStore,localIndex:searchIndex,admission:searchStore,publicWeb:false,resolveAccountRole:id=>roleOf(database.db,id)});
   const browserTask=await createBrowserTaskControl(database.db,{browser:{create:(ownerId,input)=>browser.create(ownerId,input),action:(ownerId,id,input)=>browser.action(ownerId,id,input),detail:(ownerId,id)=>browser.detail(ownerId,id),close:(ownerId,id)=>browser.close(ownerId,id)},networkPolicy:config.browser});
   const moduleAvailability={studioVisual:true,browser:true,memory:true,windows:true};
   const ai=await createAIControl(database.db,{apiKey:config.groqApiKey,model:config.groqModel,reasoningModel:config.groqReasoningModel,fetch:config.aiFetch,capabilities:createCapabilities(Boolean(config.groqApiKey),coding.available,studioAi.available,moduleAvailability,true,config.skillEngineEnabled)});

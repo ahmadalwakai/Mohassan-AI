@@ -28,11 +28,14 @@ export function publicSearchScan(value:string):string {
 
 /** Known credential patterns are rejected, not retained in the public index or its cache. */
 export function publicSearchText(value:string):string {
-  return value.replace(/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/g,'[REDACTED]')
+  const braveKey=process.env.BRAVE_SEARCH_API_KEY?.trim();
+  const text=braveKey ? value.replaceAll(braveKey,'[REDACTED]') : value;
+  return text.replace(/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/g,'[REDACTED]')
     .replace(/\b(?:gsk_|sk-(?:proj-)?|ghp_|github_pat_|xox[baprs]-|AIza)[A-Za-z0-9_-]{12,}\b/g,'[REDACTED]')
     .replace(/\bAKIA[A-Z0-9]{16}\b/g,'[REDACTED]')
     .replace(/\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,'[REDACTED]')
     .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]{8,}=*/gi,'Bearer [REDACTED]')
+    .replace(/(\b(?:BRAVE_SEARCH_API_KEY|x-subscription-token)["'`]?\s*[:=]\s*["'`]?)[^\s,"'`;}&]+/gi,'$1[REDACTED]')
     .replace(/((?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|client[_ -]?secret|password|passwd|secret|كلمة المرور|رمز التحقق)\s*(?:[:=]|\bis\b|هي|هو)\s*)["']?[^\s,"';]{3,}["']?/gi,'$1[REDACTED]');
 }
 function denySensitiveUrl(input:string,network:SafeNetwork):string {
