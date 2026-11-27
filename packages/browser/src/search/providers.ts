@@ -6,12 +6,17 @@ import { excludesWikipedia, requestsWikipedia, type compileQuery } from './ranki
 import { extraDocumentedProviders } from './extra-providers.js';
 
 export type SearchQuery = ReturnType<typeof compileQuery>;
+export interface SearchProviderContext { role: 'owner' | 'member' }
 export interface DocumentedProvider {
   name: string;
   coverage: 'encyclopedia' | 'programming' | 'scholarly' | 'web';
   accessBasis: 'documented_api' | 'public_search';
-  supports(query: SearchQuery): boolean;
-  search(query: SearchQuery, limit: number, signal: AbortSignal): Promise<SearchHit[]>;
+  supports(query: SearchQuery, context?: SearchProviderContext): boolean;
+  search(query: SearchQuery, limit: number, signal: AbortSignal, context?: SearchProviderContext): Promise<SearchHit[]>;
+  /** Account authorization, independent of the query. */
+  allowsAccount?(context?: SearchProviderContext): boolean;
+  /** Skip result caching when this provider is eligible. */
+  cacheResults?: false;
   /** Carries successful-response backoff/quota instructions to the shared gate. */
   cooldownMs?(): number;
 }
