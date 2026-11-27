@@ -1,12 +1,17 @@
+import { Console } from 'node:console';
+import { Writable } from 'node:stream';
 import { parentPort, workerData } from 'node:worker_threads';
 import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
+import { visiblePage } from './page-placement.mjs';
 
 // Structural edits only, on untrusted PDF bytes, inside a worker the host can terminate.
 // No network, no evaluation, no file system: the bytes come in and the result goes back.
 globalThis.fetch = async () => { throw new Error('PDF_NETWORK_DISABLED'); };
 globalThis.eval = () => { throw new Error('PDF_EVAL_DISABLED'); };
+// Keep parser diagnostics in the worker. Consuming captured stdio would keep the host alive while idle.
+globalThis.console = new Console(new Writable({ write(_chunk, _encoding, done) { done(); } }));
 
-const { op, inputs, params, limits } = workerData;
+const { limits } = workerData;
 const fail = code => { throw { code }; };
 
 async function load(bytes) {
@@ -47,7 +52,7 @@ async function finish(document) {
 
 const iso = value => value instanceof Date && Number.isFinite(value.getTime()) ? value.toISOString() : null;
 
-async function run() {
+async function run({ op, inputs, params }) {
   if (op === 'info') {
     const document = await load(inputs[0]);
     const first = document.getPage(0).getSize();
@@ -109,8 +114,8 @@ async function run() {
     const opacity = Math.min(1, Math.max(0.05, Number(params.opacity ?? 1)));
     for (const index of indicesOf(document, params.pages)) {
       const page = document.getPage(index);
-      const { width, height } = page.getSize();
-      page.drawPage(stamp, { x: 0, y: 0, width, height, opacity });
+      const { width, height, rotate, point } = visiblePage(page);
+      page.drawPage(stamp, { ...point(0, 0), width, height, rotate, opacity });
     }
     return { bytes: await finish(document) };
   }
@@ -123,18 +128,21 @@ async function run() {
     for (const index of indicesOf(document, params.pages)) {
       const page = document.getPage(index);
       const text = params.total === false ? String(index + start) : `${index + start} / ${total + start - 1}`;
-      const { width } = page.getSize();
-      page.drawText(text, { x: (width - font.widthOfTextAtSize(text, size)) / 2, y: margin, size, font, color: rgb(0.4, 0.4, 0.4) });
+      const { width, rotate, point } = visiblePage(page);
+      const position = point((width - font.widthOfTextAtSize(text, size)) / 2, margin);
+      page.drawText(text, { ...position, rotate, size, font, color: rgb(0.4, 0.4, 0.4) });
     }
     return { bytes: await finish(document) };
   }
   fail('PDF_PARAMS');
 }
 
-try {
-  const result = await run();
-  if (result.bytes) parentPort.postMessage({ bytes: result.bytes }, [result.bytes.buffer]);
-  else parentPort.postMessage(result);
-} catch (error) {
-  parentPort.postMessage({ error: typeof error?.code === 'string' ? error.code : 'PDF_EDIT_FAILED' });
-}
+parentPort.on('message', async request => {
+  try {
+    const result = await run(request);
+    if (result.bytes) parentPort.postMessage({ bytes: result.bytes }, [result.bytes.buffer]);
+    else parentPort.postMessage(result);
+  } catch (error) {
+    parentPort.postMessage({ error: typeof error?.code === 'string' ? error.code : 'PDF_EDIT_FAILED' });
+  }
+});

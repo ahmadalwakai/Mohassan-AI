@@ -1,4 +1,4 @@
-import { Worker } from 'node:worker_threads';
+import { postPdfEdit } from './edit-worker-pool.ts';
 import { PdfError } from './errors.ts';
 import { PDF_LIMITS } from './limits.ts';
 
@@ -25,7 +25,6 @@ const MESSAGES: Record<string, [string, number]> = {
   PDF_PARAMS: ['معاملات التعديل غير صالحة.', 400],
   PDF_EDIT_FAILED: ['تعذر تعديل ملف PDF.', 500],
 };
-let running = 0;
 
 function assertPdf(bytes: Uint8Array, position: number): Uint8Array {
   if (!(bytes instanceof Uint8Array)) throw new PdfError('PDF_INVALID', MESSAGES.PDF_INVALID![0]);
@@ -37,49 +36,15 @@ function assertPdf(bytes: Uint8Array, position: number): Uint8Array {
 async function runWorker(op: string, inputs: readonly Uint8Array[], params: Record<string, unknown>, options: EditOptions): Promise<{ bytes?: Uint8Array; info?: PdfInfo }> {
   if (!inputs.length || inputs.length > PDF_LIMITS.inputFiles) throw new PdfError('PDF_INPUT_COUNT', `يمكن معالجة من ملف واحد إلى ${PDF_LIMITS.inputFiles} ملفًا في العملية الواحدة.`);
   const copies = inputs.map((bytes, index) => Uint8Array.from(assertPdf(bytes, index + 1)));
-  if (options.signal?.aborted) throw new PdfError('PDF_EDIT_ABORTED', 'أُلغي تعديل PDF.', 409);
-  if (running >= PDF_LIMITS.workers) throw new PdfError('PDF_EDIT_BUSY', 'معالجة الملفات مشغولة؛ أعد المحاولة بعد قليل.', 429);
-  const timeoutMs = Math.max(1, Math.min(PDF_LIMITS.editTimeoutMs, Math.floor(options.timeoutMs ?? PDF_LIMITS.editTimeoutMs)));
-  running++;
-  let worker: Worker | undefined;
-  try {
-    worker = new Worker(new URL('./edit-worker.mjs', import.meta.url), {
-      workerData: { op, inputs: copies, params, limits: { pages: PDF_LIMITS.pages, outputBytes: PDF_LIMITS.outputBytes } },
-      transferList: copies.map(copy => copy.buffer), execArgv: [], env: {},
-      resourceLimits: { maxOldGenerationSizeMb: 512, maxYoungGenerationSizeMb: 64, stackSizeMb: 4 },
-      stdout: true, stderr: true,
-    });
-    worker.stdout?.resume(); worker.stderr?.resume();
-    return await new Promise((resolve, reject) => {
-      let settled = false;
-      const finish = (error?: PdfError, result?: { bytes?: Uint8Array; info?: PdfInfo }) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        options.signal?.removeEventListener('abort', abort);
-        error ? reject(error) : resolve(result!);
-      };
-      const abort = () => finish(new PdfError('PDF_EDIT_ABORTED', 'أُلغي تعديل PDF.', 409));
-      const timer = setTimeout(() => finish(new PdfError('PDF_EDIT_TIMEOUT', 'تجاوز تعديل PDF المهلة المسموحة.', 504)), timeoutMs);
-      options.signal?.addEventListener('abort', abort, { once: true });
-      worker!.once('message', (message: unknown) => {
-        const result = (message ?? {}) as { bytes?: unknown; info?: unknown; error?: unknown };
-        if (typeof result.error === 'string') {
-          const [text, status] = MESSAGES[result.error] ?? MESSAGES.PDF_EDIT_FAILED!;
-          return finish(new PdfError(result.error in MESSAGES ? result.error : 'PDF_EDIT_FAILED', text, status));
-        }
-        if (result.bytes instanceof Uint8Array && result.bytes.byteLength > 0 && result.bytes.byteLength <= PDF_LIMITS.outputBytes) return finish(undefined, { bytes: result.bytes });
-        if (result.info && typeof result.info === 'object') return finish(undefined, { info: result.info as PdfInfo });
-        finish(new PdfError('PDF_EDIT_FAILED', MESSAGES.PDF_EDIT_FAILED![0], 500));
-      });
-      worker!.once('error', () => finish(new PdfError('PDF_EDIT_FAILED', 'تعذر تعديل PDF ضمن حدود الموارد.', 500)));
-      worker!.once('exit', () => finish(new PdfError('PDF_EDIT_FAILED', 'توقفت معالجة PDF قبل اكتمالها.', 500)));
-    });
-  } finally {
-    // Await termination even on timeout or cancellation: nothing keeps parsing after return.
-    if (worker) await worker.terminate().catch(() => {});
-    running--;
+  const message = await postPdfEdit({ op, inputs: copies, params }, options);
+  const result = (message ?? {}) as { bytes?: unknown; info?: unknown; error?: unknown };
+  if (typeof result.error === 'string') {
+    const code = Object.hasOwn(MESSAGES, result.error) ? result.error : 'PDF_EDIT_FAILED';
+    throw new PdfError(code, ...MESSAGES[code]!);
   }
+  if (result.bytes instanceof Uint8Array && result.bytes.byteLength > 0 && result.bytes.byteLength <= PDF_LIMITS.outputBytes) return { bytes: result.bytes };
+  if (result.info && typeof result.info === 'object') return { info: result.info as PdfInfo };
+  throw new PdfError('PDF_EDIT_FAILED', ...MESSAGES.PDF_EDIT_FAILED!);
 }
 
 const output = async (promise: Promise<{ bytes?: Uint8Array }>) => Buffer.from((await promise).bytes!);
@@ -106,7 +71,7 @@ export function reorderPages(bytes: Uint8Array, order: readonly number[], option
 export function setPdfMetadata(bytes: Uint8Array, metadata: { title?: string; author?: string; subject?: string; keywords?: string[] }, options: EditOptions = {}): Promise<Buffer> {
   return output(runWorker('metadata', [bytes], { ...metadata }, options));
 }
-/** Draws the first page of `overlay` over the chosen pages, stretched to each page's size. */
+/** Stretches the first page of `overlay` to the visible area of each chosen page. */
 export function stampPdf(bytes: Uint8Array, overlay: Uint8Array, options: EditOptions & { pages?: readonly number[]; opacity?: number } = {}): Promise<Buffer> {
   const { pages, opacity, ...rest } = options;
   return output(runWorker('overlay', [bytes, overlay], { ...(pages ? { pages: [...pages] } : {}), ...(opacity !== undefined ? { opacity } : {}) }, rest));
