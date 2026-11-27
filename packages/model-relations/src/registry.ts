@@ -351,9 +351,10 @@ function relativeArtifactPath(root: string, item: ModelArtifact, env: NodeJS.Pro
 
 const sha256Pattern = /^[a-f0-9]{64}$/;
 
-async function readMetadata(path: string): Promise<unknown> {
+export async function readModelMetadata(path: string, openFile = (path: string) =>
+  open(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0))): Promise<unknown> {
   try {
-    const handle = await open(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+    const handle = await openFile(path);
     try {
       const info = await handle.stat();
       if (!info.isFile() || info.size > 16 * 1024 * 1024) return undefined;
@@ -424,30 +425,41 @@ async function resolveArtifact(item: ModelArtifact, path: string, expectedSha256
   return { role: item.role, path, sha256, expectedSha256, matchesPin, present, required: !item.optional };
 }
 
-/** Resolve artifact locations without loading a model. A caller can skip byte verification for a presence probe. */
-export async function resolveModel(entry: ModelEntry, root: string, env: NodeJS.ProcessEnv = process.env, verify = true): Promise<ResolvedModel> {
+/** Resolve paths and expected hashes without reading artifact bytes. Store tooling can constrain metadata reads. */
+export async function modelArtifactLocations(entry: ModelEntry, root: string, env: NodeJS.ProcessEnv,
+  readJson: (path: string) => Promise<unknown> = readModelMetadata) {
   const paths = new Map(entry.artifacts.map(item => [item.role, relativeArtifactPath(root, item, env)]));
   const metadata = new Map<string, Promise<unknown>>();
   const read = (path: string) => {
     let content = metadata.get(path);
     if (!content) {
-      content = readMetadata(path);
+      content = readJson(path);
       metadata.set(path, content);
     }
     return content;
   };
-  const artifacts = await Promise.all(entry.artifacts.map(async item => {
+  return Promise.all(entry.artifacts.map(async item => {
     const path = paths.get(item.role)!;
     if (item.workerConfigField) {
       const configPath = paths.get('worker-config');
-      const configured = configPath && workerArtifact(await read(configPath), configPath, item.workerConfigField);
-      if (!configured) return { role: item.role, path, sha256: null, present: false, required: !item.optional };
-      return resolveArtifact(item, configured.path, configured.sha256, verify);
+      const configured = configPath ? workerArtifact(await read(configPath), configPath, item.workerConfigField) : undefined;
+      return { item, path: configured?.path ?? null, expectedSha256: configured?.sha256 ?? null, supportPath: null };
     }
     const pointer = item.pin;
-    const pin = pointer && digest(pointer.keys.reduce(field, await read(paths.get(pointer.reference) ?? resolve(root, pointer.reference))));
-    return resolveArtifact(item, path, item.sha256 ?? pin ?? null, verify);
+    const roleReference = pointer && paths.get(pointer.reference);
+    const pinReference = pointer ? roleReference ?? resolve(root, pointer.reference) : null;
+    const pin = pointer && pinReference && digest(pointer.keys.reduce(field, await read(pinReference)));
+    return { item, path, expectedSha256: item.sha256 ?? pin ?? null,
+      supportPath: roleReference ? null : pinReference };
   }));
+}
+
+/** Resolve artifact locations without loading a model. A caller can skip byte verification for a presence probe. */
+export async function resolveModel(entry: ModelEntry, root: string, env: NodeJS.ProcessEnv = process.env, verify = true): Promise<ResolvedModel> {
+  const locations = await modelArtifactLocations(entry, root, env);
+  const artifacts = await Promise.all(locations.map(({ item, path, expectedSha256 }) => path === null
+    ? { role: item.role, path: resolve(root, item.path), sha256: null, present: false, required: !item.optional }
+    : resolveArtifact(item, path, expectedSha256, verify)));
   const configuredState = entry.activationFlag && env[entry.activationFlag] === '1' ? 'active' : entry.state;
   const state = artifacts.some(item => item.required && !item.present) ? 'absent' : configuredState;
   return { entry, state, artifacts };

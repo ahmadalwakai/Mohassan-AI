@@ -29,6 +29,7 @@
     "assistant:check": "tsx scripts/check-assistant.ts",
     "learning:eval": "tsx scripts/learning-eval.ts",
     "models:list": "tsx packages/model-relations/src/cli.ts list",
+    "models:verify-store": "node scripts/models/pack-store.mjs --verify-store",
     "models:health": "tsx packages/model-relations/src/cli.ts health",
     "models:run": "tsx packages/model-relations/src/cli.ts run",
     "models:latency": "tsx packages/model-relations/src/cli.ts latency",
