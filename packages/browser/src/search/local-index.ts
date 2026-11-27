@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { BrowserError, SafeNetwork } from '../network.js';
 import { readableSource, type SearchHit, type SearchProvider } from '../research.js';
 import { safeResumeUrl } from '../session-state.js';
+import { alternateSearchWord, matchingSearchWord } from './arabic-spelling.js';
 import { canonicalUrl, compileQuery, localSearchSnippet, matchesSearchPhrases, searchTokens } from './ranking.js';
 import { RobotsPolicy } from './robots.js';
 import { invalidateSearchOwner, lockSearchOwner, searchHash, searchOwner } from './store.js';
@@ -172,17 +173,33 @@ export class LocalPublicIndex implements SearchLocalIndex {
     if(!context?.ownerId)return [];const ownerId=searchOwner(context.ownerId);signal?.throwIfAborted();await this.prune(ownerId);
     let query:ReturnType<typeof compileQuery>;try{query=compileQuery(question);}catch{throw new BrowserError('RESEARCH_QUERY_INVALID','اكتب موضوعًا محددًا للبحث.',400);}
     const count=Math.max(1,Math.min(20,Number.isFinite(limit)?Math.floor(limit):5));
-    // Full bounded owner corpus supplies BM25 document lengths/frequencies; only matching terms leave SQL.
+    // Full bounded owner corpus supplies BM25 document lengths and frequencies.
     const docs=await this.db.selectFrom('search_index_documents').selectAll().where('owner_id','=',ownerId).where('expires_at','>',new Date(this.now())).limit(100).execute();
-    const terms=await this.db.selectFrom('search_index_terms').select(['document_id','term','frequency']).where('owner_id','=',ownerId).where('term','in',query.tokens).execute();
+    // Look up both spellings so the terms persisted by older versions remain searchable.
+    const queryTerms = new Set(query.tokens.map(matchingSearchWord));
+    const lookupTerms = [...new Set([...queryTerms].flatMap(term => [term, alternateSearchWord(term)]))];
+    const terms=await this.db.selectFrom('search_index_terms').select(['document_id','term','frequency']).where('owner_id','=',ownerId).where('term','in',lookupTerms).execute();
     signal?.throwIfAborted();const average=docs.reduce((sum,row)=>sum+row.term_count,0)/Math.max(1,docs.length);
-    const frequency=new Map(query.tokens.map(term=>[term,new Set(terms.filter(row=>row.term===term).map(row=>row.document_id)).size]));
+    const termsByDocument = new Map<string, Map<string, number>>();
+    const documentFrequency = new Map<string, number>();
+    for (const row of terms) {
+      const term = matchingSearchWord(row.term);
+      const frequencies = termsByDocument.get(row.document_id) ?? new Map<string, number>();
+      if (!frequencies.has(term)) documentFrequency.set(term, (documentFrequency.get(term) ?? 0) + 1);
+      frequencies.set(term, (frequencies.get(term) ?? 0) + row.frequency);
+      termsByDocument.set(row.document_id, frequencies);
+    }
     return docs.flatMap(row=>{
       if(new Date(row.expires_at).getTime()<=this.now())return [];
       if(!matchesSearchPhrases(query,row.title,row.content))return [];
       const host=new URL(row.url).hostname;if(query.sites.length&&!query.sites.some(site=>host===site||host.endsWith(`.${site}`)))return [];
-      const found=terms.filter(term=>term.document_id===row.id);if(found.length<Math.min(2,query.tokens.length))return [];
-      const score=found.reduce((sum,term)=>sum+Math.log(1+(docs.length-frequency.get(term.term)!+0.5)/(frequency.get(term.term)!+0.5))*term.frequency*2.2/(term.frequency+1.2*(0.25+0.75*row.term_count/Math.max(1,average))),0);
+      const found = termsByDocument.get(row.id);
+      if (!found || found.size < Math.min(2, queryTerms.size)) return [];
+      const score = [...found].reduce((sum, [term, count]) => {
+        const documents = documentFrequency.get(term)!;
+        return sum + Math.log(1 + (docs.length - documents + 0.5) / (documents + 0.5))
+          * count * 2.2 / (count + 1.2 * (0.25 + 0.75 * row.term_count / Math.max(1, average)));
+      }, 0);
       const snippet=localSearchSnippet(query,row.title,row.content);
       if(snippet===null)return [];
       return [{title:row.title,url:row.url,snippet,coverage:'local_only' as const,freshness:'indexed_snapshot' as const,fetchedAt:iso(row.fetched_at),expiresAt:iso(row.expires_at),contentHash:row.content_hash,sourceHash:row.source_hash,trust:'untrusted' as const,score}];

@@ -3,7 +3,7 @@ import { sql, type Kysely } from 'kysely';
 import { z } from 'zod';
 import type { SearchOutcome } from './engine.js';
 
-export const SEARCH_POLICY_VERSION = 'owner-sql-public-web-v5';
+export const SEARCH_POLICY_VERSION = 'owner-sql-public-web-v6';
 export const PROVIDER_INTERVALS: Readonly<Record<string, number>> = Object.freeze({ 'Bing RSS': 1000, 'DuckDuckGo HTML': 1000, Wikipedia: 1000, 'Stack Exchange': 1000, Crossref: 1000, 'Hacker News': 1000, arXiv: 3000 });
 export const searchHash = (text: string) => createHash('sha256').update(text).digest('hex');
 export const searchOwner = (ownerId: string) => z.string().min(1).max(200).parse(ownerId);

@@ -1,8 +1,11 @@
 import type { SearchHit } from '../research.js';
+import { foldSearchAlef, matchingSearchWord } from './arabic-spelling.js';
 import { webFreshnessText } from './freshness.js';
 export { webFreshnessText } from './freshness.js';
 
-const normalizeWord = (word:string) => word.normalize('NFKC').toLowerCase().replace(/[أإآٱ]/gu,'ا').replace(/[\u0640\p{M}\p{Cf}]/gu,'').replace(/^ال(?=\p{L}{3})/u,'');
+const normalizeText = (text: string) => foldSearchAlef(text.normalize('NFKC').toLowerCase()).replace(/[\u0640\p{M}\p{Cf}]/gu, '');
+const normalizeWord = (word: string) => normalizeText(word).replace(/^ال(?=\p{L}{3})/u, '');
+const normalizeMatchingWord = (word: string) => matchingSearchWord(normalizeWord(word));
 const noise = new Set('the a an of for to in on and or is are what how which who where when why does do latest newest current now today official find search please ما ماذا هو هي هل من في على عن الى إلى كيف كم متى اين أين لماذا ابحث البحث أحدث اخر آخر اليوم الآن الان حاليا'.split(' ').map(normalizeWord));
 const wikipediaHost = (host: string) => host === 'wikipedia.org' || host.endsWith('.wikipedia.org');
 const wikipediaExclusion = /(?:\b(?:not\s+(?:from\s+)?|without\s+|exclud(?:e|ing)\s+|except\s+|avoid\s+|don['’]t\s+use\s+)|(?:بدون|عدا|غير|باستثناء|تجنب|لا\s+(?:تستخدم|تستعمل|تعتمد\s+على))\s+)(?:wikipedia|ويكيبيديا|ويكبيديا)|(?:^|\s)-(?:site:(?:[a-z0-9-]+\.)*wikipedia\.org\b|wikipedia\b|ويكيبيديا|ويكبيديا)/iu;
@@ -19,16 +22,24 @@ export function requestsWikipedia(query: SourceSelectionQuery): boolean {
 const academicRequestWords = new Set('research paper papers study studies journal journals doi دراسة دراسات بحث علمي ورقة علمية'.split(' ').map(normalizeWord));
 // These describe the requested fact, but cannot replace its subject: a visa fee
 // page is not about a passport merely because both mention UK renewal fees.
-const requestDetailWords = new Set('price prices fee fees fare fares cost costs renewal renew version versions release releases opening hours سعر اسعار أسعار رسوم تكلفة تكاليف مواعيد تجديد اصدار إصدار اصدارات إصدارات'.split(' ').map(normalizeWord));
-const phraseText = (text: string) => text.normalize('NFKC').toLowerCase().replace(/[أإآٱ]/gu,'ا').replace(/[\u0640\p{M}\p{Cf}]/gu,'').replace(/[^\p{L}\p{N}]+/gu,' ').trim();
+const requestDetailWords = new Set('price prices fee fees fare fares cost costs renewal renew version versions release releases opening hours سعر اسعار أسعار رسوم تكلفة تكاليف مواعيد تجديد اصدار إصدار اصدارات إصدارات'.split(' ').map(normalizeMatchingWord));
+const phraseText = (text: string) => normalizeText(text).replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+const matchingPhrase = (phrase: string) => phrase.split(' ').map(matchingSearchWord).join(' ');
 export function matchesSearchPhrases(query: { phrases: string[] }, ...texts: string[]): boolean {
-  const normalized=texts.map(text=>` ${phraseText(text)} `);
-  return query.phrases.every(phrase=>normalized.some(text=>text.includes(` ${phrase} `)));
+  if (!query.phrases.length) return true;
+  const normalized = texts.map(text => ` ${matchingPhrase(phraseText(text))} `);
+  return query.phrases.every(phrase => {
+    const matching = ` ${matchingPhrase(phrase)} `;
+    return normalized.some(text => text.includes(matching));
+  });
 }
+/** Keep token spellings for provider retrieval and stored index terms. */
 export function searchTokens(text: string): string[] {
   return (text.normalize('NFKC').toLowerCase().replace(/[\u0640\p{M}\p{Cf}]/gu, '').match(/[\p{L}\p{N}]+/gu) ?? [])
     .map(normalizeWord).filter(word => (word.length > 1 || ['c','r'].includes(word)) && !noise.has(word));
 }
+// Stop-word filtering precedes the matching fold so على never removes the name علي.
+const matchingTokens = (text: string) => searchTokens(text).map(matchingSearchWord);
 export function canonicalUrl(input: string): string {
   const url = new URL(input);
   if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443')) throw new Error('SEARCH_URL_DENIED');
@@ -69,13 +80,18 @@ export function compileQuery(input: string) {
   const retrievalQuestion=/\p{Script=Arabic}/u.test(question)
     ? translatedQuestion.replace(/^(latest\s+)?version(?:\s+(stable))?\s+([a-z][a-z0-9.+#_-]*(?:\s+[a-z0-9.+#_-]+)*)$/i,(_,latest:string|undefined,stable:string|undefined,subject:string)=>`${subject} ${latest?'latest ':''}${stable?'stable ':''}version`)
     : translatedQuestion;
-  const quotedTokens = new Set(phrases.flatMap(phrase=>searchTokens(phrase)));
+  const quotedTokens = new Set(phrases.flatMap(searchTokens));
   const rankingQuestion = retrievalQuestion.replace(new RegExp(wikipediaExclusion.source, 'giu'), ' ');
+  // In an explicit question, initial متي can be the informal interrogative متى.
+  // Keep it in names elsewhere and in terms explicitly quoted by the user.
+  const questionText = phraseText(rankingQuestion);
+  const subjectText = /[؟?]\s*$/u.test(rankingQuestion) ? questionText.replace(/^متي (?=\S+ \S)/u, '') : questionText;
   // Version qualifiers describe the requested release, not its subject. Limit
   // removal to version-request phrases so a name such as Stable Diffusion stays intact.
-  const rankingText=phraseText(rankingQuestion)
+  const rankingText=subjectText
     .replace(/\b(?:latest|newest|current)\s+stable\b|\bstable\s+(?:versions?|releases?)\b|\b(?:versions?|releases?)\s+stable\b/gu,phrase=>phrase.replace(/\bstable\b/u,''))
     .replace(/(?:^|\s)(?:اصدار|نسخة)\s+(?:ال)?مستقر(?:ة|ه|ا)?(?=\s|$)/gu,phrase=>phrase.replace(/(?:ال)?مستقر(?:ة|ه|ا)?/u,''));
+  // Shared callers use these spellings to build provider queries and score evidence.
   const tokens = [...new Set([...searchTokens(rankingText),...quotedTokens])]
     .filter(term=>intent!=='scholarly'||!academicRequestWords.has(term)||quotedTokens.has(term));
   if (!question || !tokens.length) throw new Error('SEARCH_QUERY_EMPTY');
@@ -89,16 +105,20 @@ export function compileQuery(input: string) {
 export function localSearchSnippet(query: ReturnType<typeof compileQuery>, title: string, content: string): string | null {
   const maximum=1400, missing=query.phrases.filter(phrase=>!matchesSearchPhrases({phrases:[phrase]},title));
   if(!missing.length){
+    const queryTerms = [...new Set(query.tokens.map(matchingSearchWord))];
     const passages=content.match(/.{1,650}(?:\s|$)/gu)??[];
-    return passages.map((text,index)=>({text,index,score:query.tokens.filter(term=>searchTokens(text).includes(term)).length}))
+    return passages.map((text, index) => {
+      const terms = new Set(matchingTokens(text));
+      return { text, index, score: queryTerms.filter(term => terms.has(term)).length };
+    })
       .sort((a,b)=>b.score-a.score||a.index-b.index).slice(0,2).sort((a,b)=>a.index-b.index).map(item=>item.text.trim()).join(' … ').slice(0,maximum);
   }
   // Keep source offsets while applying precisely the same word/mark normalization as phrase matching.
   // A compatibility glyph can expand to several words; all retain its original source span.
-  const words=[...content.matchAll(/\S+/gu)].flatMap(match=>phraseText(match[0]).split(' ').filter(Boolean).map(word=>({word,start:match.index,end:match.index+match[0].length})));
+  const words=[...content.matchAll(/\S+/gu)].flatMap(match=>phraseText(match[0]).split(' ').filter(Boolean).map(word=>({word:matchingSearchWord(word),start:match.index,end:match.index+match[0].length})));
   const spans:{start:number;end:number}[]=[];
   for(const phrase of missing){
-    const terms=phrase.split(' ');
+    const terms=matchingPhrase(phrase).split(' ');
     const index=words.findIndex((_,index)=>terms.every((term,offset)=>words[index+offset]?.word===term));
     if(index<0)return null;
     spans.push({start:words[index]!.start,end:words[index+terms.length-1]!.end});
@@ -117,7 +137,8 @@ export type RankedHit = SearchHit & { providers: string[]; relevance: 'lexical';
 /** Intent-specific source ordering, then BM25 + reciprocal rank fusion; never arrival time. */
 export function rankResults(query: ReturnType<typeof compileQuery>, results: readonly { provider: string; hits: SearchHit[] }[], limit: number): RankedHit[] {
   const docs = new Map<string, { hit: SearchHit; providers: Set<string>; rrf: number }>();
-  const descriptionScore = (hit:SearchHit) => { const title=new Set(searchTokens(hit.title)),snippet=new Set(searchTokens(hit.snippet));return query.tokens.reduce((score,term)=>score+(title.has(term)?2:snippet.has(term)?1:0),0); };
+  const queryTerms = [...new Set(query.tokens.map(matchingSearchWord))];
+  const descriptionScore = (hit:SearchHit) => { const title=new Set(matchingTokens(hit.title)),snippet=new Set(matchingTokens(hit.snippet));return queryTerms.reduce((score,term)=>score+(title.has(term)?2:snippet.has(term)?1:0),0); };
   for (const result of [...results].sort((a, b) => a.provider.localeCompare(b.provider))) {
     const seen = new Set<string>();
     result.hits.slice(0, 40).forEach((hit, rank) => {
@@ -133,7 +154,7 @@ export function rankResults(query: ReturnType<typeof compileQuery>, results: rea
       } catch { /* malformed or nonpublic source cannot be ranked */ }
     });
   }
-  const entries = [...docs.values()].map(row => ({ ...row, terms: searchTokens(`${row.hit.title} ${row.hit.title} ${row.hit.snippet} ${new URL(row.hit.url).hostname}`) }));
+  const entries = [...docs.values()].map(row => ({ ...row, terms: matchingTokens(`${row.hit.title} ${row.hit.title} ${row.hit.snippet} ${new URL(row.hit.url).hostname}`) }));
   const average = entries.reduce((total, row) => total + row.terms.length, 0) / Math.max(1, entries.length);
   // This is a request-purpose prior, not a claim that DOI metadata proves a paper or its accuracy.
   // Apply it only after the same subject/phrase gates; generic research words never admit a hit.
@@ -150,8 +171,8 @@ export function rankResults(query: ReturnType<typeof compileQuery>, results: rea
   // A requested source name is not part of the topic a destination page must
   // repeat. Keep it only when it is the entire query; quoted phrases still use
   // the separate mandatory phrase gate above.
-  const subjectTokens = query.tokens.filter(term => !(requestedWikipedia && ['wikipedia', 'ويكيبيديا', 'ويكبيديا'].includes(term)));
-  const rankingTokens = subjectTokens.length ? subjectTokens : query.tokens;
+  const subjectTokens = queryTerms.filter(term => !(requestedWikipedia && ['wikipedia', 'ويكيبيديا', 'ويكبيديا'].includes(term)));
+  const rankingTokens = subjectTokens.length ? subjectTokens : queryTerms;
   const topicTokens = rankingTokens.filter(term => !requestDetailWords.has(term));
   const anchors = topicTokens.length ? topicTokens : rankingTokens;
   const neededAnchors = Math.min(4, anchors.length <= 3 ? anchors.length : Math.ceil(anchors.length * 0.6));

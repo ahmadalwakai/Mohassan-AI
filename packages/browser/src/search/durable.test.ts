@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createDatabase, migrate } from '@mohassan/database';
 import { SafeNetwork, type SafeResponse } from '../network.js';
@@ -32,6 +33,21 @@ describe('durable owner search cache',()=>{
     expect(await restarted.get('other-owner',key,0)).toBeNull();
     now+=10001;expect(await restarted.get('cache-owner',key,0)).toBeNull();
   });
+  it('ignores an unexpired cache row written under the previous spelling policy', async () => {
+    const ownerId = 'cache-spelling-policy';
+    const key = searchHash('spelling-policy');
+    const store = new SqlSearchStore(database.db, () => initial);
+    const outcome = result(initial);
+    // Prior policy from https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/packages/browser/src/search/store.ts#L6 (retrieved 2026-11-27).
+    await database.db.insertInto('search_cache').values({
+      owner_id: ownerId, cache_key: key, policy: 'owner-sql-public-web-v5', index_revision: 0,
+      result: JSON.stringify(outcome), fetched_at: new Date(initial), expires_at: new Date(initial + 60000),
+    }).execute();
+    expect(await store.get(ownerId, key, 0)).toBeNull();
+
+    await store.put(ownerId, key, 0, outcome, 60000);
+    expect(await store.get(ownerId, key, 0)).toEqual({ ...outcome, freshness: 'cached' });
+  });
   it('does not reinsert a pre-delete result when an in-flight search finishes later',async()=>{
     const store=new SqlSearchStore(database.db,()=>initial),key=searchHash('race');
     const revision=await store.revision('cache-race');await store.clear('cache-race');
@@ -50,6 +66,43 @@ describe('durable owner search cache',()=>{
 });
 
 describe('explicit public index lifecycle',()=>{
+  it.each([
+    { storedPhrase: 'زيارة مستشفى', queryPhrase: 'زياره مستشفي' },
+    { storedPhrase: 'زياره مستشفي', queryPhrase: 'زيارة مستشفى' },
+  ])('matches a legacy row containing $storedPhrase and shows its original spelling', async ({ storedPhrase, queryPhrase }) => {
+    const network = new SafeNetwork();
+    const index = new LocalPublicIndex(database.db, network, () => initial);
+    const ownerId = `legacy-index-${storedPhrase}`;
+    const id = randomUUID();
+    const url = 'https://example.com/legacy-index';
+    const title = 'دليل';
+    // Seed terms as stored by the baseline index, with the title counted twice and ending letters preserved.
+    // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/packages/browser/src/search/local-index.ts#L131-L155 (retrieved 2026-11-27).
+    const terms = [{ term: title, frequency: 2 }, ...storedPhrase.split(' ').map(term => ({ term, frequency: 1 }))];
+    await database.db.insertInto('search_index_documents').values({
+      id, owner_id: ownerId, url, url_hash: searchHash(url), source_hash: searchHash(storedPhrase),
+      content_hash: searchHash(JSON.stringify([title, storedPhrase])), title, content: storedPhrase,
+      term_count: terms.reduce((sum, term) => sum + term.frequency, 0),
+      fetched_at: new Date(initial), expires_at: new Date(initial + 24 * 3600000),
+    }).execute();
+    await database.db.insertInto('search_index_terms').values(
+      terms.map(term => ({ ...term, owner_id: ownerId, document_id: id })),
+    ).execute();
+
+    const engine = new SearchEngine(network, { providers: [], localIndex: index, now: () => initial });
+    const outcome = await engine.execute(`"${queryPhrase}"`, 5, undefined, { ownerId });
+    expect(outcome.hits).toHaveLength(1);
+    expect(outcome.hits[0]).toMatchObject({ title, url, snippet: storedPhrase, coverage: 'local_only' });
+  });
+  it('counts both stored spellings as one matching word for the local relevance gate', async () => {
+    const f = fixture('زيارة زياره');
+    const index = new LocalPublicIndex(database.db, f.network, () => initial);
+    const ownerId = 'local-spelling-gate';
+    await index.indexUrl(ownerId, { url: 'https://example.com/local-spelling-gate' });
+    expect(await index.search('زيارة', 5, undefined, { ownerId })).toHaveLength(1);
+    expect(await index.search('زيارة زياره', 5, undefined, { ownerId })).toHaveLength(1);
+    expect(await index.search('زيارة مستشفى', 5, undefined, { ownerId })).toEqual([]);
+  });
   it('retains a late exact phrase through local retrieval and the shared ranking gate',async()=>{
     const f=fixture('machine unrelated learning padding '.repeat(120)+'Exact phrase machine learning appears here.'),index=new LocalPublicIndex(database.db,f.network,()=>initial);
     const owner='quoted-local-evidence';await index.indexUrl(owner,{url:'https://example.com/late-phrase'});
