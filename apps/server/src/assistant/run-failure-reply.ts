@@ -4,7 +4,7 @@ import { ProviderError } from '@mohassan/providers';
 import { chatModelFailure } from './model-failure.js';
 
 export function runFailureReply(request: string, limit: boolean, error: unknown): { message: string; diagnostic: string } {
-  const lang = requestLanguage(request);
+  const lang = request.trim() ? requestLanguage(request) : 'ar';
   const failure = !limit && (error instanceof ProviderError ? chatModelFailure(error) : error);
   if (failure instanceof BrowserError) {
     return {

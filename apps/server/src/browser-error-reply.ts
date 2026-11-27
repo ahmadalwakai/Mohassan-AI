@@ -1,4 +1,4 @@
-import { replyMessageForError, type ReplyLanguage } from '@mohassan/contracts/reply-messages';
+import { browserErrorReply, type ReplyLanguage } from '@mohassan/contracts/reply-messages';
 import type { FastifyRequest } from 'fastify';
 
 // Supported language ranges and weights from RFC 4647 §2.1 and RFC 9110 §§12.4.2, 12.5.4 (retrieved 2026-11-27).
@@ -21,8 +21,8 @@ function preferredLanguage(header: string | undefined): ReplyLanguage | undefine
   return language;
 }
 
-export function browserApiErrorMessage(error: Error, request: FastifyRequest): string {
+export function browserApiErrorMessage(error: Error & { code: string }, request: FastifyRequest): string {
   if (!request.routeOptions.url?.startsWith('/api/browser/sessions/')) return error.message;
   const language = preferredLanguage(request.headers['accept-language']);
-  return (language && replyMessageForError(error, language)) ?? error.message;
+  return (language && browserErrorReply(error, language)) ?? error.message;
 }

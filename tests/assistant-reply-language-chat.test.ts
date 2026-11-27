@@ -7,6 +7,7 @@ import { createDatabase, migrate } from '@mohassan/database';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
 import { mergePublicQueryTerms } from '../apps/server/src/assistant/public-query-provenance.js';
 import { replyLanguage } from '../apps/server/src/assistant/reply-check.js';
+import { runFailureReply } from '../apps/server/src/assistant/run-failure-reply.js';
 
 const owner = 'isolated-reply-language-owner';
 const languages = [
@@ -34,6 +35,15 @@ function expectLanguage(text: string, lang: Language, expected: RegExp) {
 function assistantText(result: Awaited<ReturnType<Control['detail']>>) {
   return result.messages.filter(message => message.role === 'assistant').at(-1)?.text ?? '';
 }
+
+it('uses the original Arabic failure text when the request is unavailable', () => {
+  const { message, diagnostic } = runFailureReply('', false, new Error('x'));
+  // Original setup failure copy from 29448ae, retrieved 2026-11-27.
+  // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/apps/server/src/command-chat.ts#L4065
+  expect(message).toBe('حدث خطأ أثناء العمل. أرسل «تابع» وسأحاول مجددًا.');
+  expect(diagnostic).toBe(message);
+  expectLanguage(message, 'ar', terminalText.ar.unexpected);
+});
 
 describe('fixed replies through the chat controller', () => {
   let database: Awaited<ReturnType<typeof createDatabase>>;

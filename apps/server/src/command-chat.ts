@@ -1,4 +1,4 @@
-import { indexedCopySnippet, replyMessage, replyMessages } from '@mohassan/contracts/reply-messages';
+import { indexedCopySnippet, replyMessage } from '@mohassan/contracts/reply-messages';
 import { SearchProvidersError } from './assistant/search-provider-failure.js';
 import { runFailureReply } from './assistant/run-failure-reply.js';
 import { pdfProblemReply } from './assistant/pdf-problem-reply.js';
@@ -3191,7 +3191,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
                 state.trail.push({ step: ++state.steps, action: `search ${query}`.slice(0, 300), changed: false,
                   result: `no results; provider failures: ${outcome.failures.map(item => `${item.provider} ${item.kind}`).join(', ') || 'none'}`.slice(0, 1100) });
                 if (outcome.failures.length) throw new SearchProvidersError(outcome.failures);
-                throw new BrowserError('RESEARCH_SEARCH_UNAVAILABLE', replyMessages.noReadableSearchSources.ar, 502);
+                throw new BrowserError('RESEARCH_SEARCH_UNAVAILABLE', 'لم يُرجع البحث مصادر مرتبطة بالسؤال قابلة للقراءة.', 502);
               }
               hits = outcome.hits.map(hit => hit.coverage === 'local_only' ? { ...hit, snippet: indexedCopySnippet(request, hit.fetchedAt, hit.snippet) } : hit);
             } else hits = await search.search(query, limit, signal, { ownerId });
@@ -3266,7 +3266,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           if (error instanceof BrowserError && ['ASSISTANT_SEARCH_SOURCE', 'ASSISTANT_SEARCH_PROVENANCE', 'RESEARCH_QUERY_INVALID', 'RESEARCH_QUERY_SECRET'].includes(error.code)) {
             const query = plan.steps.find((step): step is Extract<HandsStep, { kind: 'search' }> => step.kind === 'search')?.query ?? actionRequest;
             state.hands = null;
-            await addStep(id, runId, replyMessage(request, 'noPublicSearch'));
+            await addStep(id, runId, /[؀-ۿ]/u.test(request) ? 'لم يُجرَ بحث عام' : 'No public search');
             await finish(id, runId, state, vault.scrub(id, searchRefusedReply(request, query, error.code)), 'blocked');
             return;
           }
@@ -3852,7 +3852,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             const reviewed = reviewActionCompletion(state.actionCompletion, { runId, request, outcome: 'done', answerHash,
               verifiedReadOnlyAnswer: { source: 'exact_memory_recall', runId, requestHash: actionRequestHash(request), answerHash } });
             state.actionCompletionReview = reviewed;
-            await finish(id, runId, state, reviewed.allowDone ? answer : reviewed.replacement?.text ?? replyMessage(request, 'memoryCompletionUnverified'),
+            await finish(id, runId, state, reviewed.allowDone ? answer : reviewed.replacement?.text ?? 'لم أتحقق من إتمام الطلب.',
               reviewed.allowDone ? 'completed' : reviewed.replacement?.status ?? 'blocked', undefined, 'memory_recall');
             return;
           }

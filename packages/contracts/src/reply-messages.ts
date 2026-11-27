@@ -22,150 +22,201 @@ export const replyMessages = {
   memorySearch: { ar: 'البحث في الذاكرة', en: 'Searching memory' },
   memoryMiss: { ar: 'لم أجد في الذاكرة قيمة مطابقة للطلب.', en: 'I couldn’t find a matching value in memory.' },
   memoryUnverified: { ar: 'لم أتمكن من التحقق من قيمة مطابقة في الذاكرة.', en: 'I couldn’t verify a matching value in memory.' },
-  memoryCompletionUnverified: { ar: 'لم أتحقق من إتمام الطلب.', en: 'I couldn’t verify that the request was completed.' },
-  noReadableSearchSources: {
-    ar: 'لم يُرجع البحث مصادر مرتبطة بالسؤال قابلة للقراءة.',
-    en: 'The search returned no readable sources relevant to the question.',
-  },
   indexedCopy: { ar: 'نسخة مفهرسة بتاريخ', en: 'indexed copy from' },
   rate_limited: { ar: 'تجاوز حد الطلبات', en: 'rate limited' },
   invalid_response: { ar: 'استجابة غير صالحة', en: 'invalid response' },
   unavailable: { ar: 'غير متاح', en: 'unavailable' },
-  noPublicSearch: { ar: 'لم يُجرَ بحث عام', en: 'No public search' },
-  // Browser engine Arabic texts from https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/packages/browser/src/engine.ts (retrieved 2026-11-27).
-  browserUnavailable: {
+} satisfies Record<string, BilingualMessage>;
+
+// Browser engine error pairs retrieved 2026-11-27.
+// https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/packages/browser/src/engine.ts
+const browserNavigationFailure = {
+  codes: ['BROWSER_NAVIGATION_FAILED'],
+  ar: 'تعذر فتح الصفحة ضمن الوقت والنطاق المسموح.',
+  en: 'The page could not be opened within the allowed time and scope.',
+} as const;
+
+// A navigation failure can carry the exact message of an earlier route denial.
+const BROWSER_ERRORS: readonly (BilingualMessage & { readonly codes: readonly string[] })[] = [
+  browserNavigationFailure,
+  {
+    codes: ['BROWSER_UNAVAILABLE'],
     ar: 'تعذر تشغيل Chromium المستقل. تأكد من تثبيت متصفح Playwright.',
     en: 'Could not start the standalone Chromium browser. Check that the Playwright browser is installed.',
   },
-  browserResourceLimit: {
+  {
+    codes: ['BROWSER_RESOURCE_LIMIT'],
     ar: 'أغلق جلسة متصفح قبل إنشاء جلسة إضافية.',
     en: 'Close a browser session before starting another one.',
   },
-  browserSessionClosed: {
+  {
+    codes: ['BROWSER_SESSION_CLOSED', 'BROWSER_NAVIGATION_FAILED'],
     ar: 'انتهى تفويض الجلسة.',
     en: 'The session authorization has expired.',
   },
-  browserRequestLimit: {
+  {
+    codes: ['BROWSER_REQUEST_LIMIT', 'BROWSER_NAVIGATION_FAILED'],
     ar: 'تجاوزت الصفحة عدد طلبات الجلسة المسموح.',
     en: 'The page exceeded the session\'s request limit.',
   },
-  browserAutomaticNavigationDenied: {
+  {
+    codes: ['BROWSER_SUBMIT_DENIED', 'BROWSER_NAVIGATION_FAILED'],
     ar: 'تنقل الصفحة أو الإرسال التلقائي يحتاج فعلًا محددًا من جلسة المتصفح.',
     en: 'Page navigation or automatic submission requires a specific action from the browser session.',
   },
-  browserSubmissionWithoutApproval: {
+  {
+    codes: ['BROWSER_SUBMIT_DENIED', 'BROWSER_NAVIGATION_FAILED'],
     ar: 'طلب إرسال بلا موافقة مطابقة للوجهة والقيم.',
     en: 'The destination and values of the submission do not match an approval.',
   },
-  browserResourceDenied: {
+  {
+    codes: ['BROWSER_RESOURCE_DENIED', 'BROWSER_NAVIGATION_FAILED'],
     ar: 'هذا المورد خارج نطاق جلسة القراءة.',
     en: 'This resource is outside the scope of the read session.',
   },
-  browserSubmissionRedirectDenied: {
+  {
+    codes: ['BROWSER_SUBMIT_DENIED', 'BROWSER_NAVIGATION_FAILED'],
     ar: 'لم يُعد إرسال النموذج إلى وجهة تحويل جديدة؛ يلزم إذن مستقل.',
     en: 'The form was not resubmitted to the redirect destination. That destination requires separate approval.',
   },
-  browserResourceSubmissionRedirectDenied: {
+  {
+    codes: ['BROWSER_SUBMIT_DENIED', 'BROWSER_NAVIGATION_FAILED'],
     ar: 'لم يُكرر طلب إرسال أثناء تحويل مورد الصفحة.',
     en: 'The submission was not repeated during the resource redirect.',
   },
-  browserResourceRedirectLimit: {
+  {
+    codes: ['BROWSER_REDIRECT_LIMIT', 'BROWSER_NAVIGATION_FAILED'],
     ar: 'تجاوز المورد حد إعادة التوجيه.',
     en: 'The resource exceeded the redirect limit.',
   },
-  browserSessionStale: {
+  {
+    codes: ['BROWSER_SESSION_STALE'],
     ar: 'انتهت جلسة التشغيل. افتح العنوان مجددًا لاستئناف القراءة بجلسة مستقلة.',
     en: 'The browser session has expired. Reopen the address to continue reading in a new session.',
   },
-  browserPageTimeout: {
+  {
+    codes: ['BROWSER_PAGE_TIMEOUT'],
     ar: 'لم تستجب الصفحة ضمن المهلة. أُغلقت جلسة التشغيل وبقيت الأدلة السابقة محفوظة.',
     en: 'The page did not respond in time. The browser session was closed and the earlier evidence was saved.',
   },
-  browserNavigationTimeout: {
+  {
+    codes: ['BROWSER_NAVIGATION_FAILED'],
     ar: 'تجاوز فتح الصفحة والتحويلات المهلة المسموحة.',
     en: 'Opening the page and following redirects exceeded the time limit.',
   },
-  browserPageRedirectLimit: {
+  {
+    codes: ['BROWSER_REDIRECT_LIMIT'],
     ar: 'تجاوزت الصفحة حد إعادة التوجيه.',
     en: 'The page exceeded the redirect limit.',
   },
-  browserNavigationFailed: {
-    ar: 'تعذر فتح الصفحة ضمن الوقت والنطاق المسموح.',
-    en: 'The page could not be opened within the allowed time and scope.',
-  },
-  browserFieldObservationChanged: {
+  {
+    codes: ['BROWSER_OBSERVATION_CHANGED'],
     ar: 'تغير الحقل أو ارتباطه بالصفحة؛ اقرأ الصفحة مجددًا قبل التعبئة.',
     en: 'The field or its connection to the page changed. Read the page again before filling it in.',
   },
-  browserSensitiveField: {
+  {
+    codes: ['BROWSER_SENSITIVE_FORM'],
     ar: 'الحقل غير قابل للتعبئة أو يحتوي بيانات دخول أو دفع أو بيانات حساسة.',
     en: 'This field cannot be filled in or contains sensitive, sign-in, or payment information.',
   },
-  browserFieldOptionInvalid: {
+  {
+    codes: ['BROWSER_FORM_INVALID'],
     ar: 'قيمة القائمة غير موجودة في الحقل.',
     en: 'The selected option is not available in this field.',
   },
-  browserFieldChanged: {
+  {
+    codes: ['BROWSER_FORM_CHANGED'],
     ar: 'تغير الحقل أثناء التعبئة؛ لم يُرسل نموذج.',
     en: 'The field changed while it was being filled in. No form was submitted.',
   },
-  browserFormChanged: {
+  {
+    codes: ['BROWSER_FORM_CHANGED'],
     ar: 'تغير النموذج أو زر الإرسال أو ترميزه؛ اقرأ الصفحة وراجع الوجهة من جديد.',
     en: 'The form, submit button, or encoding changed. Read the page and review the destination again.',
   },
-  browserFormEncoding: {
+  {
+    codes: ['BROWSER_FORM_ENCODING'],
     ar: 'تجاوز جسم النموذج حد الإرسال المسموح.',
     en: 'The form body exceeded the size limit for submission.',
   },
-  browserFormObservationChanged: {
+  {
+    codes: ['BROWSER_OBSERVATION_CHANGED'],
     ar: 'تغيرت الصفحة أو النموذج؛ اقرأ الصفحة مجددًا قبل طلب الموافقة.',
     en: 'The page or form changed. Read the page again before asking for approval.',
   },
-  browserFormValuesInvalid: {
+  {
+    codes: ['BROWSER_FORM_INVALID'],
     ar: 'قيم النموذج خارج الحقول المرصودة أو تتجاوز الحد.',
     en: 'The values fall outside the observed form fields or exceed the allowed limit.',
   },
-  browserSensitiveForm: {
+  {
+    codes: ['BROWSER_SENSITIVE_FORM'],
     ar: 'النموذج يحتوي حقول دخول أو دفع تتطلب نطاق صلاحية مستقلًا.',
     en: 'The form contains sign-in or payment fields that require separate authorization.',
   },
-  browserSensitiveFormFields: {
+  {
+    codes: ['BROWSER_SENSITIVE_FORM'],
     ar: 'لا تقبل هذه الجلسة كلمات المرور أو بيانات الدفع أو الحقول الحساسة.',
     en: 'This session does not accept passwords, payment details, or sensitive fields.',
   },
-  browserFormOptionInvalid: {
+  {
+    codes: ['BROWSER_FORM_INVALID'],
     ar: 'قيمة القائمة غير موجودة في النموذج.',
     en: 'The selected option is not available in this form.',
   },
-  browserSubmitterObservationChanged: {
+  {
+    codes: ['BROWSER_OBSERVATION_CHANGED'],
     ar: 'تغير زر الإرسال أو ارتباطه بالنموذج.',
     en: 'The submit button or its connection to the form changed.',
   },
-  browserSubmitterDenied: {
+  {
+    codes: ['BROWSER_BUTTON_DENIED'],
     ar: 'هذا الزر لا يملك إرسال نموذج معروفًا يمكن مراجعته والموافقة عليه.',
     en: 'This button has no known form submission to review and approve.',
   },
-  browserButtonNotSubmitted: {
+  {
+    codes: ['BROWSER_BUTTON_DENIED'],
     ar: 'الزر لا يرتبط بنموذج إرسال معروف؛ لم يُنقر الزر.',
     en: 'The button is not associated with a known form submission, so it was not clicked.',
   },
-  browserApprovedFormChanged: {
+  {
+    codes: ['BROWSER_FORM_CHANGED'],
     ar: 'تغيرت القيم أو زر الإرسال بعد الموافقة؛ لم يُرسل الطلب.',
     en: 'The values or submit button changed after approval. The request was not sent.',
   },
-  browserApprovedFormBodyChanged: {
+  {
+    codes: ['BROWSER_FORM_CHANGED'],
     ar: 'تغير جسم النموذج بعد مراجعته؛ لم يُرسل الطلب.',
     en: 'The form body changed after review. The request was not sent.',
   },
-  browserSubmitUnknown: {
+  {
+    codes: ['BROWSER_SUBMIT_UNKNOWN'],
     ar: 'بدأت محاولة الطلب ولم تثبت نتيجتها. راجع الصفحة قبل أي إرسال جديد؛ لن يكرر النظام الطلب.',
     en: 'The request was attempted, but its outcome could not be confirmed. Review the page before submitting again. The system will not repeat the request.',
   },
-  browserSubmitFailed: {
+  {
+    codes: ['BROWSER_SUBMIT_FAILED'],
     ar: 'لم يثبت إرسال النموذج؛ اقرأ الصفحة واطلب موافقة جديدة.',
     en: 'The form submission could not be confirmed. Read the page and ask for approval again.',
   },
-} satisfies Record<string, BilingualMessage>;
+  // Snapshot policy error and its navigation wrapper, retrieved 2026-11-27.
+  // https://github.com/ahmadalwakai/Mohassan-AI/blob/2a4498e1de09edf9c4a7b2847754d197e5146b85/packages/browser/src/effect-policy.ts#L42
+  {
+    codes: ['GOOGLE_ADS_TYPED_API_REQUIRED', 'BROWSER_NAVIGATION_FAILED'],
+    ar: 'تغييرات Google Ads تحتاج التكامل الرسمي المربوط بالحساب والموافقة والقراءة اللاحقة؛ استخدم مسار Google Ads لإعداد التغيير ومراجعته. لم يُرسل طلب المتصفح.',
+    en: 'Changes to Google Ads require the official integration with a linked account, approval, and verification afterward. Use the Google Ads flow to prepare and review the change. No browser request was sent.',
+  },
+];
+
+export function browserErrorReply(error: { code: string; message: string }, lang: ReplyLanguage): string | undefined {
+  const message = BROWSER_ERRORS.find(({ codes, ar }) => codes.includes(error.code) && ar === error.message);
+  if (message) return message[lang];
+  // Navigation can wrap a lower-level Arabic network diagnostic. Keep the generic English navigation reply.
+  if (lang === 'en' && error.code === 'BROWSER_NAVIGATION_FAILED' && requestLanguage(error.message) === 'ar') {
+    return browserNavigationFailure.en;
+  }
+  return undefined;
+}
 
 export type ReplyMessageKey = keyof typeof replyMessages;
 
@@ -381,7 +432,7 @@ const TERMINAL_ERRORS: Readonly<Record<string, BilingualMessage>> = {
 };
 
 export function terminalErrorMessage(error: Error & { code: string }, lang: ReplyLanguage): string {
-  const display = replyMessageForError(error, lang);
+  const display = browserErrorReply(error, lang) ?? replyMessageForError(error, lang);
   if (display !== undefined) return display;
   // Render only the catalogue copy for diagnostics that contain a shell command or provider code.
   if (error.code === 'AGENT_BROWSER_UNAVAILABLE' || error.code === 'CHAT_PROVIDER_FAILED') return TERMINAL_ERRORS[error.code][lang];
