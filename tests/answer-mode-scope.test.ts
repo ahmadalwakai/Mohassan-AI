@@ -3,7 +3,7 @@ import { classifyCouncilWebTurn } from '../apps/server/src/assistant/answer-mode
 import { decideRequestRoute } from '../apps/server/src/assistant/routing-decision.js';
 import type { RequestContextState } from '../apps/server/src/assistant/request-context.js';
 
-const capabilities = { search: true, browser: true, memory: true, chatModel: true, planner: true, adsModel: true, coding: true };
+const capabilities = { search: true, browser: true, memory: true, chatModel: true, planner: true, adsModel: true, coding: true, computer: true };
 const route = (text: string, context?: RequestContextState | null) => decideRequestRoute({ text, context, capabilities, fullAccess: true }, null);
 const classify = (text: string, context?: RequestContextState | null) => {
   const routing = route(text, context);
@@ -39,6 +39,10 @@ describe('council-web turn scope', () => {
     expect(classify(question)).toMatchObject({ kind: 'factual', question, query: expect.stringMatching(/Hamlet.*Odyssey/i) });
   });
 
+  it('keeps a turn with a calculation and a public question in factual scope', () => {
+    expect(classify('Calculate 12 + 17. Then what city is the capital of France?')).toMatchObject({ kind: 'factual' });
+  });
+
   it('covers explicit searches and a question referring to a public page', () => {
     expect(classify('Search Wikipedia for the Nobel Prize')).toMatchObject({ kind: 'factual', query: expect.stringMatching(/Nobel Prize/i) });
     expect(classify('What is published at https://example.com/guide?')).toMatchObject({ kind: 'factual', query: expect.stringMatching(/example\.com/i) });
@@ -46,6 +50,7 @@ describe('council-web turn scope', () => {
 
   it.each([
     ['Calculate 10 plus 3.', 'arithmetic'],
+    ['Nadia has 44 pencils. She gives 6 to Amir and 8 to Lana. How many pencils does Nadia have now?', 'arithmetic'],
     ['ما هي لغتي المفضلة؟', 'personal'],
     ['What is in my saved notes?', 'personal'],
     ['Good morning!', 'conversation'],
@@ -57,7 +62,11 @@ describe('council-web turn scope', () => {
     ['Create a monitor for public election news', 'monitor'],
     ['Create a Google Ads campaign for my bakery.', 'campaign'],
     ['Translate this sentence into Arabic: I am here.', 'local-content'],
+    ['Return these rows as CSV with columns label and count: twine 5, nails 12.', 'local-content'],
     ['Write a poem about gravity.', 'local-content'],
+    ['Find the file named sample.txt in Desktop.', 'action'],
+    ['When was he born?', 'control'],
+    ['طيب هي اتولدت امتى؟', 'control'],
   ])('keeps %s on its existing route', (text, reason) => {
     expect(classify(text)).toEqual({ kind: 'exempt', reason });
   });

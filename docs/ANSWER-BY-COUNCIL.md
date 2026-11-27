@@ -20,7 +20,7 @@ The existing handlers cover these exemptions:
 - Arithmetic and other computations that use given inputs or the server clock.
 - The user’s own memory, settings, account and workspace data, and Mohassan’s runtime status.
 - Small talk, creative writing, and transformations of supplied content.
-- Browser and computer actions, typed executors, reminders, and plans.
+- Browser and computer actions, typed executors, reminders, and plans. An explicit browser command to open a supplied URL and read it stays on the browser-action route.
 - Monitors and campaigns.
 - Clarification, cancellation, and other run controls.
 

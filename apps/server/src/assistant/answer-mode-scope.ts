@@ -51,10 +51,12 @@ export function classifyCouncilWebTurn(request: string, state: ScopeState, now?:
   const question = splitReplyDirective(action).body;
   const scopeOptions = { contextKind: resolution?.kind, previous: previousSource ?? undefined };
   const source = assessRequestScope(requestActionText(request), scopeOptions);
+  const routedSource = resolution?.sourceAssessment;
   const publicQuestion = source.source === 'public_lookup' && source.operation !== 'act';
   const routeExemption = routing && routeExemptions[routing.route];
 
   if (routing?.availability === 'restricted' || routing?.route === 'unsupported' || routing?.handler === 'resume') return exempt('control');
+  if (routing?.handler === 'clarify' && routing.reason === 'missing_reference' && resolution?.kind === 'ambiguous') return exempt('control');
   if (routing?.handler === 'local_status' || recognizeSelfQuestion(action)
       || !manners?.request && (routing?.handler === 'local_conversation' || source.operation === 'converse')) return exempt('conversation');
   const operation = requestOperationText(question);
@@ -65,9 +67,14 @@ export function classifyCouncilWebTurn(request: string, state: ScopeState, now?:
   if (ownFactQuestion(action) || recognizePreferredLanguageRequest(action) || source.source === 'prior_conversation') return exempt('personal');
   const steps = parseHands(action);
   const oneSearch = steps?.length === 1 && steps[0]?.kind === 'search' && !steps[0].here ? steps[0] : undefined;
-  if (source.source === 'local_state' || source.operation === 'act' || actionCompletion?.contract.requirements.length || isBareAddress(action)
+  if (source.source === 'local_state' || routedSource?.source === 'local_state' || source.operation === 'act' || actionCompletion?.contract.requirements.length || isBareAddress(action)
       || steps?.some(step => !['search', 'news'].includes(step.kind))) return exempt('action');
-  if (source.source === 'supplied_content' && source.operation === 'transform') return exempt('local-content');
+  if (source.source === 'supplied_content' && source.operation === 'transform'
+      || routedSource?.source === 'supplied_content' && routedSource.operation === 'transform') return exempt('local-content');
+  // A completed local word problem can contain several narrative sentences.
+  // Splitting them as a question sequence would lose the calculator's operands.
+  if (routing?.handler === 'local_computation' && routedSource?.source === 'supplied_content' && routedSource.operation === 'compute'
+      && evaluateLocalComputation(action, now)?.status === 'completed') return exempt('arithmetic');
 
   const frame = buildFrame(question);
   const writerSource = ['writing', 'clarify', 'web_search'].includes(routing?.route ?? '') ? writingTask(question, 'extractive')?.source : undefined;
