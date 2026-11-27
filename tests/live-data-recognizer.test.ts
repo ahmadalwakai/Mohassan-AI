@@ -4,6 +4,21 @@ import { recognizeLiveData } from '../apps/server/src/live-data/recognize.js';
 
 type Positive = [string, LiveDataIntent['kind']];
 
+it.each([
+  ['حول 5 جوان 2026 إلى الهجري', 'to-hijri', { year: 2026, month: 6, day: 5 }],
+  ['حول 5 يوليوز 2026 إلى الهجري', 'to-hijri', { year: 2026, month: 7, day: 5 }],
+  ['حول 1 ربيع أول 1448 إلى الميلادي', 'to-gregorian', { year: 1448, month: 3, day: 1 }],
+  ['حول 1 ربيع الأول 1448 إلى الميلادي', 'to-gregorian', { year: 1448, month: 3, day: 1 }],
+  ['Convert 1 Rabi al Awwal 1448 to Gregorian', 'to-gregorian', { year: 1448, month: 3, day: 1 }],
+  ['Convert 1 Rabi al-Awwal 1448 to Gregorian', 'to-gregorian', { year: 1448, month: 3, day: 1 }],
+  ['Convert 1 Dhul Hijjah 1448 to Gregorian', 'to-gregorian', { year: 1448, month: 12, day: 1 }],
+  ['Convert 1 Dhu al-Hijjah 1448 to Gregorian', 'to-gregorian', { year: 1448, month: 12, day: 1 }],
+])('reads the complete calendar date in %s', (request, direction, date) => {
+  // Month indices from Unicode CLDR 48.0.0 (retrieved 2026-11-27).
+  // https://github.com/unicode-org/cldr-json/tree/48.0.0/cldr-json
+  expect(recognizeLiveData(request)).toMatchObject({ kind: 'hijri', direction, date });
+});
+
 const arabic: Positive[] = [
   ['ما تاريخ اليوم بالهجري؟', 'hijri'],
   ['ما هو التاريخ الهجري اليوم؟', 'hijri'],

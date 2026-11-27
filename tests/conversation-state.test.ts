@@ -669,6 +669,18 @@ describe('conversation state v2: what must NOT be a follow-up', () => {
 });
 
 describe('conversation state v2: years, dates and «أعد»', () => {
+  it.each(['5 جويلية 2026', '1 أوت 2026', '5 جوان 2026', '5 يوليوز 2026', '1 غشت 2026',
+    '5 تشرين الأول 2026', '1 ربيع أول 1448'])('keeps the named date %s apart from the place', date => {
+    const turn = ask(emptyConversationState(), `كيف الطقس في جدة ${date}؟`, 'u1');
+    expect(turn.entity).toBe('جدة');
+    expect(turn.time).toBe(date);
+  });
+
+  it.each(['مدينة رمضان', 'جوان', 'أب'])('keeps %s in the entity without a date', entity => {
+    const turn = ask(emptyConversationState(), `كم عدد سكان ${entity}؟`, 'u1');
+    expect(turn).toMatchObject({ entity, time: null });
+  });
+
   it('keeps a year or a date apart from the entity, with its preposition', () => {
     const gold = ask(emptyConversationState(), 'كم كان سعر الذهب في 2020؟', 'u1');
     expect(gold.property).toBe('price');
