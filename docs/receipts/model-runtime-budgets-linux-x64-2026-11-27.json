@@ -1,0 +1,1319 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-11-27T00:56:16.779Z",
+  "commit": "ec4c6337c4ac76a6b9117df85878f08fa92ebfb0",
+  "dirty": false,
+  "machine": {
+    "platform": "linux",
+    "arch": "x64",
+    "cpuModel": "AMD EPYC 9V74 80-Core Processor",
+    "availableCpus": 4,
+    "totalMemoryBytes": 18882662400,
+    "kernelRelease": "6.18.57",
+    "node": "v24.22.3"
+  },
+  "samplesPerLanguage": 20,
+  "models": [
+    {
+      "modelId": "chat-v5",
+      "version": "v5-foundation",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "checkpoint",
+        "tokenizer",
+        "tokenizer-report"
+      ]
+    },
+    {
+      "modelId": "head-clinc-intent",
+      "version": "v5-sidecar-v1",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "worker-config",
+        "head-manifest",
+        "weights",
+        "training-manifest"
+      ]
+    },
+    {
+      "modelId": "head-massive-intent",
+      "version": "v5-sidecar-v1",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "worker-config",
+        "head-manifest",
+        "weights",
+        "training-manifest"
+      ]
+    },
+    {
+      "modelId": "head-clinc-domain",
+      "version": "v5-sidecar-v1",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "worker-config",
+        "head-manifest",
+        "weights",
+        "training-manifest"
+      ]
+    },
+    {
+      "modelId": "head-massive-scenario",
+      "version": "v5-sidecar-v1",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "worker-config",
+        "head-manifest",
+        "weights",
+        "training-manifest"
+      ]
+    },
+    {
+      "modelId": "head-out-of-scope",
+      "version": "v5-sidecar-v1",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "worker-config",
+        "head-manifest",
+        "weights",
+        "training-manifest"
+      ]
+    },
+    {
+      "modelId": "head-follow-up",
+      "version": "v5-sidecar-v1",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "worker-config",
+        "head-manifest",
+        "weights",
+        "training-manifest"
+      ]
+    },
+    {
+      "modelId": "question-edit",
+      "version": "v5-sidecar-v1",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "worker-config",
+        "head-manifest",
+        "weights",
+        "training-manifest"
+      ]
+    },
+    {
+      "modelId": "head-answer-sentence",
+      "version": "v5-sidecar-v1",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "worker-config",
+        "head-manifest",
+        "weights",
+        "training-manifest"
+      ]
+    },
+    {
+      "modelId": "head-sufficiency",
+      "version": "v5-sidecar-v1",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "worker-config",
+        "head-manifest",
+        "weights",
+        "training-manifest"
+      ]
+    },
+    {
+      "modelId": "head-speech-act",
+      "version": "v5-sidecar-v1",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "worker-config",
+        "head-manifest",
+        "weights",
+        "training-manifest"
+      ]
+    },
+    {
+      "modelId": "execution",
+      "version": "exec-c40m-2026-11-12",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "manifest",
+        "config",
+        "tokenizer",
+        "weights"
+      ]
+    },
+    {
+      "modelId": "execution-c9m",
+      "version": "exec-c9m-2026-11-12",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "manifest",
+        "config",
+        "tokenizer",
+        "weights"
+      ]
+    },
+    {
+      "modelId": "execution-b",
+      "version": "exec-b-2026-11-12",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "manifest",
+        "config",
+        "tokenizer",
+        "weights"
+      ]
+    },
+    {
+      "modelId": "execution-a",
+      "version": "exec-a-2026-11-12",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "manifest",
+        "config",
+        "tokenizer",
+        "weights"
+      ]
+    },
+    {
+      "modelId": "router-b0",
+      "version": "b0",
+      "runtime": "node-cpu",
+      "status": "absent",
+      "missing": [
+        "manifest",
+        "weights"
+      ]
+    },
+    {
+      "modelId": "router-b2",
+      "version": "b2",
+      "runtime": "node-cpu",
+      "status": "absent",
+      "missing": [
+        "manifest",
+        "weights"
+      ]
+    },
+    {
+      "modelId": "router-b1",
+      "version": "b1",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "checkpoint"
+      ]
+    },
+    {
+      "modelId": "router-context-text",
+      "version": "development-v1",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "checkpoint",
+        "manifest",
+        "weights",
+        "calibration"
+      ]
+    },
+    {
+      "modelId": "router-context-history",
+      "version": "development-v1",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "checkpoint",
+        "manifest",
+        "weights",
+        "calibration"
+      ]
+    },
+    {
+      "modelId": "scratch-route",
+      "version": "v1-exclusion-20261125",
+      "runtime": "node-cpu",
+      "status": "measured",
+      "artifacts": [
+        {
+          "role": "manifest",
+          "sha256": "29bc7d006d89fdb60fadd0a3fe77a308cbc6372bfac6e8d04e2e3e2beab65b05"
+        },
+        {
+          "role": "weights",
+          "sha256": "4f6bdc26d32b419ef9c25eeb869597a2375a45dedf3100f97ea41bc95e93de48"
+        }
+      ],
+      "languages": {
+        "ar": {
+          "source": "tests/fixtures/manners-development.ts#standardArabic[16][0]",
+          "sourceSha256": "714ba5081e72072d9e8a11aa411eff0ff12c4872ad53e39bbca7cbe48039cc15",
+          "inputSha256": "61161aaec9813aa061c567cfefefe420fe04112b9b2eac03be7179090343f985",
+          "coldStartMs": {
+            "p50": 22.759890999999996,
+            "p95": 27.57385400000001,
+            "samples": [
+              26.55292700000001,
+              23.925691999999998,
+              22.984522,
+              21.360467999999997,
+              22.539608999999984,
+              21.470173000000017,
+              21.85843,
+              27.57385400000001,
+              29.219199000000003,
+              22.57497700000002,
+              24.725404999999995,
+              22.642067999999995,
+              23.609831000000014,
+              25.175335999999987,
+              22.24694199999999,
+              22.877713999999997,
+              22.536248,
+              21.915800999999988,
+              27.419306000000006,
+              22.622048000000007
+            ]
+          },
+          "warmCallMs": {
+            "p50": 0.2327214999999967,
+            "p95": 0.31495599999999513,
+            "samples": [
+              0.23922100000001478,
+              0.31495599999999513,
+              0.22580100000001835,
+              0.2459920000000011,
+              0.22925600000002078,
+              0.21513500000000363,
+              0.2271430000000123,
+              0.2181799999999896,
+              0.2198020000000156,
+              0.2574290000000019,
+              0.3034580000000062,
+              0.23030800000000795,
+              0.3992140000000006,
+              0.26503999999999905,
+              0.27325299999998265,
+              0.22628199999999765,
+              0.2862430000000131,
+              0.23513499999998544,
+              0.22134499999998525,
+              0.21193999999999846
+            ]
+          },
+          "peakRssKiB": 68080,
+          "peakNodeRssKiB": 68080,
+          "residentReservationBasisKiB": 68080
+        },
+        "en": {
+          "source": "tests/fixtures/manners-development.ts#english[16][0]",
+          "sourceSha256": "714ba5081e72072d9e8a11aa411eff0ff12c4872ad53e39bbca7cbe48039cc15",
+          "inputSha256": "f9dd16f8c6d67a901958429d06c8698669b917ae2c9ca7c2c424e51b034b7d85",
+          "coldStartMs": {
+            "p50": 22.2081575,
+            "p95": 27.732860000000016,
+            "samples": [
+              23.630781999999982,
+              22.521547000000027,
+              21.991275,
+              34.463858999999985,
+              24.105919999999998,
+              21.78047700000002,
+              22.43661799999998,
+              22.406481999999983,
+              21.691643,
+              27.732860000000016,
+              21.50431900000001,
+              20.850392,
+              20.911093000000022,
+              21.398408999999987,
+              22.608968000000004,
+              22.009833000000015,
+              21.73569500000002,
+              19.22479100000001,
+              26.232788999999997,
+              22.40748000000002
+            ]
+          },
+          "warmCallMs": {
+            "p50": 0.24297700000001043,
+            "p95": 0.3143850000000157,
+            "samples": [
+              0.280272999999994,
+              0.21208100000001195,
+              0.20921599999999785,
+              0.2740940000000194,
+              0.289716999999996,
+              0.21411299999999756,
+              0.23994299999998248,
+              0.2149040000000184,
+              0.28449000000000524,
+              0.25965200000001687,
+              0.2222849999999994,
+              0.21396400000000426,
+              0.21358299999999986,
+              0.2381599999999935,
+              0.24020200000001068,
+              0.249116000000015,
+              0.3487969999999905,
+              0.30197599999999625,
+              0.3143850000000157,
+              0.24575200000001018
+            ]
+          },
+          "peakRssKiB": 68032,
+          "peakNodeRssKiB": 68032,
+          "residentReservationBasisKiB": 68032
+        }
+      },
+      "recommendedBudget": {
+        "startupMs": 76,
+        "latencyMs": 21,
+        "memoryMb": 84
+      }
+    },
+    {
+      "modelId": "scratch-speech-act",
+      "version": "v1-exclusion-20261125",
+      "runtime": "node-cpu",
+      "status": "measured",
+      "artifacts": [
+        {
+          "role": "manifest",
+          "sha256": "29bc7d006d89fdb60fadd0a3fe77a308cbc6372bfac6e8d04e2e3e2beab65b05"
+        },
+        {
+          "role": "weights",
+          "sha256": "b4c77f3de542bdd3abff547f031af6bf53d80e59cb47a691d0332319bdea0e4f"
+        }
+      ],
+      "languages": {
+        "ar": {
+          "source": "tests/fixtures/manners-development.ts#standardArabic[0][0]",
+          "sourceSha256": "714ba5081e72072d9e8a11aa411eff0ff12c4872ad53e39bbca7cbe48039cc15",
+          "inputSha256": "b9e40e52b61e18f91a37c584134a582c5ab7522b973a00ed7c510b4873bcf9a6",
+          "coldStartMs": {
+            "p50": 18.489611999999994,
+            "p95": 21.846817999999985,
+            "samples": [
+              20.236620999999985,
+              17.457812999999987,
+              17.327436000000006,
+              18.550554000000005,
+              18.541229999999985,
+              17.328507000000002,
+              19.376711999999998,
+              19.356090999999992,
+              19.503113000000013,
+              21.846817999999985,
+              29.990325999999982,
+              19.63692500000002,
+              18.437994000000003,
+              19.751667999999995,
+              17.567709000000008,
+              18.10002399999999,
+              17.16832599999998,
+              17.511734999999987,
+              18.407307000000003,
+              16.226362999999992
+            ]
+          },
+          "warmCallMs": {
+            "p50": 0.2652660000000111,
+            "p95": 0.4168200000000013,
+            "samples": [
+              0.23052799999999252,
+              0.23630699999998228,
+              0.244529,
+              0.29070899999999256,
+              0.27798000000001366,
+              0.4168200000000013,
+              0.2645300000000077,
+              0.29896199999998885,
+              0.28725399999999013,
+              0.3178000000000054,
+              0.4293180000000234,
+              0.2762380000000064,
+              0.24377900000001773,
+              0.24726400000000126,
+              0.2618050000000096,
+              0.2341040000000021,
+              0.25726900000000796,
+              0.2744649999999922,
+              0.25838999999999146,
+              0.2660020000000145
+            ]
+          },
+          "peakRssKiB": 68396,
+          "peakNodeRssKiB": 68396,
+          "residentReservationBasisKiB": 68396
+        },
+        "en": {
+          "source": "tests/fixtures/manners-development.ts#english[0][0]",
+          "sourceSha256": "714ba5081e72072d9e8a11aa411eff0ff12c4872ad53e39bbca7cbe48039cc15",
+          "inputSha256": "078e94f037a182aeee30c3a102967384a85fd87c003ac5c664affd50e6e06fb0",
+          "coldStartMs": {
+            "p50": 20.147616499999984,
+            "p95": 34.08863699999998,
+            "samples": [
+              58.504401,
+              19.732248999999996,
+              17.60766000000001,
+              29.082955,
+              19.285563999999994,
+              20.551956999999987,
+              20.864830000000012,
+              17.554789999999997,
+              20.553549000000004,
+              18.328778999999997,
+              17.919160000000005,
+              19.74327599999998,
+              22.293858999999998,
+              18.134074000000027,
+              34.08863699999998,
+              23.885763999999995,
+              20.753652000000017,
+              16.15301199999999,
+              23.766744000000017,
+              16.384352000000007
+            ]
+          },
+          "warmCallMs": {
+            "p50": 0.23397350000001893,
+            "p95": 0.3468949999999893,
+            "samples": [
+              0.3035690000000386,
+              0.2526410000000112,
+              0.22507000000001653,
+              0.1868029999999976,
+              0.3468949999999893,
+              0.2344940000000122,
+              0.7779350000000136,
+              0.2775299999999845,
+              0.18880599999999959,
+              0.26192599999998833,
+              0.19856999999998948,
+              0.16976600000003828,
+              0.2344550000000254,
+              0.23349200000001247,
+              0.19312099999999077,
+              0.18613100000001737,
+              0.1560559999999782,
+              0.26269700000000284,
+              0.31337399999998183,
+              0.22919600000000173
+            ]
+          },
+          "peakRssKiB": 67956,
+          "peakNodeRssKiB": 67956,
+          "residentReservationBasisKiB": 67956
+        }
+      },
+      "recommendedBudget": {
+        "startupMs": 89,
+        "latencyMs": 21,
+        "memoryMb": 84
+      }
+    },
+    {
+      "modelId": "scratch-refusal",
+      "version": "v1-exclusion-20261125",
+      "runtime": "node-cpu",
+      "status": "measured",
+      "artifacts": [
+        {
+          "role": "manifest",
+          "sha256": "29bc7d006d89fdb60fadd0a3fe77a308cbc6372bfac6e8d04e2e3e2beab65b05"
+        },
+        {
+          "role": "weights",
+          "sha256": "a0da1a0806622c98a20d8b7af1c29ff7055a5896c6c8b5e7cfba9a977d130e68"
+        }
+      ],
+      "languages": {
+        "ar": {
+          "source": "tests/fixtures/refusal-development.ts#arabicRefusals.no_capability[0]",
+          "sourceSha256": "71441bbc6bbf803398c7daf8877e46097fc78c379daaa4fa0f5b24d81fe9876d",
+          "inputSha256": "642485cd32f40f1b6d7e58ef8caad442f4263f415e8f60816223802c93e7e7ff",
+          "coldStartMs": {
+            "p50": 22.055393500000008,
+            "p95": 24.652912999999984,
+            "samples": [
+              21.629114999999985,
+              22.183232000000004,
+              22.352296999999993,
+              24.652912999999984,
+              30.259973000000002,
+              22.374359999999996,
+              19.663275,
+              22.99182400000001,
+              21.927555000000012,
+              23.40782200000001,
+              20.888416000000007,
+              21.748295000000013,
+              19.746771999999993,
+              23.875639000000007,
+              24.589075999999977,
+              24.65221199999999,
+              20.997389999999996,
+              21.912542000000002,
+              21.86522099999999,
+              21.270363000000003
+            ]
+          },
+          "warmCallMs": {
+            "p50": 0.24108900000000233,
+            "p95": 0.3343050000000005,
+            "samples": [
+              0.21638699999999744,
+              0.21697800000001166,
+              0.23774900000000798,
+              0.2118199999999888,
+              0.2694370000000106,
+              0.28214600000001155,
+              0.2120599999999797,
+              0.2132519999999829,
+              0.21903100000000109,
+              0.26376899999999637,
+              0.22689199999999232,
+              0.23590699999999742,
+              0.3343050000000005,
+              0.22030300000000125,
+              0.24442899999999668,
+              0.2996530000000064,
+              0.2560969999999827,
+              0.25737900000001446,
+              0.28151600000001054,
+              0.47414100000000303
+            ]
+          },
+          "peakRssKiB": 68036,
+          "peakNodeRssKiB": 68036,
+          "residentReservationBasisKiB": 68036
+        },
+        "en": {
+          "source": "tests/fixtures/refusal-development.ts#englishRefusals.no_capability[0]",
+          "sourceSha256": "71441bbc6bbf803398c7daf8877e46097fc78c379daaa4fa0f5b24d81fe9876d",
+          "inputSha256": "79a65f2993934c6b28b66296e8db038af5bf0f320b152e47236fbd5af569e48d",
+          "coldStartMs": {
+            "p50": 21.537426500000024,
+            "p95": 23.967446999999993,
+            "samples": [
+              22.884400999999997,
+              20.885952000000003,
+              23.634865999999988,
+              23.643428,
+              20.29513,
+              22.261259999999993,
+              21.439979000000022,
+              20.352908000000014,
+              20.239184999999992,
+              20.24323099999998,
+              20.350003000000015,
+              22.937892000000005,
+              20.738238999999993,
+              20.077350999999993,
+              23.967446999999993,
+              22.725762000000003,
+              24.518429999999995,
+              22.677118000000007,
+              21.634874000000025,
+              20.052233
+            ]
+          },
+          "warmCallMs": {
+            "p50": 0.23272649999999828,
+            "p95": 0.3124119999999948,
+            "samples": [
+              0.3236390000000142,
+              0.24607199999999807,
+              0.2310589999999877,
+              0.22413900000000808,
+              0.2160169999999937,
+              0.2216150000000141,
+              0.2291360000000111,
+              0.2573590000000081,
+              0.23357300000000691,
+              0.2457210000000032,
+              0.23187999999998965,
+              0.2155350000000169,
+              0.29025899999999183,
+              0.22089400000001547,
+              0.25519599999998377,
+              0.22387800000001334,
+              0.23634699999999498,
+              0.221193999999997,
+              0.3124119999999948,
+              0.25209100000000717
+            ]
+          },
+          "peakRssKiB": 67564,
+          "peakNodeRssKiB": 67564,
+          "residentReservationBasisKiB": 67564
+        }
+      },
+      "recommendedBudget": {
+        "startupMs": 70,
+        "latencyMs": 21,
+        "memoryMb": 84
+      }
+    },
+    {
+      "modelId": "scratch-follow-up",
+      "version": "v1-exclusion-20261125",
+      "runtime": "node-cpu",
+      "status": "measured",
+      "artifacts": [
+        {
+          "role": "manifest",
+          "sha256": "29bc7d006d89fdb60fadd0a3fe77a308cbc6372bfac6e8d04e2e3e2beab65b05"
+        },
+        {
+          "role": "weights",
+          "sha256": "8d00d3f4ab73e6efabf6c8fe08769cafb0cd843a994711b97725bbc6647a97c7"
+        }
+      ],
+      "languages": {
+        "ar": {
+          "source": "tests/fixtures/manners-development.ts#standardArabic[16][0]",
+          "sourceSha256": "714ba5081e72072d9e8a11aa411eff0ff12c4872ad53e39bbca7cbe48039cc15",
+          "inputSha256": "61161aaec9813aa061c567cfefefe420fe04112b9b2eac03be7179090343f985",
+          "coldStartMs": {
+            "p50": 19.298348999999988,
+            "p95": 23.449925000000007,
+            "samples": [
+              17.117399000000006,
+              19.767032,
+              23.31523200000001,
+              20.21606,
+              17.226614000000012,
+              16.685385999999994,
+              20.730297000000007,
+              19.446848000000017,
+              19.357272999999992,
+              18.10338900000002,
+              15.958979,
+              19.239424999999983,
+              20.38328200000001,
+              29.784255,
+              19.154466000000014,
+              22.98610500000001,
+              23.449925000000007,
+              16.516501000000005,
+              18.620749999999987,
+              18.65562300000002
+            ]
+          },
+          "warmCallMs": {
+            "p50": 0.2165924999999902,
+            "p95": 0.3273749999999893,
+            "samples": [
+              0.19794899999999416,
+              0.21687799999997992,
+              0.34839600000000814,
+              0.200523000000004,
+              0.23180999999999585,
+              0.21630700000000047,
+              0.1855899999999906,
+              0.24481000000000108,
+              0.1868430000000103,
+              0.18731300000001738,
+              0.17395299999998315,
+              0.24177500000001828,
+              0.21802900000000136,
+              0.25396299999999883,
+              0.17326199999999403,
+              0.3273749999999893,
+              0.1795410000000004,
+              0.2837780000000123,
+              0.2476840000000209,
+              0.21182999999999197
+            ]
+          },
+          "peakRssKiB": 68180,
+          "peakNodeRssKiB": 68180,
+          "residentReservationBasisKiB": 68180
+        },
+        "en": {
+          "source": "tests/fixtures/manners-development.ts#english[16][0]",
+          "sourceSha256": "714ba5081e72072d9e8a11aa411eff0ff12c4872ad53e39bbca7cbe48039cc15",
+          "inputSha256": "f9dd16f8c6d67a901958429d06c8698669b917ae2c9ca7c2c424e51b034b7d85",
+          "coldStartMs": {
+            "p50": 18.98231150000001,
+            "p95": 22.66250499999998,
+            "samples": [
+              19.731167,
+              20.188759000000005,
+              16.751826000000023,
+              16.902445,
+              22.339737999999983,
+              24.816810000000004,
+              21.961016,
+              18.12081900000001,
+              17.855424,
+              19.041626000000008,
+              16.939639999999997,
+              16.93226899999999,
+              21.177742999999992,
+              18.008504999999985,
+              18.675051999999994,
+              19.198543,
+              18.381979,
+              22.66250499999998,
+              18.92299700000001,
+              21.039294000000012
+            ]
+          },
+          "warmCallMs": {
+            "p50": 0.23614699999998834,
+            "p95": 0.29794999999998595,
+            "samples": [
+              0.20378800000000297,
+              0.17468399999998496,
+              0.23399300000002654,
+              0.23604699999998502,
+              0.24883600000001138,
+              0.29987299999999095,
+              0.2687660000000278,
+              0.25994199999999523,
+              0.2647099999999796,
+              0.25964299999998275,
+              0.22418800000002648,
+              0.21328200000002084,
+              0.23624699999999166,
+              0.21348299999999654,
+              0.20249599999999646,
+              0.29794999999998595,
+              0.2577489999999898,
+              0.2272130000000061,
+              0.20831499999999892,
+              0.26793499999999426
+            ]
+          },
+          "peakRssKiB": 68496,
+          "peakNodeRssKiB": 68496,
+          "residentReservationBasisKiB": 68496
+        }
+      },
+      "recommendedBudget": {
+        "startupMs": 67,
+        "latencyMs": 21,
+        "memoryMb": 84
+      }
+    },
+    {
+      "modelId": "monitor-context-head",
+      "version": "context-v1",
+      "runtime": "node-cpu",
+      "status": "absent",
+      "missing": [
+        "manifest",
+        "weights"
+      ]
+    },
+    {
+      "modelId": "refusal",
+      "version": "v1-exclusion-20261125",
+      "runtime": "node-cpu",
+      "status": "measured",
+      "artifacts": [
+        {
+          "role": "weights",
+          "sha256": "e79b38d5d57bcb945dd9290627b3e6813a8a2d7924d73495c3c3649c11ab25bf"
+        }
+      ],
+      "languages": {
+        "ar": {
+          "source": "tests/fixtures/refusal-development.ts#arabicRefusals.no_capability[0]",
+          "sourceSha256": "71441bbc6bbf803398c7daf8877e46097fc78c379daaa4fa0f5b24d81fe9876d",
+          "inputSha256": "642485cd32f40f1b6d7e58ef8caad442f4263f415e8f60816223802c93e7e7ff",
+          "coldStartMs": {
+            "p50": 9.79298949999999,
+            "p95": 13.0137,
+            "samples": [
+              13.875752000000006,
+              8.334681000000018,
+              8.499521000000016,
+              8.754736000000008,
+              9.692691999999994,
+              8.835338000000007,
+              8.99476900000002,
+              10.071494000000001,
+              9.997703000000001,
+              13.0137,
+              9.971023000000002,
+              8.542815999999988,
+              10.11113499999999,
+              8.575146000000018,
+              9.893286999999987,
+              11.976303999999999,
+              8.866475000000008,
+              10.123905000000008,
+              9.184375999999986,
+              10.302996000000007
+            ]
+          },
+          "warmCallMs": {
+            "p50": 0.3294829999999962,
+            "p95": 0.4672559999999919,
+            "samples": [
+              0.24219600000000696,
+              0.25896099999999933,
+              0.2859109999999987,
+              0.2937440000000038,
+              0.35079999999999245,
+              0.3964390000000151,
+              0.32691400000001636,
+              0.4102399999999875,
+              0.5233209999999815,
+              0.3741850000000113,
+              0.448506999999978,
+              0.23943199999999365,
+              0.30711400000001277,
+              0.30984799999998813,
+              0.2896479999999997,
+              0.390861000000001,
+              0.33205199999997603,
+              0.3049400000000162,
+              0.38609400000001415,
+              0.4672559999999919
+            ]
+          },
+          "peakRssKiB": 62968,
+          "peakNodeRssKiB": 62968,
+          "residentReservationBasisKiB": 62968
+        },
+        "en": {
+          "source": "tests/fixtures/refusal-development.ts#englishRefusals.no_capability[0]",
+          "sourceSha256": "71441bbc6bbf803398c7daf8877e46097fc78c379daaa4fa0f5b24d81fe9876d",
+          "inputSha256": "79a65f2993934c6b28b66296e8db038af5bf0f320b152e47236fbd5af569e48d",
+          "coldStartMs": {
+            "p50": 9.585577500000014,
+            "p95": 13.530081999999993,
+            "samples": [
+              9.949973,
+              8.525701000000026,
+              13.530081999999993,
+              8.709218000000021,
+              9.227562000000006,
+              14.335619000000008,
+              9.822219999999987,
+              9.697912000000002,
+              9.411930000000012,
+              10.425861999999995,
+              10.072317999999996,
+              8.670469999999995,
+              11.09515300000001,
+              7.90759700000001,
+              10.867068000000017,
+              9.473243000000025,
+              12.045679000000007,
+              8.607765999999998,
+              8.097023000000007,
+              9.133419000000004
+            ]
+          },
+          "warmCallMs": {
+            "p50": 0.44421149999999443,
+            "p95": 0.5737259999999935,
+            "samples": [
+              0.7227819999999952,
+              0.4919130000000109,
+              0.41691000000000145,
+              0.4704810000000066,
+              0.41432600000001685,
+              0.45080099999998424,
+              0.3911909999999921,
+              0.46180799999999067,
+              0.4642609999999934,
+              0.43981499999998164,
+              0.35234199999999305,
+              0.36706499999999664,
+              0.46952900000002273,
+              0.35426599999999553,
+              0.4316519999999855,
+              0.5737259999999935,
+              0.43171200000000454,
+              0.4486080000000072,
+              0.3720220000000154,
+              0.5477680000000191
+            ]
+          },
+          "peakRssKiB": 62612,
+          "peakNodeRssKiB": 62612,
+          "residentReservationBasisKiB": 62612
+        }
+      },
+      "recommendedBudget": {
+        "startupMs": 48,
+        "latencyMs": 22,
+        "memoryMb": 77
+      }
+    },
+    {
+      "modelId": "arithmetic",
+      "version": "expression-search-v1",
+      "runtime": "node-cpu",
+      "status": "measured",
+      "artifacts": [
+        {
+          "role": "weights",
+          "sha256": "fef323bb9e24b1aa4fa96c51ac585721c836ea4afe4b882c7ad322f3eccd0ebf"
+        }
+      ],
+      "languages": {
+        "ar": {
+          "source": "tests/fixtures/reasoning-word-problems.ts#word-problem-written-operands-ar",
+          "sourceSha256": "9ff616cf9f69ea23641ae60e5524284635dd1a56f83ce8da17569e90b8a0cb65",
+          "inputSha256": "482341af080442f52f740c67e45b3b682b175d56977fcc1ef48666332e7eae43",
+          "coldStartMs": {
+            "p50": 441.76644100000004,
+            "p95": 535.864876,
+            "samples": [
+              494.54197400000004,
+              439.50234500000005,
+              455.320939,
+              535.864876,
+              457.597318,
+              460.88075100000003,
+              562.4863109999999,
+              393.874487,
+              397.673812,
+              390.138473,
+              461.16465999999997,
+              425.70566099999996,
+              402.61442600000004,
+              458.46513200000004,
+              436.31938099999996,
+              458.402548,
+              422.2941420000001,
+              422.809445,
+              444.03053700000004,
+              402.488532
+            ]
+          },
+          "warmCallMs": {
+            "p50": 0.36312800000001744,
+            "p95": 5.830948999999919,
+            "samples": [
+              0.29610700000000634,
+              0.3937750000000051,
+              0.38321800000005624,
+              0.33228200000007746,
+              3.933422000000064,
+              0.31675800000004983,
+              5.046673999999939,
+              5.830948999999919,
+              0.26948700000002646,
+              6.101888000000031,
+              0.6096810000000232,
+              0.339753000000087,
+              3.703995999999961,
+              0.29021899999997913,
+              0.29448500000000877,
+              5.563485000000014,
+              0.32563199999992776,
+              0.34303799999997864,
+              0.5576419999999871,
+              0.30541100000004917
+            ]
+          },
+          "peakRssKiB": 118268,
+          "peakNodeRssKiB": 118268,
+          "residentReservationBasisKiB": 118268
+        },
+        "en": {
+          "source": "tests/fixtures/reasoning-word-problems.ts#word-problem-written-operands-en",
+          "sourceSha256": "9ff616cf9f69ea23641ae60e5524284635dd1a56f83ce8da17569e90b8a0cb65",
+          "inputSha256": "01036824e9fa955e73cd0134247ca3df85167d6ca45fb4410bcd82a882ea4469",
+          "coldStartMs": {
+            "p50": 444.876837,
+            "p95": 500.885328,
+            "samples": [
+              455.055962,
+              423.67568600000004,
+              424.75256199999995,
+              443.995047,
+              445.75862700000005,
+              425.28835100000003,
+              497.01230899999996,
+              398.699397,
+              434.58014799999995,
+              500.885328,
+              462.19581300000004,
+              442.63952199999994,
+              487.41393100000005,
+              454.07897,
+              457.65919599999995,
+              448.81252599999993,
+              414.69176300000004,
+              417.44518300000004,
+              502.190544,
+              421.006437
+            ]
+          },
+          "warmCallMs": {
+            "p50": 11.414965499999994,
+            "p95": 15.472860999999966,
+            "samples": [
+              11.005075999999917,
+              11.426152000000002,
+              10.997384000000011,
+              12.434974999999895,
+              15.472860999999966,
+              11.039016999999944,
+              10.947638999999981,
+              12.132759000000078,
+              11.090935999999942,
+              11.15954099999999,
+              13.035685999999941,
+              12.411576999999966,
+              10.92893099999992,
+              14.189316000000076,
+              16.98556999999994,
+              10.899921999999947,
+              10.825674000000049,
+              12.172209000000066,
+              15.161695000000009,
+              11.403778999999986
+            ]
+          },
+          "peakRssKiB": 118776,
+          "peakNodeRssKiB": 118776,
+          "residentReservationBasisKiB": 118776
+        }
+      },
+      "recommendedBudget": {
+        "startupMs": 1092,
+        "latencyMs": 51,
+        "memoryMb": 145
+      }
+    },
+    {
+      "modelId": "ocr",
+      "version": "ocr-v1-real2",
+      "runtime": "node-cpu",
+      "status": "absent",
+      "missing": [
+        "manifest",
+        "weights"
+      ]
+    },
+    {
+      "modelId": "ocr-base",
+      "version": "ocr-v1",
+      "runtime": "node-cpu",
+      "status": "absent",
+      "missing": [
+        "manifest",
+        "weights"
+      ]
+    },
+    {
+      "modelId": "ocr-v2",
+      "version": "ocr-v2",
+      "runtime": "node-cpu",
+      "status": "absent",
+      "missing": [
+        "manifest",
+        "weights"
+      ]
+    },
+    {
+      "modelId": "google-ads-pointer",
+      "version": "goal-tagger-v1",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "worker-config",
+        "checkpoint"
+      ]
+    },
+    {
+      "modelId": "google-ads-pointer-lm",
+      "version": "pointer-v3",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "checkpoint",
+        "settings",
+        "tokenizer"
+      ]
+    },
+    {
+      "modelId": "slot-tagger",
+      "version": "typescript-v1",
+      "runtime": "node-cpu",
+      "status": "absent",
+      "missing": [
+        "manifest",
+        "weights"
+      ]
+    },
+    {
+      "modelId": "slot-date-place-tagger",
+      "version": "typescript-v1",
+      "runtime": "node-cpu",
+      "status": "absent",
+      "missing": [
+        "manifest",
+        "weights"
+      ]
+    },
+    {
+      "modelId": "chat-v4",
+      "version": "v4-stage-3-full",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "checkpoint",
+        "tokenizer",
+        "tokenizer-report"
+      ]
+    },
+    {
+      "modelId": "reading-v3-last",
+      "version": "reading-v3-last",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "checkpoint",
+        "tokenizer",
+        "tokenizer-report"
+      ]
+    },
+    {
+      "modelId": "reading-v4-hn-last",
+      "version": "reading-v4-hn-last",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "checkpoint",
+        "tokenizer",
+        "tokenizer-report"
+      ]
+    },
+    {
+      "modelId": "reading-abstain-verifier",
+      "version": "v1-20261120",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "weights"
+      ]
+    },
+    {
+      "modelId": "reading-dense-retriever",
+      "version": "v1-20261121",
+      "runtime": "gpu",
+      "status": "absent",
+      "missing": [
+        "checkpoint"
+      ]
+    },
+    {
+      "modelId": "ads-code-foundation",
+      "version": "pretrain",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "checkpoint",
+        "tokenizer",
+        "tokenizer-report"
+      ]
+    },
+    {
+      "modelId": "ads-bilingual-code-v1",
+      "version": "bilingual-code-v1",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "checkpoint",
+        "tokenizer",
+        "tokenizer-report"
+      ]
+    },
+    {
+      "modelId": "ads-bilingual-code-v2",
+      "version": "bilingual-code-v2",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "checkpoint",
+        "tokenizer",
+        "tokenizer-report"
+      ]
+    },
+    {
+      "modelId": "ads-v4-head",
+      "version": "t1-20261122",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "weights"
+      ]
+    },
+    {
+      "modelId": "ads-v4-lora",
+      "version": "t1-20261122",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "weights"
+      ]
+    },
+    {
+      "modelId": "ads-v4-last2",
+      "version": "t1-20261122",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "weights"
+      ]
+    },
+    {
+      "modelId": "reading-v4-head",
+      "version": "t1-20261122",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "weights"
+      ]
+    },
+    {
+      "modelId": "reading-v4-lora",
+      "version": "t1-20261122",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "weights"
+      ]
+    },
+    {
+      "modelId": "reading-v4-last2",
+      "version": "t1-20261122",
+      "runtime": "python-worker",
+      "status": "absent",
+      "missing": [
+        "weights"
+      ]
+    }
+  ]
+}

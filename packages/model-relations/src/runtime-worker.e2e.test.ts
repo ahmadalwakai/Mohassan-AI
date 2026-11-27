@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { loadModelAdapter } from './adapters.js';
+import type { MeasurableModelAdapter } from './budget-worker-memory.js';
 import { getModelEntry, type ModelArtifact } from './registry.js';
 import { createModelRuntime } from './runtime.js';
 
@@ -72,12 +74,22 @@ describe.skipIf(!python)('model relations runtime through the permanent CPU work
           artifact('weights', 'sidecar/weights.pt'), artifact('training-manifest', 'manifest.json')],
       }];
       const options = { env: { ...process.env, EXECUTOR_PYTHON: resolve(python!) }, registry };
-      const runtime = createModelRuntime(options);
+      let headAdapter: MeasurableModelAdapter | undefined;
+      const runtime = createModelRuntime({ ...options, async loadAdapter(model, context) {
+        const adapter = await loadModelAdapter(model, context);
+        if (model.entry.id === 'head-follow-up') headAdapter = adapter;
+        return adapter;
+      } });
       try {
         const result = await runtime.run('chat-v5', { inputIds: [65], maxNewTokens: 2 });
         expect(result).toMatchObject({ ok: true, output: { tokenIds: expect.any(Array), stopReason: expect.any(String) } });
         expect(await runtime.run('head-follow-up', { text: 'When?', history: ['We met yesterday.'] }))
           .toMatchObject({ ok: true, output: { label: 'follow_up', classIndex: 1, abstained: false } });
+        if (process.platform === 'linux') {
+          const memory = await headAdapter?.workerMemoryPeaks?.();
+          expect(memory?.peakRssKiB).toBeGreaterThan(0);
+          expect(memory?.peakAddressSpaceKiB).toBeGreaterThanOrEqual(memory!.peakRssKiB);
+        }
       } finally {
         await runtime.close();
       }

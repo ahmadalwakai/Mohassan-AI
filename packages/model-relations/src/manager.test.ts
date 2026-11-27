@@ -8,7 +8,7 @@ function observation(baseline: Partial<TurnObservation['baseline']> = {}): TurnO
 }
 
 function runner(outputs: Record<string, unknown> = {}, failures: Record<string, Omit<Extract<ModelRunResult, { ok: false }>, 'ok' | 'elapsedMs'>> = {}) {
-  return { run: vi.fn(async (model: string, _input: unknown): Promise<ModelRunResult> => {
+  return { run: vi.fn(async (model: string, _input: unknown, _signal?: AbortSignal): Promise<ModelRunResult> => {
     if (model in failures) return { ok: false, elapsedMs: 0, ...failures[model] };
     return model in outputs ? { ok: true, output: outputs[model], elapsedMs: 0 } : { ok: false, reason: 'absent', elapsedMs: 0 };
   }) };
@@ -37,14 +37,28 @@ describe('model relations manager', () => {
       proposal: { source: 'refusal', route: { label: 'unsupported' } } });
     expect(outcomes(first.stages)).toMatchObject({ refusal: { disagreed: true }, 'scratch-refusal': { disagreed: false },
       'scratch-speech-act': { disagreed: true }, 'router-b2': { disagreed: true } });
-    expect(runtime.run).toHaveBeenCalledWith('refusal', { text: 'Private current turn' });
-    expect(runtime.run).toHaveBeenCalledWith('router-b2', { text: 'Private current turn' });
-    expect(runtime.run).toHaveBeenCalledWith('scratch-route', { text: 'Private current turn', previousText: 'Private previous turn' });
+    expect(runtime.run).toHaveBeenCalledWith('refusal', { text: 'Private current turn' }, expect.any(AbortSignal));
+    expect(runtime.run).toHaveBeenCalledWith('router-b2', { text: 'Private current turn' }, expect.any(AbortSignal));
+    expect(runtime.run).toHaveBeenCalledWith('scratch-route', { text: 'Private current turn', previousText: 'Private previous turn' }, expect.any(AbortSignal));
     expect(runtime.run.mock.calls.map(([id]) => id)).not.toContain('router-b0');
     expect((await manager.inspect(observation({ refusal: 'refuse' }))).arbitration.reason).toBe('host-refusal');
     expect((await manager.inspect(observation({ route: 'chat', speechAct: 'smalltalk' }))).arbitration.reason).toBe('host-smalltalk');
     expect(manager.summary()).toMatchObject({ turns: 3, models: expect.arrayContaining([expect.objectContaining({ model: 'refusal',
       attempted: 3, compared: 3, disagreements: 2, disagreementRate: 2 / 3 })]) });
+  });
+
+  it('labels only the current request by its Arabic and Latin letters', async () => {
+    const manager = new ModelRelationsManager(runner({ refusal: { label: 'allow' } }));
+    for (const [text, language] of [['\u0633 123', 'ar'], ['A \u0661', 'en'], ['A \u0633', 'mixed'], ['1 + 2', 'en']]) {
+      const log = await manager.inspect({ ...observation(), text, previousText: 'A \u0633' });
+      expect(log.language).toBe(language);
+    }
+    expect(manager.summary()).toMatchObject({ turns: 4, turnsByLanguage: { ar: 1, en: 2, mixed: 1, unknown: 0 },
+      models: expect.arrayContaining([expect.objectContaining({ model: 'refusal', byLanguage: {
+        ar: expect.objectContaining({ compared: 1, disagreements: 0, outcomes: { ok: { numerator: 1, denominator: 1 } } }),
+        en: expect.objectContaining({ compared: 2, disagreements: 0, outcomes: { ok: { numerator: 2, denominator: 2 } } }),
+        mixed: expect.objectContaining({ compared: 1, disagreements: 0, outcomes: { ok: { numerator: 1, denominator: 1 } } }),
+      } })]) });
   });
 
   it('uses the next router proposal and protects the baseline on absence, health failures and abstention', async () => {
@@ -74,9 +88,9 @@ describe('model relations manager', () => {
     const turn = observation({ question: 'Private rule question', evidenceSufficiency: 'sufficient', answer: 'Private rule answer',
       judge: 'send', evidence: [{ kind: 'page', text: 'Private sentence one. Private sentence two.' }] });
     const log = await manager.inspect(turn);
-    expect(runtime.run).toHaveBeenCalledWith('question-edit', { text: turn.text, history: [turn.previousText], candidates: [turn.baseline.question, turn.text] });
-    expect(runtime.run).toHaveBeenCalledWith('head-sufficiency', { text: turn.text, history: [turn.baseline.evidence![0].text] });
-    expect(runtime.run).toHaveBeenCalledWith('head-answer-sentence', { text: turn.text, candidates: ['Private sentence one.', 'Private sentence two.'] });
+    expect(runtime.run).toHaveBeenCalledWith('question-edit', { text: turn.text, history: [turn.previousText], candidates: [turn.baseline.question, turn.text] }, expect.any(AbortSignal));
+    expect(runtime.run).toHaveBeenCalledWith('head-sufficiency', { text: turn.text, history: [turn.baseline.evidence![0].text] }, expect.any(AbortSignal));
+    expect(runtime.run).toHaveBeenCalledWith('head-answer-sentence', { text: turn.text, candidates: ['Private sentence one.', 'Private sentence two.'] }, expect.any(AbortSignal));
     expect(judge).toHaveBeenCalledWith(expect.objectContaining({ question: turn.text, reply: 'Private sentence two.' }));
     expect(outcomes(log.stages)['head-answer-sentence'].disagreed).toBeUndefined();
     expect(log.stages.find(stage => stage.stage === 'reply-judge')).toMatchObject({ winner: 'existing-rules',
@@ -101,10 +115,15 @@ describe('model relations manager', () => {
   });
 
   it('bounds a turn with a hung model and marks later requests as unattempted fallbacks', async () => {
-    const runtime = { run: vi.fn(() => new Promise<ModelRunResult>(() => {})) };
+    const aborted = vi.fn();
+    const runtime = { run: vi.fn((_model: string, _input: unknown, signal?: AbortSignal) => {
+      signal?.addEventListener('abort', aborted, { once: true });
+      return new Promise<ModelRunResult>(() => {});
+    }) };
     const manager = new ModelRelationsManager(runtime, { maxTurnMs: 10 });
     const log = await manager.inspect(observation());
     expect(runtime.run).toHaveBeenCalledOnce();
+    expect(aborted).toHaveBeenCalledOnce();
     expect(outcomes(log.stages)).toMatchObject({ refusal: { outcome: 'timeout', attempted: true, fallback: 'existing-rules' },
       'router-b2': { outcome: 'timeout', attempted: false, fallback: 'existing-rules' } });
     expect(log.arbitration.winner).toBe('existing-rules');
@@ -115,7 +134,7 @@ describe('model relations manager', () => {
     const manager = new ModelRelationsManager(runtime);
     const turn = observation({ route: 'compute', arithmeticValue: '987653' });
     const { stages } = await manager.inspect(turn);
-    expect(runtime.run).toHaveBeenCalledWith('arithmetic', { text: turn.text });
+    expect(runtime.run).toHaveBeenCalledWith('arithmetic', { text: turn.text }, expect.any(AbortSignal));
     expect(outcomes(stages).arithmetic).toMatchObject({ outcome: 'ok', disagreed: true });
     expect(JSON.stringify(stages)).not.toMatch(/98765[34]|private computation/u);
     runtime.run.mockClear();
