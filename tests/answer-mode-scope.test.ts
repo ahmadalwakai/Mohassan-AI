@@ -58,8 +58,6 @@ describe('council-web turn scope', () => {
     ['Open https://example.com/guide', 'action'],
     ['https://example.com/guide', 'action'],
     ['Plan my week.', 'plan'],
-    ['Watch https://example.com/guide every hour and notify me when it changes.', 'monitor'],
-    ['Create a monitor for public election news', 'monitor'],
     ['Create a Google Ads campaign for my bakery.', 'campaign'],
     ['Translate this sentence into Arabic: I am here.', 'local-content'],
     ['Return these rows as CSV with columns label and count: twine 5, nails 12.', 'local-content'],
@@ -69,6 +67,13 @@ describe('council-web turn scope', () => {
     ['طيب هي اتولدت امتى؟', 'control'],
   ])('keeps %s on its existing route', (text, reason) => {
     expect(classify(text)).toEqual({ kind: 'exempt', reason });
+  });
+
+  it.each([
+    'Create a monitor for public election news',
+    'Watch https://example.com/guide every hour and notify me when it changes.',
+  ])('leaves monitor creation with the existing handlers for %s', text => {
+    expect(classify(text)).toMatchObject({ kind: 'exempt' });
   });
 
   it.each([
