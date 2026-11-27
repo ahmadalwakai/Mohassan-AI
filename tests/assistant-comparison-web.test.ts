@@ -1,0 +1,160 @@
+import { describe, expect, it, vi } from 'vitest';
+import type { AgentPage } from '@mohassan/browser';
+import { searchComparison } from '../apps/server/src/assistant/comparison-web.js';
+import { parseComparisonQuestion } from '../apps/server/src/assistant/comparison-question.js';
+import { PROVIDER_SPACING_MS, runHands, webQuestion, type HandsIO } from '../apps/server/src/assistant/hands.js';
+
+const python = 'Python';
+const java = 'Java';
+const questions = { en: `Is ${python} faster than ${java}?`, ar: `هل ${python} أسرع من ${java}؟` } as const;
+const partial = { en: 'Partial answer:', ar: 'إجابة جزئية:' } as const;
+
+// The fixture benchmark's elapsed time is the length of the submitted label.
+// It describes the test inputs, with no claims about real language performance.
+const runtime = (name: string) => name.length;
+const measurement = {
+  en: (name: string) => `${name} runs in ${runtime(name)} ms under the synthetic benchmark.`,
+  ar: (name: string) => `زمن التنفيذ لدى ${name} هو ${runtime(name)} مللي ثانية عند تشغيل الاختبار الافتراضي.`,
+};
+const pair = {
+  en: `Under the synthetic benchmark, ${java} ran faster than ${python} (${runtime(java)} ms versus ${runtime(python)} ms).`,
+  ar: `عند تشغيل الاختبار الافتراضي، ${java} أسرع من ${python} (${runtime(java)} مقابل ${runtime(python)} مللي ثانية).`,
+};
+
+function page(slug: string, title: string, text: string): AgentPage {
+  const url = `https://comparison.example/${slug}`;
+  return {
+    id: url, url, title, text, elements: [], hash: url,
+    signals: { captcha: false, password: false, otp: false, card: false },
+    scroll: { top: 0, height: 0, viewport: 0 },
+  };
+}
+
+function harness(find: (query: string) => AgentPage[], sources: AgentPage[]): HandsIO {
+  return {
+    page: async () => null,
+    search: vi.fn(async query => find(query).map(({ title, url, text }) => ({ title, url, snippet: text }))),
+    read: vi.fn(async url => {
+      const found = sources.find(source => source.url === url);
+      return found ? { kind: 'page', page: found } : { kind: 'unreadable' };
+    }),
+    step: async () => {},
+    begin: vi.fn(async () => {}),
+    complete: vi.fn(async () => {}),
+    pause: vi.fn(async () => {}),
+    act: async () => { throw new Error('The test uses the HTTP path.'); },
+    prepare: async () => null,
+    settle: async source => source,
+    approve: async () => {},
+    hold: async () => {},
+  };
+}
+
+describe('comparison completeness on the public web path', () => {
+  it.each(['en', 'ar'] as const)('marks a one-sided %s result partial after one targeted retry', async lang => {
+    const onlyPython = page(python, python, measurement[lang](python));
+    const io = harness(() => [onlyPython], [onlyPython]);
+    const outcome = await runHands({ steps: webQuestion(questions[lang])!, next: 0, lang }, io);
+
+    expect(outcome).toMatchObject({ kind: 'done', status: 'partial', text: expect.stringContaining(partial[lang]) });
+    expect(io.search).toHaveBeenCalledTimes(2);
+    expect(io.search).toHaveBeenNthCalledWith(2, expect.stringMatching(/^Java\s/u), 6);
+    expect(io.read).toHaveBeenCalledTimes(1);
+    expect(io.pause).toHaveBeenCalledExactlyOnceWith(PROVIDER_SPACING_MS);
+    expect(io.begin).toHaveBeenCalledExactlyOnceWith(0);
+    expect(io.complete).toHaveBeenCalledExactlyOnceWith(0, 'partial');
+  });
+
+  it.each(['en', 'ar'] as const)('completes a sourced %s comparison that states the benchmark conditions', async lang => {
+    const compared = page('benchmark', `${python} vs ${java}`, pair[lang]);
+    const io = harness(() => [compared], [compared]);
+    const outcome = await runHands({ steps: webQuestion(questions[lang])!, next: 0, lang }, io);
+
+    expect(outcome).toMatchObject({ kind: 'done', status: 'completed', text: expect.stringContaining(compared.text) });
+    expect(outcome).toMatchObject({ text: expect.stringContaining(compared.url) });
+    expect(io.search).toHaveBeenCalledTimes(1);
+    expect(io.pause).not.toHaveBeenCalled();
+    expect(io.complete).toHaveBeenCalledExactlyOnceWith(0, 'completed');
+  });
+
+  it('recovers missing evidence for the other side and cites both pages', async () => {
+    const first = page(python, python, measurement.en(python));
+    const second = page(java, java, measurement.en(java));
+    const io = harness(query => query.startsWith(java) ? [second] : [first], [first, second]);
+    const outcome = await runHands({ steps: webQuestion(questions.en)!, next: 0, lang: 'en' }, io);
+
+    expect(outcome).toMatchObject({ status: 'completed', text: expect.stringContaining(first.text) });
+    expect(outcome).toMatchObject({ text: expect.stringContaining(second.text) });
+    expect(outcome).toMatchObject({ text: expect.stringContaining(first.url) });
+    expect(outcome).toMatchObject({ text: expect.stringContaining(second.url) });
+    expect(io.search).toHaveBeenCalledTimes(2);
+  });
+
+  it('labels both named sides partial when the compared attribute is missing', async () => {
+    const names = page('options', `${python} vs ${java}`, `${python} and ${java} are available as inputs to the fixture.`);
+    const io = harness(() => [names], [names]);
+
+    await expect(runHands({ steps: webQuestion(questions.en)!, next: 0, lang: 'en' }, io))
+      .resolves.toMatchObject({ status: 'partial', text: expect.stringContaining(partial.en) });
+    expect(io.search).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a search domain constraint when looking for the missing side', async () => {
+    const first = page(python, python, measurement.en(python));
+    const io = harness(() => [first], [first]);
+    const scoped = `${questions.en} site:${new URL(first.url).hostname}`;
+
+    await expect(runHands({ steps: webQuestion(scoped)!, next: 0, lang: 'en' }, io)).resolves.toMatchObject({ status: 'partial' });
+    expect(io.search).toHaveBeenNthCalledWith(2, `${java} faster site:${new URL(first.url).hostname}`, 6);
+  });
+
+  it('keeps an exact sourced answer to a stable comparative question', async () => {
+    const question = `Which label is longer: ${python} or ${java}?`;
+    const longer = runtime(python) > runtime(java) ? python : java;
+    const record = page('fixture-answers', `${python} and ${java} label lengths`, `Question: ${question} | Answer: ${longer}`);
+    const io = harness(() => [record], [record]);
+
+    await expect(runHands({ steps: webQuestion(question)!, next: 0, lang: 'en' }, io))
+      .resolves.toMatchObject({ status: 'completed', text: expect.stringContaining(record.text) });
+    expect(io.search).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips the retry when the turn cannot allow provider spacing and return the partial reply', async () => {
+    const first = page(python, python, measurement.en(python));
+    const io = harness(() => [first], [first]);
+    io.turn = { signal: new AbortController().signal, deadlineAt: Date.now() + PROVIDER_SPACING_MS };
+
+    await expect(runHands({ steps: webQuestion(questions.en)!, next: 0, lang: 'en' }, io)).resolves.toMatchObject({ status: 'partial' });
+    expect(io.search).toHaveBeenCalledTimes(1);
+    expect(io.pause).not.toHaveBeenCalled();
+  });
+
+  it('returns the existing evidence when the retry uses its remaining time', async () => {
+    const first = page(python, python, measurement.en(python));
+    const io = harness(() => [first], [first]);
+    const turn = new AbortController();
+    const spacing = 'wait'.length;
+    io.turn = { signal: turn.signal, deadlineAt: Date.now() + spacing + 100 };
+    const lookup = vi.fn(async (_query: string, signal?: AbortSignal) => {
+      if (signal) return await new Promise<never>(() => {});
+      return { results: [first] };
+    });
+    const outcome = await searchComparison(questions.en, parseComparisonQuestion(questions.en)!, 'en', undefined, io, lookup, spacing);
+
+    expect(outcome.result).toMatchObject({ status: 'partial', text: expect.stringContaining(first.text) });
+    expect(lookup).toHaveBeenCalledTimes(2);
+    expect(lookup.mock.calls[1]?.[1]?.aborted).toBe(true);
+    expect(turn.signal.aborted).toBe(false);
+  });
+
+  it('leaves non-comparison search and publication unchanged', async () => {
+    const name = harness.name;
+    const ordinary = page('test-harness', name, `${name} is a function that creates a search fixture for these tests.`);
+    const question = `What is ${name}?`;
+    const io = harness(() => [ordinary], [ordinary]);
+
+    await expect(runHands({ steps: webQuestion(question)!, next: 0, lang: 'en' }, io))
+      .resolves.toMatchObject({ status: 'completed', text: expect.stringContaining(ordinary.text) });
+    expect(io.search).toHaveBeenCalledExactlyOnceWith(question.slice(0, -1), 6);
+  });
+});

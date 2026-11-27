@@ -3146,9 +3146,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const readPage = config.readPage;
         // A live question (a price, the weather, a score) reads its pages afresh; anything else may come from the page cache.
         const liveQuestion = plan.steps.some(step => step.kind === 'search' && isLiveWebQuestion(step.query));
-        const read = readPage ? async (url: string): Promise<HandsRead> => {
+        const read = readPage ? async (url: string, requestSignal = signal): Promise<HandsRead> => {
           await active();
-          const result = await readPage(url, signal, { live: liveQuestion });
+          const result = await readPage(url, requestSignal, { live: liveQuestion });
+          requestSignal.throwIfAborted();
           await active();
           const action = `read ${url}`.slice(0, 300);
           if (result === 'disallowed') { state.trail.push({ step: ++state.steps, action, result: 'robots.txt disallows this page', changed: false }); return { kind: 'disallowed' }; }
@@ -3161,6 +3162,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           return { kind: 'page', page: readPageObject };
         } : undefined;
         const io: HandsIO = {
+          turn: { deadlineAt, signal },
           ...(read ? { read } : {}),
           page: async () => {
             assertBrowserRequestScope(request, 'browser_action', state);
@@ -3172,7 +3174,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             await keepPage(id, settled);
             return settled;
           },
-          search: async (query, limit) => {
+          search: async (query, limit, requestSignal = signal) => {
             await active();
             assertPublicSearch(request, query, state, Boolean(returnName && query.includes(returnName)));
             // The shared engine reports each provider's failure: a search whose providers did not answer is a failed request
@@ -3180,7 +3182,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             const engine = search as Partial<Pick<SearchEngine, 'execute'>>;
             let hits: Awaited<ReturnType<SearchProvider['search']>>;
             if (typeof engine.execute === 'function') {
-              const outcome = await engine.execute.call(search, query, limit, signal, { ownerId });
+              const outcome = await engine.execute.call(search, query, limit, requestSignal, { ownerId });
+              requestSignal.throwIfAborted();
               if (!outcome.hits.length) {
                 state.trail.push({ step: ++state.steps, action: `search ${query}`.slice(0, 300), changed: false,
                   result: `no results; provider failures: ${outcome.failures.map(item => `${item.provider} ${item.kind}`).join(', ') || 'none'}`.slice(0, 1100) });
@@ -3188,7 +3191,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
                 throw new BrowserError('RESEARCH_SEARCH_UNAVAILABLE', 'لم يُرجع البحث مصادر مرتبطة بالسؤال قابلة للقراءة.', 502);
               }
               hits = outcome.hits.map(hit => hit.coverage === 'local_only' ? { ...hit, snippet: `نسخة مفهرسة بتاريخ ${hit.fetchedAt}. ${hit.snippet}` } : hit);
-            } else hits = await search.search(query, limit, signal, { ownerId });
+            } else hits = await search.search(query, limit, requestSignal, { ownerId });
+            requestSignal.throwIfAborted();
             state.publicQueryTerms = mergePublicQueryTerms(state.publicQueryTerms, hits.flatMap(hit => [hit.title, hit.snippet]));
             await active();
             state.trail.push({ step: ++state.steps, action: `search ${query}`.slice(0, 300), result: `results: ${hits.map(hit => `${hit.title} | ${hit.url}`).join('\n')}`.slice(0, 1100), changed: hits.length > 0 });
@@ -3220,7 +3224,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           // anything is sent. One retry only; when the second reading is not accepted either, the first stands and the
           // judge withholds it with its reason, as before.
           const asking = plan.steps.at(-1);
-          const refusal = outcome.kind === 'done' && asking?.kind === 'search' && asking.ask && plan.found?.url && !plan.found.official && !plan.rejected?.length
+          const refusal = outcome.kind === 'done' && !outcome.comparison && asking?.kind === 'search' && asking.ask && plan.found?.url && !plan.found.official && !plan.rejected?.length
             ? judgeWouldWithhold(vault.scrub(id, outcome.text), outcome.status, judgedAs) : null;
           // The run ledger counts the correction against the run's repair limit (CommandChatConfig.limits.repairsPerRun);
           // the same refusal twice on one step is not corrected a third time (agent-run.ts beginRepair).
