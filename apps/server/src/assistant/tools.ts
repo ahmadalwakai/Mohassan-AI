@@ -7,6 +7,7 @@ import type { MemoryExactWriteInput, MemoryExactWriteOptions, MemoryExactWriteRe
 import type { CodingCheckResult, ImportsLookup, ProjectSearchResult } from '@mohassan/coding';
 import { z } from 'zod';
 import type { CampaignPorts } from './campaign-run.js';
+import { codingOutcomeFields } from './coding-outcome-report.js';
 
 /**
  * What the assistant may reach outside the browser. Each adapter calls the
@@ -57,7 +58,7 @@ export interface AssistantTools {
     studio?(ownerId: string, input: { id: string; goal: string }, idempotencyKey: string, runId?: string): Promise<PendingWorkTask>;
     approve(ownerId: string, taskId: string): Promise<void>;
     cancel(ownerId: string, taskId: string): Promise<void>;
-    outcome(ownerId: string, taskId: string): Promise<TaskOutcome>;
+    outcome(ownerId: string, taskId: string, includeCodingReport?: boolean): Promise<TaskOutcome>;
   };
   ads?: {
     status(ownerId: string): Promise<string>;
@@ -171,6 +172,7 @@ interface ToolModules {
   coding: { available: boolean; workspace(ownerId: string): Promise<{ projects: { id: string; name: string; path: string }[] }>;
     search?(ownerId: string, projectId: string, query: string): Promise<ProjectSearchResult>;
     imports?(ownerId: string, projectId: string, reference: string): Promise<ImportsLookup>;
+    trackedPaths?(ownerId: string, projectId: string, baseCommit: string): Promise<readonly string[]>;
     check?(ownerId: string, projectId: string, signal: AbortSignal): Promise<CodingCheckResult> };
   studio: {
     workspace(ownerId: string): Promise<{ sessions: { id: string; name: string; framework: string }[] }>;
@@ -256,9 +258,9 @@ export function createAssistantTools({ memory, coding, studio, studioChange, run
       }) } satisfies Pick<NonNullable<AssistantTools['work']>, 'studio'> : {}),
       approve: (ownerId, taskId) => guarded(async () => { await runtime.approve(ownerId, taskId); }),
       cancel: (ownerId, taskId) => guarded(async () => { await runtime.cancel(ownerId, taskId); }),
-      outcome: (ownerId, taskId) => guarded(async () => {
+      outcome: (ownerId, taskId, includeCodingReport) => guarded(async () => {
         const { task } = await runtime.detail(ownerId, taskId);
-        const text = describeOutcome(task.status, task.error, task.result);
+        const text = [describeOutcome(task.status, task.error, task.result), ...(includeCodingReport ? await codingOutcomeFields(task.result, (projectId, baseCommit) => coding.trackedPaths?.(ownerId, projectId, baseCommit)) : [])].join('\n');
         if (['completed', 'failed', 'cancelled'].includes(task.status)) return { settled: true, text };
         // Approved once already: a second pause is the Runtime's own review, not this chat's.
         if (['waiting_approval', 'paused'].includes(task.status)) return { settled: true, text: `${text}\nThe task stopped for the owner to review it in the Tasks section.` };

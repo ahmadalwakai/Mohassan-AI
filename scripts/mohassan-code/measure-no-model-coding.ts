@@ -6,13 +6,14 @@
  *   still has its misspelling.
  * - `slice2` (2026-11-27 10:27 UTC): run the checks and explain the failure, search the project, import relations,
  *   «صحح الأخطاء», and three controls. A target is met only when its final reply contains every expected string.
+ * - `before-after` (2026-11-27): three approved fixes and two read controls. Both arms use the same demo and fixtures.
  * - `suite` (2026-11-27): bilingual checks, search, imports and approved fixes on five fixture repositories, plus six controls.
  *
  * Each request runs in a fresh conversation; an expected approval card is approved once. The older sets use the demo.
  * The chat model is off and the database is embedded and in memory. Records the first and final replies, the run status
  * and the time per request.
  *
- * Usage: npx tsx scripts/mohassan-code/measure-no-model-coding.ts [checkout] [out.json] [--set=slice1|slice2|suite] [--real-sandbox]
+ * Usage: npx tsx scripts/mohassan-code/measure-no-model-coding.ts [checkout] [out.json] [--set=slice1|slice2|before-after|suite] [--real-sandbox]
  * `checkout` (default: the current directory) is the repository to measure, so one copy of this file measures a base
  * checkout too. That checkout needs its own installed node_modules. `--real-sandbox` uses the Windows AppContainer
  * sandbox instead of the stub (Windows only; its first isolation probe takes about half a minute).
@@ -24,13 +25,15 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { ChatConversation } from '@mohassan/contracts';
+import { PASSING_OUTPUT, REAL_OUTPUT } from '../../tests/fixtures/coding-test-output.js';
 import { registerFixtures } from './fixtures.ts';
 import { SUITE_CASES } from './suite-cases.ts';
 import { scoreSuiteCase, suiteTotals } from './suite-results.ts';
 import { createSuiteSandbox } from './suite-sandbox.ts';
 
 interface Case { id: string; goal: string; expect?: string[]; approval?: boolean; control?: boolean }
-const SETS: Record<'slice1' | 'slice2', Case[]> = {
+const beforeAfter = ['قبل التعديل: نجح 0 من 2، وفشل 2.', 'بعد التعديل: نجح 2 من 2، وفشل 0.', 'adds positive values', 'test/sum.test.mjs:5', 'ReferenceError', 'src/sum.ts:2'];
+const SETS: Record<'slice1' | 'slice2' | 'before-after', Case[]> = {
   slice1: [
     'أصلح الكود في مشروع تجربة الجمع',
     'أصلح مشروع تجربة الجمع',
@@ -58,12 +61,19 @@ const SETS: Record<'slice1' | 'slice2', Case[]> = {
     { id: 'K2', goal: 'ما عاصمة فرنسا؟', control: true },
     { id: 'K3', goal: 'صحح هذا النص: انا ذهبت الي المدرسه', control: true },
   ],
+  'before-after': [
+    { id: 'B1', goal: 'أصلح الكود في مشروع تجربة الجمع', approval: true, expect: beforeAfter },
+    { id: 'B2', goal: 'أصلح مشروع تجربة الجمع', approval: true, expect: beforeAfter },
+    { id: 'B3', goal: 'صحح الأخطاء في مشروع تجربة الجمع', approval: true, expect: beforeAfter },
+    { id: 'K1', goal: 'ابحث في مشروع تجربة الجمع عن rightHandVaule', control: true, expect: ['src/sum.ts:2', 'rightHandVaule'] },
+    { id: 'K2', goal: 'ماذا يستورد ملف test/sum.test.mjs في مشروع تجربة الجمع؟', control: true, expect: ['node:test', 'node:assert/strict', 'src/sum.ts'] },
+  ],
 };
 
 const flags = process.argv.slice(2).filter(value => value.startsWith('--'));
 const [checkoutArgument, out] = process.argv.slice(2).filter(value => !value.startsWith('--'));
 const requestedSet = flags.find(value => value.startsWith('--set='))?.slice('--set='.length) ?? 'slice1';
-if (requestedSet !== 'slice1' && requestedSet !== 'slice2' && requestedSet !== 'suite') throw new Error(`unknown set ${requestedSet}`);
+if (requestedSet !== 'slice1' && requestedSet !== 'slice2' && requestedSet !== 'before-after' && requestedSet !== 'suite') throw new Error(`unknown set ${requestedSet}`);
 const set = requestedSet;
 const realSandbox = flags.includes('--real-sandbox');
 if (set === 'suite' && realSandbox && process.platform !== 'win32') throw new Error('The real suite sandbox requires Windows AppContainer');
@@ -287,11 +297,15 @@ try {
   const { snapshotHash }: typeof import('../../packages/coding/src/index.ts') = await import(pathToFileURL(join(checkout, 'packages/coding/src/index.ts')).href);
   const stub: NonNullable<Parameters<typeof createApplication>[0]['sandboxRunner']> = {
     available: async () => ({ available: true, provider: 'unit-fixture', message: 'measurement stub' }),
-    run: async (request) => ({
-      exitCode: request.files.some(file => file.path === 'src/sum.ts' && file.content.includes('rightHandVaule')) ? 1 : 0,
-      stdout: 'measurement stub', stderr: '', timedOut: false, durationMs: 1, provider: 'unit-fixture',
-      network: 'denied', isolation: 'appcontainer', isolationVerified: true, snapshotHash: snapshotHash(request.files),
-    }),
+    run: async (request) => {
+      const misspelled = request.files.some(file => file.path === 'src/sum.ts' && file.content.includes('rightHandVaule'));
+      return {
+        exitCode: misspelled ? 1 : 0,
+        stdout: set === 'before-after' ? (misspelled ? REAL_OUTPUT : PASSING_OUTPUT) : 'measurement stub',
+        stderr: '', timedOut: false, durationMs: 1, provider: 'unit-fixture',
+        network: 'denied', isolation: 'appcontainer', isolationVerified: true, snapshotHash: snapshotHash(request.files),
+      };
+    },
   };
   if (set === 'suite') webFixture = await startWebFixture();
   const startedApp = Date.now();

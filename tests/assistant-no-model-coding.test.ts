@@ -1,12 +1,14 @@
-import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { snapshotHash } from '@mohassan/coding';
+import { createRepairDemoProject, snapshotHash } from '@mohassan/coding';
 import { createApplication } from '../apps/server/src/app.js';
 import {
   chooseCodingProject, codingOutcomeReply, codingTargetReply, foldProjectText, prepareNoModelCoding,
 } from '../apps/server/src/assistant/no-model-coding.js';
+import { git } from '../packages/coding/src/git.js';
+import { ASSERTION_OUTPUT, PASSING_OUTPUT, REAL_OUTPUT } from './fixtures/coding-test-output.js';
 
 const demo = { id: 'p-demo', name: 'مشروع تجربة الجمع' };
 const shop = { id: 'p-shop', name: 'Shop API' };
@@ -101,10 +103,15 @@ describe('the reply after the approved task settles', () => {
     expect(reply.text).toContain('إن كان طلبك تغييرًا في المنطق فلم يُنفَّذ');
   });
   it('never offers a branch when the tests or the review failed', () => {
-    const reply = codingOutcomeReply('task status: completed\noutcome: tests_failed\nreview branch: mohassan/task-2', label, 'fix the code');
+    const reply = codingOutcomeReply('task status: failed\noutcome: tests_failed\nreview branch: mohassan/task-2', label, 'fix the code');
     expect(reply.status).toBe('partial');
     expect(reply.text).toContain('the tests failed afterwards');
+    expect(reply.text).toContain('I found no further proven fix. A logic fix needs a model.');
     expect(reply.text).not.toContain('mohassan/task-2');
+    const review = codingOutcomeReply('task status: failed\noutcome: review_failed\nreview branch: mohassan/task-3', label, 'fix the code');
+    expect(review.status).toBe('partial');
+    expect(review.text).toContain('the independent review did not pass');
+    expect(review.text).not.toMatch(/mohassan\/task-3|no further proven fix/u);
   });
   it('says plainly that no provable fix exists, from the Runtime\'s own refusal', () => {
     const reply = codingOutcomeReply(`task status: failed\nerror: ${RUNTIME_NO_PROVEN_FIX}`, label, 'اجعل الدالة تضرب بدل الجمع');
@@ -150,11 +157,15 @@ describe('a coding request in the chat when no model exists', () => {
       production: false, runWorker: true, testRequestLimit: 2000, codingDataDir: directory, codingAllowedRoots: [directory], browserChannel: null,
       sandboxRunner: {
         available: async () => ({ available: true, provider: 'unit-fixture', message: 'injected unit test only' }),
-        run: async request => ({
-          exitCode: request.files.some(file => file.path === 'src/sum.ts' && file.content.includes('rightHandVaule')) ? 1 : 0,
-          stdout: 'unit fixture receipt; no project code is executed here', stderr: '', timedOut: false, durationMs: 1, provider: 'unit-fixture',
-          network: 'denied', isolation: 'appcontainer', isolationVerified: true, snapshotHash: snapshotHash(request.files),
-        }),
+        run: async request => {
+          const sumSource = request.files.find(file => file.path === 'src/sum.ts')?.content;
+          const repairedOutput = sumSource?.includes('leftHandValue - rightHandValue') ? ASSERTION_OUTPUT : PASSING_OUTPUT;
+          const stdout = sumSource?.includes('rightHandVaule') ? REAL_OUTPUT : repairedOutput;
+          return {
+            exitCode: stdout === PASSING_OUTPUT ? 0 : 1, stdout, stderr: '', timedOut: false, durationMs: 1, provider: 'unit-fixture',
+            network: 'denied', isolation: 'appcontainer', isolationVerified: true, snapshotHash: snapshotHash(request.files),
+          };
+        },
       },
     });
     await application.app.inject({ method: 'POST', url: '/api/setup', headers, payload: { name: 'مالك اختبار البرمجة', email: 'no-model-coding@example.test', password: 'No-Model-Coding-Password-42', setupToken: 'no-model-coding-fixture-setup-token-01' } });
@@ -172,12 +183,13 @@ describe('a coding request in the chat when no model exists', () => {
   });
 
   const source = async () => {
-    const project = (await application.coding.workspace(ownerId)).projects[0]!;
+    const project = (await application.coding.workspace(ownerId)).projects.find(project => project.name === demo.name)!;
     return readFile(join(project.path, 'src', 'sum.ts'), 'utf8');
   };
 
-  it('changes nothing before approval, then reports the verified result without a model', async () => {
+  it('changes nothing before approval, then reports before and after tests without a model', async () => {
     const before = await source();
+    expect(before).toContain('rightHandVaule');
     const waiting = await ask('أصلح الكود في مشروع تجربة الجمع');
     expect(waiting.status).toBe('waiting_approval');
     expect(waiting.approval.prompt).toContain('مشروع تجربة الجمع');
@@ -189,6 +201,12 @@ describe('a coding request in the chat when no model exists', () => {
     expect(done.status).toBe('idle');
     const reply = done.messages.at(-1).text as string;
     expect(reply).toContain('الاختبارات والمراجعة المستقلة في نسخة معزولة');
+    expect(reply).toContain('قبل التعديل: نجح 0 من 2، وفشل 2.');
+    expect(reply).toContain('بعد التعديل: نجح 2 من 2، وفشل 0.');
+    expect(reply).toContain('adds positive values');
+    expect(reply).toContain('test/sum.test.mjs:5');
+    expect(reply).toContain('ReferenceError');
+    expect(reply).toContain('src/sum.ts:2');
     expect(reply).toContain('إن كان طلبك تغييرًا في المنطق فلم يُنفَّذ');
     expect(reply).toMatch(/فرع المراجعة: `[^`]+`/u);
     expect(reply).toContain('لم يُدمج شيء');
@@ -205,5 +223,28 @@ describe('a coding request in the chat when no model exists', () => {
     expect(refused.status).toBe('idle');
     const taskId = (await tasks()).find(item => item.status === 'cancelled' || item.status === 'waiting_approval')!.id;
     expect((await application.runtime.detail(ownerId, taskId)).task.status).toBe('cancelled');
+  });
+
+  it('reports the remaining assertion failures after a proven spelling fix', async () => {
+    const fixture = await createRepairDemoProject(join(directory, 'subtraction'));
+    const sumPath = join(fixture.path, 'src', 'sum.ts');
+    await writeFile(sumPath, (await readFile(sumPath, 'utf8')).replace('leftHandValue + rightHandVaule', 'leftHandValue - rightHandVaule'));
+    await git(fixture.path, ['add', '--', 'src/sum.ts']);
+    await git(fixture.path, ['commit', '-m', 'Test fixture with a remaining logic error']);
+    const registration = await api('POST', '/api/coding/projects', { name: 'Subtraction Demo', path: fixture.path, allowedPaths: fixture.allowedPaths });
+    expect(registration.statusCode).toBe(200);
+
+    const waiting = await ask('Fix the code in Subtraction Demo');
+    expect(waiting.status).toBe('waiting_approval');
+    const done = await approve(waiting, true);
+    const reply = done.messages.at(-1).text as string;
+    expect(reply).toContain('Before the change: 0 of 2 passed, 2 failed.');
+    expect(reply).toContain('After the change: 0 of 2 passed, 2 failed.');
+    expect(reply).toContain('ReferenceError');
+    const remaining = reply.split('Still failing after the change:')[1];
+    expect(remaining).toContain('"adds positive values" at `test/sum.test.mjs:5` — AssertionError');
+    expect(remaining).toContain('"adds negative values" at `test/sum.test.mjs:6` — AssertionError');
+    expect(reply).toContain('I found no further proven fix. A logic fix needs a model.');
+    expect(reply).not.toContain('mohassan/');
   });
 });
