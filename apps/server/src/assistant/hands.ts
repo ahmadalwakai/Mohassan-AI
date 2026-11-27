@@ -1571,7 +1571,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         const comparison = step.ask && !scoped && !step.site && io.search && index === plan.steps.length - 1 && comparisonSearchQuestion(step.query);
         if (comparison) {
           const compared = await searchComparison(step.query, comparison, plan.lang ?? questionLanguage(step.query), step.reply, io,
-            (query, signal) => engine(query, true, true, signal), PROVIDER_SPACING_MS);
+            (query, signal) => engine(query, true, true, signal), PROVIDER_SPACING_MS, relevantLines);
           plan.results = compared.results;
           plan.found = compared.found;
           await io.complete?.(index, compared.result.status);

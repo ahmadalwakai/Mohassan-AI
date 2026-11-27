@@ -63,10 +63,42 @@ describe('public comparison questions', () => {
   });
 
   it.each([
+    [`Which is longer, ${first} or ${second}?`, 'length', `${first} is ${first.length} km long.`],
+    [`Which is taller, ${first} or ${second}?`, 'height', `${first} is ${first.length} m tall.`],
+    [`Which is taller, ${first} or ${second}?`, 'height', `${first} is ${first.length} m high.`],
+    [`Which is bigger, ${first} or ${second}?`, 'size', `${first} covers ${first.length} square kilometres.`],
+    [`Which is bigger, ${first} or ${second}?`, 'size', `The area of ${first} is ${first.length} hectares.`],
+  ])('accepts the measured predicate for %s', (question, key, excerpt) => {
+    const parsed = parseComparisonQuestion(question);
+    expect(parsed?.attribute.key).toBe(key);
+    expect(mentionsComparisonAttribute(parsed!, excerpt)).toBe(true);
+  });
+
+  it('does not treat unrelated adjectives as physical measurements', () => {
+    const length = parseComparisonQuestion(`Which is longer, ${first} or ${second}?`)!;
+    const height = parseComparisonQuestion(`Which is taller, ${first} or ${second}?`)!;
+    expect(mentionsComparisonAttribute(length, `${first} has a long history.`)).toBe(false);
+    expect(mentionsComparisonAttribute(height, `${first} is in high demand.`)).toBe(false);
+  });
+
+  it.each([
+    ['أيهما أكبر مساحة السعودية أم مصر؟', ['السعودية', 'مصر'], 'area'],
+    ['أيهما أكبر عدد سكان السعودية أم مصر؟', ['السعودية', 'مصر'], 'population'],
+    ['مين أحسن ميسي ولا رونالدو؟', ['ميسي', 'رونالدو'], 'general'],
+    ['ايش الفرق بين الايفون والسامسونج', ['الايفون', 'السامسونج'], 'general'],
+    ['Messi or Ronaldo, who is better?', ['Messi', 'Ronaldo'], 'general'],
+  ])('extracts alternatives from %s', (question, subjects, key) => {
+    expect(parseComparisonQuestion(question)).toMatchObject({ subjects, attribute: { key } });
+  });
+
+  it.each([
     'How do I use Python?',
     'ما هي Java؟',
     'Is Java better than ever?',
     'Which is better?',
+    'مين أحسن؟',
+    'ايش الفرق بينهما؟',
+    'Messi, who is better?',
     'What is the difference between these?',
     'Which is longer from that page: Pine or Birch?',
     'Which is older: Sam 2 years or Lee 3 years?',

@@ -1,11 +1,12 @@
 import { setTimeout as pauseFor } from 'node:timers/promises';
 import { compileQuery, excludesWikipedia, publicSearchText, safeResumeUrl, type AgentPage } from '@mohassan/browser';
 import { readingLabel, siteName } from './activity.js';
-import { isDisambiguationPage, questionLanguage } from './answer-check.js';
+import { checkAnswerLine, isDisambiguationPage, questionLanguage } from './answer-check.js';
 import { checkComparisonCompleteness, comparisonEvidencePassages, comparisonPartialReply } from './comparison-completeness.js';
-import { normalizeComparisonText, parseComparisonQuestion, type ParsedComparisonQuestion } from './comparison-question.js';
+import { mentionedComparisonSubjects, normalizeComparisonText, parseComparisonQuestion, type ParsedComparisonQuestion } from './comparison-question.js';
 import { explicitFactualEvidence } from './factual-evidence.js';
-import type { HandsIO, HandsReply } from './hands.js';
+import type { HandsIO, HandsReply, relevantLines } from './hands.js';
+import { isPageInstruction } from './mind/extract.js';
 
 interface Result { title: string; url: string }
 interface Lookup { results: Result[] }
@@ -49,6 +50,29 @@ function sourceLine(page: AgentPage, lang: 'ar' | 'en'): string {
   return `**${lang === 'ar' ? 'المصدر' : 'Source'}:** [${siteName(page.url)} — ${title}](${page.url})`;
 }
 
+function partialExcerpts(
+  question: string, comparison: ParsedComparisonQuestion, sources: readonly AgentPage[],
+  reply: HandsReply | undefined, rank: typeof relevantLines,
+): { evidence: AgentPage; text: string }[] {
+  for (const evidence of sources) {
+    const record = explicitFactualEvidence(evidence, question);
+    if (record?.kind === 'answer') return [{ evidence, text: record.quote }];
+  }
+
+  const acceptedLines = (query: string) => sources.flatMap(evidence => rank(evidence, query, 3, true)
+    .filter(text => checkAnswerLine(question, text).ok && (!reply?.lang || questionLanguage(text) === reply.lang)
+      && !isPageInstruction(text) && publicSearchText(text) === text)
+    .map(text => ({ evidence, text, subjects: mentionedComparisonSubjects(text.replace(/\([^)]*\)/gu, ' '), comparison.subjects) })));
+  const ranked = acceptedLines(question);
+  const best = comparison.subjects.flatMap(subject => {
+    const names = (line: { subjects: string[] }) => line.subjects.includes(subject);
+    const excerpt = ranked.find(names) ?? acceptedLines(subject).find(names);
+    return excerpt ? [excerpt] : [];
+  });
+  return best.filter((excerpt, index) => best.findIndex(other => other.text === excerpt.text && other.evidence === excerpt.evidence) === index)
+    .slice(0, reply?.sentences ?? best.length);
+}
+
 /** Search and cite read pages only. The retry is part of the admitted search step. */
 export async function searchComparison(
   question: string,
@@ -58,6 +82,7 @@ export async function searchComparison(
   io: HandsIO,
   lookup: (query: string, signal?: AbortSignal) => Promise<Lookup | { failed: string } | 'unavailable'>,
   spacing: number,
+  rank: typeof relevantLines,
 ) {
   const sources: AgentPage[] = [];
   const results = new Map<string, Result>();
@@ -124,26 +149,17 @@ export async function searchComparison(
   const paired = comparison.subjects.map(subject => ranked.find(passage => passage.subjects.includes(subject)
     && anchor?.attributes.some(attribute => passage.attributes.includes(attribute))) ?? ranked.find(passage => passage.subjects.includes(subject)));
   const selected = [...new Set([anchor, ...paired, ...ranked])].filter(passage => passage !== undefined).slice(0, reply?.sentences ?? 3);
-  const cited = [...new Set(selected.map(passage => passage.evidence))];
-  const extracts = selected.map(passage => passage.text);
-  if (!extracts.length) {
-    for (const source of sources) {
-      const record = explicitFactualEvidence(source, question);
-      if (record?.kind !== 'answer') continue;
-      extracts.push(record.quote);
-      cited.push(source);
-      break;
-    }
-  }
+  const excerpts = selected.length ? selected : partialExcerpts(question, comparison, sources, reply, rank);
+  const cited = [...new Set(excerpts.map(excerpt => excerpt.evidence))];
 
-  const content = [...extracts, ...cited.map(page => sourceLine(page, lang))].join('\n\n');
-  const complete = checkComparisonCompleteness(comparison, content, sources).complete;
+  const content = [...excerpts.map(excerpt => excerpt.text), ...cited.map(page => sourceLine(page, lang))].join('\n\n');
+  const complete = selected.length > 0 && checkComparisonCompleteness(comparison, content, sources).complete;
   const text = complete ? content : [comparisonPartialReply(comparison, lang), content].filter(Boolean).join('\n\n');
   const primary = cited[0];
   return {
     result: { kind: 'done' as const, comparison: true as const, status: complete ? 'completed' as const : 'partial' as const, text },
     results: [...results.values()],
     found: primary && { url: primary.url, title: primary.title,
-      lines: selected.length ? selected.filter(passage => passage.evidence === primary).map(passage => passage.text) : extracts, readAt: primary.observedAt },
+      lines: excerpts.filter(excerpt => excerpt.evidence === primary).map(excerpt => excerpt.text), readAt: primary.observedAt },
   };
 }

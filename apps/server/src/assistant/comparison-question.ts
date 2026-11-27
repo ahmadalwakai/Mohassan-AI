@@ -73,6 +73,11 @@ function dimension(key: string, en: string, ar: string, english: string, arabic:
   };
 }
 
+const measuredValue = String.raw`\p{Nd}+(?:[.,]\p{Nd}+)*`;
+const lengthValue = String.raw`${measuredValue}\s*(?:km|mi|m|kilomet(?:ers?|res?)|met(?:ers?|res?)|miles?)`;
+const englishAreaUnit = 'square (?:miles?|met(?:ers?|res?)|kilomet(?:ers?|res?))|km[2²]';
+const areaValue = String.raw`${measuredValue}(?:\s+(?:thousand|million|billion))?\s*(?:${englishAreaUnit})`;
+
 // Keep qualitative and numeric dimensions distinct when the question names one.
 // The local numeric comparison uses similar metric language for page observations.
 // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/apps/server/src/assistant/reasoning/comparison-page.ts (retrieved 2026-11-27)
@@ -86,14 +91,14 @@ const attributes = [
   dimension('accuracy', 'accuracy', 'الدقة', 'accurac(?:y|ies)|accurate|precision|precise|error rates?', 'ادق|دق[هة]|معدل الخطا'),
   dimension('reliability', 'reliability', 'الموثوقية', 'reliab(?:le|ility)|unreliable|uptime|availability|stable|stability', 'موثوق(?:ي[هة])?|اعتمادي[هة]|استقرار'),
   dimension('battery', 'battery life', 'عمر البطارية', 'battery life|battery runtime|battery duration|battery endurance', 'عمر البطاري[هة]|مد[هة] عمل البطاري[هة]'),
-  dimension('area', 'area', 'المساحة', 'areas?|square (?:miles?|met(?:ers?|res?)|kilomet(?:ers?|res?))|km[2²]', 'مساح(?:ه|ته|تها)|كيلومتر(?:ا)? مربعا?|كم مربع'),
-  dimension('length', 'length', 'الطول', 'length|longer|longest|shorter|shortest|distances?', 'طول(?:ه|ها)?|اطول|اقصر|مساف[هة]'),
-  dimension('height', 'height', 'الارتفاع', 'height|taller|tallest|elevation', 'ارتفاع(?:ه|ها)?|علو'),
+  dimension('area', 'area', 'المساحة', `areas?|${englishAreaUnit}`, 'مساح(?:ه|ته|تها)|كيلومتر(?:ا)? مربعا?|كم مربع'),
+  dimension('length', 'length', 'الطول', String.raw`length|longer|longest|shorter|shortest|distances?|${lengthValue}\s+long`, 'طول(?:ه|ها)?|اطول|اقصر|مساف[هة]'),
+  dimension('height', 'height', 'الارتفاع', String.raw`height|taller|tallest|elevation|${lengthValue}\s+(?:tall|high)`, 'ارتفاع(?:ه|ها)?|علو'),
   dimension('weight', 'weight', 'الوزن', 'weight|mass|weighs?|heavier|heaviest|lighter|lightest', 'وزن(?:ه|ها)?|كتل(?:ه|ته|تها)|اثقل|اخف|يزن|تزن'),
   dimension('age', 'age', 'العمر', 'age|older|oldest|younger|youngest|born|birth|found(?:ed|ing)', 'عمر(?:ه|ها)?|سن(?:ا|ه|ها)?|اقدم|احدث|ولد(?:ت)?|ميلاد|تاسيس|تاسس(?:ت)?'),
   dimension('population', 'population', 'عدد السكان', 'populat(?:ion|ed)|populous|inhabitants|residents?', 'سكان(?:ا|ه|ها)?|تعداد'),
   dimension('capacity', 'capacity', 'السعة', 'capacit(?:y|ies)|volume|storage|seating', 'سع[هة]|حجم التخزين|تخزين|استيعاب'),
-  dimension('size', 'size', 'الحجم', 'sizes?|larger|bigger|smaller|largest|biggest|smallest|dimensions?|volumes?|areas?|length|height|width|radius|diameter', 'حجم(?:ه|ها)?|اكبر|اصغر|ابعاد|مساح[هة]|طول|ارتفاع|عرض|قطر'),
+  dimension('size', 'size', 'الحجم', `sizes?|larger|bigger|smaller|largest|biggest|smallest|dimensions?|volumes?|areas?|length|height|width|radius|diameter|${areaValue}`, 'حجم(?:ه|ها)?|اكبر|اصغر|ابعاد|مساح[هة]|طول|ارتفاع|عرض|قطر'),
   dimension('duration', 'duration', 'المدة', 'duration|time taken|run time|takes|lasts', 'مد[هة]|يستغرق|تستغرق'),
   dimension('memory', 'memory', 'الذاكرة', 'memory|ram', 'ذاكر[هة]'),
   dimension('compatibility', 'compatibility', 'التوافق', 'compatib(?:le|ility)|interoperab(?:le|ility)|supported platforms?', 'توافق|متوافق(?:[هة])?|منصات مدعوم[هة]'),
@@ -136,9 +141,9 @@ export function isConditionalComparisonAttribute(key: string): boolean {
 const pairSeparator = /\s+(?:(?:and|or|versus|vs\.?|[أا][مو]|ولا)\s+|و\s*(?=\p{L}))/iu;
 const versus = /\s+(?:versus|vs\.?)\s+/iu;
 const englishDifference = /^(?:(?:what(?:\s+(?:is|are)|['’]s)|tell me|show me|explain)\s+(?:the\s+)?|the\s+)?(?:(.+?)\s+)?differences?(?:\s+in\s+(.+?))?\s+between\s+(.+)$/iu;
-const arabicDifference = /^(?:(?:ما(?:ذا)?(?:\s+(?:هو|هي))?|وضح(?:\s+لي)?|اشرح(?:\s+لي)?)\s+)?(?:(?:ال)?فرق|(?:ال)?اختلاف(?:ات)?|مقارن[ةه]|قارن)\s+(?:(.+?)\s+)?بين\s+(.+)$/u;
+const arabicDifference = /^(?:(?:ما(?:ذا)?(?:\s+(?:هو|هي))?|[اأإ]يش|وضح(?:\s+لي)?|اشرح(?:\s+لي)?)\s+)?(?:(?:ال)?فرق|(?:ال)?اختلاف(?:ات)?|مقارن[ةه]|قارن)\s+(?:(.+?)\s+)?بين\s+(.+)$/u;
 const compareLead = /^(?:(?:please\s+)?(?:can|could) you\s+)?(?:compare|contrast|قارن)\s+/iu;
-const choiceLead = /^(?:(?:which(?: one| [\p{L}-]+(?= (?:is|was|are|has|have)\s))?|who)(?: is| was| are| has| have)?|[اأ]يهما(?:\s+(?:هو|هي))?)(?:\s+|[،,:]\s*)/iu;
+const choiceLead = /^(?:(?:which(?: one| [\p{L}-]+(?= (?:is|was|are|has|have)\s))?|who)(?: is| was| are| has| have)?|[اأ]يهما(?:\s+(?:هو|هي))?|مين)(?:\s+|[،,:]\s*)/iu;
 const qualified = /\s+(?:in terms of|with respect to|regarding|by|من حيث|من ناحية|من ناحيه|بحسب|حسب)\s+(.+)$/iu;
 const context = /(?:[,،]\s*|\s+)((?:for|when|under|using|عند|أثناء|اثناء|خلال)\s+.+|للمبتدئ(?:ين|ون|ة|ه|ات)?(?:\s+في\s+.+)?)$/iu;
 const usageScope = /\s+((?:in|at|on|في|على)\s+.+)$/iu;
@@ -147,6 +152,8 @@ const enAdjective = String.raw`better|worse|faster|slower|cheaper|larger|bigger|
 const arAdjective = String.raw`[اأ](?:فضل|حسن|سوأ|سوا?|سرع|بط[اأء]|رخص|غل[ىي]|كبر|صغر|سهل|صعب|من|خطر|قدم|حدث|طول|قصر|ثقل|خف)|[اأ](?:كثر|قل)\s+[\p{L}\p{M}]+`;
 const comparativeEnding = new RegExp(`(?:^|\\s+)(${enAdjective}|${arAdjective})(?:\\s+(.+))?$`, 'iu');
 const comparativeLead = new RegExp(`^(${enAdjective}|${arAdjective})\\s+(.+)$`, 'iu');
+const trailingChoice = new RegExp(`^(.+?)[,،]\\s*(?:which(?: one)?|who)\\s+(?:is|was|are)\\s+(${enAdjective})$`, 'iu');
+const arabicMeasuredChoice = /^(?:[اأ](?:كبر|صغر))\s+((?:ال)?(?:مساح[ةه]|حجم|طول|ارتفاع|وزن|عمر)|عدد\s+(?:ال)?سكان)\s+(.+)$/u;
 const subjectLabel = /^[\p{L}\p{N}.][\p{L}\p{M}\p{N}.'’()+#&/_ -]*$/u;
 const requestVerb = /\s+(?:runs?|works?|performs?|operates?|have|has|had|is|are|was|were)\s*$/iu;
 const notASide = /^(?:before|ever|now|expected|usual|that|this|them|those|these|it|they|both|average|(?:the )?rest|المعتاد|قبل|السابق|اي وقت مضي)$/u;
@@ -205,6 +212,8 @@ function parseChoice(question: string): ComparisonParts | null {
     const choice = splitPair(delimited[2], scope ? delimited[1].slice(0, scope.index) : delimited[1], scope?.[1]);
     if (choice) return choice;
   }
+  const measured = arabicMeasuredChoice.exec(rest);
+  if (measured) return splitPair(measured[2], measured[1]);
   const qualifier = comparativeLead.exec(rest);
   if (qualifier) {
     const scope = /^((?:for (?:beginners?|novices?|newcomers?)|للمبتدئ(?:ين|ون|ة|ه|ات)?))\s+(.+)$/iu.exec(qualifier[2]);
@@ -222,6 +231,8 @@ function parseComparisonParts(clean: string): ComparisonParts | null {
   const action = compareLead.exec(clean);
   if (action) return splitPair(clean.slice(action[0].length));
   if (choiceLead.test(clean) || /^which(?: one)? of\s+/iu.test(clean)) return parseChoice(clean);
+  const trailing = trailingChoice.exec(clean);
+  if (trailing && !otherRequest.test(normalizeComparisonText(trailing[1]))) return splitPair(trailing[1], trailing[2]);
   if (versus.test(clean)) return splitPair(clean, '', undefined, versus);
 
   const arabicDirect = /^(?:هل\s+)?(.+?)\s+من\s+(?!(?:حيث|ناحي[ةه])\s)(.+)$/u.exec(clean);
