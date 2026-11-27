@@ -2,8 +2,10 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { SafeNetwork, type SafeResponse } from '../../network.js';
 import { SearchEngine } from '../engine.js';
+import type { LocalIndexHit } from '../local-index.js';
 import { compileQuery } from '../ranking.js';
 import type { SourcePlan } from '../source-plan.js';
+import { searchHash } from '../store.js';
 import { parseNewsFeed } from './news-feed.js';
 import { newsProviders } from './news.js';
 
@@ -178,6 +180,29 @@ describe('news providers', () => {
     expect(outcome.hits[0].providers).toEqual(kind === 'canonical URL'
       ? ['GDELT DOC 2.0', 'Voice of America RSS (en)'] : ['Voice of America RSS (en)']);
     expect(outcome.hits[0].snippet).toContain('Published 2026-11-26T20:10:16Z');
+  });
+
+  it('preserves the base ranking for news wording when only Wikipedia and the owner index run', async () => {
+    const { network, now } = setup();
+    const wikipediaHit = { title: 'Sudan News', url: 'https://en.wikipedia.org/wiki/Sudan', snippet: 'News about Sudan' };
+    const wikipedia = {
+      name: 'Wikipedia', supports: () => true, coverage: 'encyclopedia' as const, accessBasis: 'documented_api' as const,
+      search: async () => [wikipediaHit],
+    };
+    const indexedUrl = 'https://owner-index.example/sudan';
+    const indexedHit: LocalIndexHit = {
+      ...wikipediaHit, url: indexedUrl, coverage: 'local_only', freshness: 'indexed_snapshot', trust: 'untrusted',
+      fetchedAt: new Date(now()).toISOString(), expiresAt: new Date(now() + 60_000).toISOString(),
+      contentHash: searchHash(wikipediaHit.snippet), sourceHash: searchHash(indexedUrl),
+    };
+    const localIndex = { name: 'Owner public-document index', search: async () => [indexedHit] };
+    const engine = new SearchEngine(network, { providers: [wikipedia], localIndex, now, publicWeb: false });
+
+    // Order and scores reproduced with rankResults at 29448ae using these fixtures.
+    expect((await engine.execute('news about Sudan', 5, signal())).hits).toEqual([
+      { ...indexedHit, providers: [localIndex.name], relevance: 'lexical', score: 0.919267 },
+      { ...wikipediaHit, providers: [wikipedia.name], relevance: 'lexical', score: 0.919267 },
+    ]);
   });
 
   it('does not fall back to Wikipedia for news when the news sources are empty', async () => {

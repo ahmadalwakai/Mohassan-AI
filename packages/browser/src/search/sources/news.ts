@@ -63,6 +63,14 @@ const feeds: readonly Feed[] = [
   },
 ];
 
+function feedProviderName(feed: Feed): string {
+  return `${feed.outlet} RSS (${feed.language})`;
+}
+
+export function isNewsProvider(name: string): boolean {
+  return name === GDELT_NAME || feeds.some(feed => feedProviderName(feed) === name);
+}
+
 const DAY = 86_400_000;
 const MAX_BYTES = 1_000_000;
 const FEED_CACHE_MS = 5 * 60_000;
@@ -268,7 +276,7 @@ export function newsProviders(network: SafeNetwork, now: () => number): PlannedP
     let cached: { until: number; articles: Article[] } | undefined;
     let active = false;
     return {
-      name: `${feed.outlet} RSS (${feed.language})`,
+      name: feedProviderName(feed),
       coverage: 'web',
       accessBasis: 'documented_api',
       planned: { domains: ['news'], languages: [feed.language], access: 'feed', contract: { url: feed.contract, checked: feed.checked }, hosts: [host] },
