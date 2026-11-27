@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { AgentPage } from '@mohassan/browser';
 import type { HandsIO, HandsPlan } from './assistant/hands.js';
-import type { MindDeps, MindReply } from './assistant/mind/contract.js';
+import type { Mind, MindDeps, MindReply } from './assistant/mind/contract.js';
 import { feedbackPageKey } from './feedback-page-key.js';
 
 export interface FeedbackEvidencePolicy {
@@ -100,4 +100,16 @@ export function observeMindEvidence(reply: MindReply) {
   if (!scope || (reply.status !== 'completed' && reply.status !== 'partial')) return;
   const supported = new Set(reply.claims.flatMap(claim => claim.support));
   scope.observe(reply.evidence.flatMap(item => item.url && supported.has(item.id) ? [item.url] : []), reply.text);
+}
+
+export function withFeedbackMind(mind: Mind): Mind {
+  return {
+    async handle(request, deps, signal, resume) {
+      if (!feedbackSelectionScope.getStore()) return mind.handle(request, deps, signal, resume);
+      const restrictedDeps = await restrictFeedbackMind(deps);
+      const reply = await mind.handle(request, restrictedDeps, signal, resume);
+      observeMindEvidence(reply);
+      return reply;
+    },
+  };
 }

@@ -48,6 +48,7 @@ import { commandChatMigration } from './command-chat.js';
 import { registerWindowsScopedChatRoutes } from './windows-chat-session.js';
 import { registerFeedbackRoutes } from './feedback-routes.js';
 import { feedbackLoopEnabled } from './feedback-config.js';
+import { withFeedbackMind } from './feedback-selection.js';
 import { createRefusalAwareCommandChat as createCommandChatControl } from './assistant/refusal/chat-control.js';
 import { migrateRemindersInTransaction } from './reminders/migration.js';
 import { registerReminderRuntime } from './reminders/runtime.js';
@@ -415,7 +416,7 @@ export async function createApplication(config: AppConfig) {
   const judgeShadow = judgeConfig.enabled ? createJudgeShadow({ logFile: judgeConfig.logFile }) : undefined;
   if (judgeShadow) app.addHook('onClose', async () => { await judgeShadow.flush(); });
   if (judgeShadow && config.production) console.log(JSON.stringify({ level: 'info', event: 'judge_enabled', fixForOwner: judgeConfig.fixForOwner, withholdForOwner: judgeConfig.withholdForOwner, logText: judgeConfig.logText, logFile: judgeConfig.logFile }));
-  const mind = config.mindEnabled === true && !config.production ? config.mind ?? createMind() : undefined;
+  const mind = config.mindEnabled === true && !config.production ? withFeedbackMind(config.mind ?? createMind()) : undefined;
   const mindRobots = new RobotsPolicy(searchNetwork);
   const mindSearch = mind && !config.browser?.searchProvider
     ? new SearchEngine(new RobotsSearchNetwork(searchNetwork, mindRobots), { localIndex: searchIndex, admission: searchStore })
