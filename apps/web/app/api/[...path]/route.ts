@@ -1,4 +1,5 @@
 import type { NextRequest } from 'next/server';
+import { browserLiveFrameHeader } from '@mohassan/contracts';
 import { boundedRelayBody, ingressClientIp, secureSitePreview } from './relay-security';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -43,6 +44,9 @@ async function forward(request: NextRequest, context: {params: Promise<{path:str
     const response=await fetch(target,{method:request.method,headers,...relay.request,cache:'no-store',redirect:'manual',signal});
     const output=new Headers({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
     const contentType=response.headers.get('content-type');if(contentType)output.set('content-type',contentType);
+    const liveFrame = path.length === 7 && path[0] === 'chat' && path[1] === 'conversations' && path[3] === 'browser' && path[4] === 'live' && path[6] === 'frame';
+    const frameId = liveFrame && response.ok ? response.headers.get(browserLiveFrameHeader) : null;
+    if (frameId && /^[a-f0-9-]{36}$/u.test(frameId)) output.set(browserLiveFrameHeader, frameId);
     secureSitePreview(output, path);
     // Downloads keep their file name and are sandboxed.
     if(conversationExport||(path.length===6&&path[0]==='browser'&&path[1]==='files'&&path[3]==='grants'&&path[5]==='content')||(path.length===3&&path[0]==='documents'&&path[2]==='content')){

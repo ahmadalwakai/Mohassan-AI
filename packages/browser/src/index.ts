@@ -9,6 +9,8 @@ export * from './network.js';
 export * from './engine.js';
 export * from './research.js';
 export * from './agent-browser.js';
+export { BrowserHumanStepError, detectBrowserHumanStep, type BrowserHumanStep } from './browser-human-step.js';
+export type { BrowserLiveFrame, BrowserLiveScope } from './browser-live-page.js';
 export * from './session-state.js';
 export * from './files.js';
 export * from './search/engine.js';

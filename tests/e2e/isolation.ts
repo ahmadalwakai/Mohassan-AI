@@ -27,6 +27,7 @@ if (E2E_WEB_PORT === E2E_SERVER_PORT) throw new Error('E2E_PORTS_EQUAL');
 export function isolatedE2EEnvironment(directory: string, ambient: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const systemRoot = ambient.SystemRoot || ambient.SYSTEMROOT || ambient.WINDIR;
   const home = path.join(directory, 'home');
+  const installedBrowsers = ambient.PLAYWRIGHT_BROWSERS_PATH;
   return {
     NODE_ENV: 'development', NODE_OPTIONS: '', NODE_PATH: '', NODE_EXTRA_CA_CERTS: '',
     PATH: [path.dirname(process.execPath), ...(systemRoot ? [path.join(systemRoot, 'System32'), systemRoot] : ['/usr/bin', '/bin'])].join(path.delimiter),
@@ -34,7 +35,10 @@ export function isolatedE2EEnvironment(directory: string, ambient: NodeJS.Proces
     HOME: home, USERPROFILE: home, APPDATA: path.join(home, 'AppData', 'Roaming'), LOCALAPPDATA: path.join(home, 'AppData', 'Local'),
     TEMP: path.join(directory, 'tmp'), TMP: path.join(directory, 'tmp'), TMPDIR: path.join(directory, 'tmp'),
     // Installed browser binaries are read-only dependencies, never profiles or credentials.
-    PLAYWRIGHT_BROWSERS_PATH: process.platform === 'win32' ? path.join(homedir(), 'AppData', 'Local', 'ms-playwright') : path.join(homedir(), '.cache', 'ms-playwright'),
+    // Playwright's hermetic mode uses '0'. https://playwright.dev/docs/browsers#hermetic-install (retrieved 2026-11-27)
+    PLAYWRIGHT_BROWSERS_PATH: installedBrowsers === '0' || (installedBrowsers && path.isAbsolute(installedBrowsers))
+      ? installedBrowsers
+      : process.platform === 'win32' ? path.join(homedir(), 'AppData', 'Local', 'ms-playwright') : path.join(homedir(), '.cache', 'ms-playwright'),
     NEXT_TELEMETRY_DISABLED: '1', DO_NOT_TRACK: '1', CI: '1',
     NEXT_FONT_GOOGLE_MOCKED_RESPONSES: path.join(repository, 'tests', 'e2e', 'offline-google-fonts.cjs'),
     MOHASSAN_ISOLATED_TEST: 'true', MOHASSAN_E2E_ROOT: directory,
@@ -132,7 +136,7 @@ export async function stopOwnedChildren(children: OwnedChild[]): Promise<void> {
   }));
 }
 
-export async function startIsolatedE2E(options: { localBrain?: boolean; githubMonitor?: boolean } = {}): Promise<{ directory: string; stop(): Promise<void> }> {
+export async function startIsolatedE2E(options: { localBrain?: boolean; githubMonitor?: boolean; browserLiveView?: boolean } = {}): Promise<{ directory: string; stop(): Promise<void> }> {
   // Never reuse, kill, or contact an existing local server on these fixture ports.
   await requireFreePort(E2E_SERVER_PORT); await requireFreePort(E2E_WEB_PORT);
   const fixture = await createE2EFixture();
@@ -155,7 +159,9 @@ export async function startIsolatedE2E(options: { localBrain?: boolean; githubMo
     throw new Error('E2E_READINESS_TIMEOUT');
   };
   try {
-    const api = spawnOwned(['--import', pathToFileURL(path.join(repository, 'node_modules', 'tsx', 'dist', 'loader.mjs')).href, path.join(repository, 'tests', 'e2e', 'server-entry.ts')], fixture.directory, fixture.environment, true);
+    const apiArgs = ['--import', pathToFileURL(path.join(repository, 'node_modules', 'tsx', 'dist', 'loader.mjs')).href, path.join(repository, 'tests', 'e2e', 'server-entry.ts')];
+    if (options.browserLiveView) apiArgs.push('--browser-hands');
+    const api = spawnOwned(apiArgs, fixture.directory, fixture.environment, true);
     children.push(api);
     await new Promise<void>((resolve,reject)=>{
       // E2E_READY_MS widens the wait on a machine busy with other work (the API took over three minutes to start on 2026-11-22).
