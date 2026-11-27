@@ -147,6 +147,15 @@ fun WaslaStore.approveMohassan(approved: Boolean) {
     actOnMohassan(conversation.id, "approve", MohassanApprove(approval.id, approved))
 }
 
+/** Available only when the server supplied a read-only recovery offer; never retries a write. */
+fun WaslaStore.resumeMohassanCampaign() {
+    val conversation = mohassanConversation ?: return
+    if (!conversation.canReviewSavedCampaign || mohassanBusy) return
+    val recovery = conversation.campaignRecovery ?: return
+    val key = recovery.requestKey ?: return
+    actOnMohassan(conversation.id, "campaign/resume", MohassanCampaignResume(recovery.runId), idempotencyKey = key)
+}
+
 /** Stopping is always allowed, even while another call is in flight. */
 fun WaslaStore.cancelMohassan() {
     val conversation = mohassanConversation ?: return
@@ -170,7 +179,7 @@ fun WaslaStore.deleteMohassan(id: String) {
     }
 }
 
-private inline fun <reified Body> WaslaStore.actOnMohassan(id: String, action: String, body: Body, allowWhileSending: Boolean = false) {
+private inline fun <reified Body> WaslaStore.actOnMohassan(id: String, action: String, body: Body, allowWhileSending: Boolean = false, idempotencyKey: String? = null) {
     val client = client ?: return
     if (!isUuid(id) || (!allowWhileSending && mohassanSending)) return
     val epoch = sessionEpoch
@@ -179,7 +188,7 @@ private inline fun <reified Body> WaslaStore.actOnMohassan(id: String, action: S
     mohassanSending = true
     viewModelScope.launch {
         try {
-            client.data("/v1/mohassan/conversations/$id/$action", "POST", encoded, timeoutSeconds = 45)
+            client.data("/v1/mohassan/conversations/$id/$action", "POST", encoded, timeoutSeconds = 45, idempotencyKey = idempotencyKey)
             if (epoch != sessionEpoch || conversationEpoch != mohassanEpoch) return@launch
             refreshMohassan(id)
         } catch (error: Exception) {
