@@ -18,7 +18,11 @@ const [{createApplication},{getConfig},{createMockGroq}]=await Promise.all([
 ]);
 const mock=createMockGroq();
 const localBrain=process.env.MOHASSAN_E2E_LOCAL_BRAIN==='1';
-const {app}=await createApplication({...getConfig(),testRequestLimit:1000,browser:{testOrigins:['http://127.0.0.1:4201']},groqApiKey:localBrain?undefined:'isolated-browser-fixture-not-a-real-key',groqModel:'openai/gpt-oss-20b',groqReasoningModel:'openai/gpt-oss-120b',aiFetch:mock.fetch});
+const {app,database,auth}=await createApplication({...getConfig(),testRequestLimit:1000,browser:{testOrigins:['http://127.0.0.1:4201']},groqApiKey:localBrain?undefined:'isolated-browser-fixture-not-a-real-key',groqModel:'openai/gpt-oss-20b',groqReasoningModel:'openai/gpt-oss-120b',aiFetch:mock.fetch});
+if(process.argv.includes('--seed-conversation-paging')){
+  const {seedConversationPaging}=await import('./conversation-paging-setup.js');
+  await seedConversationPaging(database.db,auth);
+}
 await app.listen({port:Number(process.env.SERVER_PORT??4100),host:'127.0.0.1'});
 process.send?.({type:'e2e.ready',root:fixtureRoot});
 let stopping=false;

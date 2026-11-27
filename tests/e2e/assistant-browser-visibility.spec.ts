@@ -132,7 +132,7 @@ test('a hidden tab keeps following its task and gets one system notice when it f
   // Hold the history row at running so the old notice effect observes both transitions even for a fast calculation.
   const goal = 'كم 17 ضرب 29؟';
   let showRunningHistory = true;
-  await page.route('**/api/chat/conversations', async route => {
+  await page.route(url => url.pathname === '/api/chat/conversations', async route => {
     if (route.request().method() !== 'GET' || !showRunningHistory) return route.continue();
     const response = await route.fetch();
     if (!response.ok()) return route.fulfill({ response });

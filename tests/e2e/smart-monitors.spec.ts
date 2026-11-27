@@ -12,7 +12,7 @@ test('shows evidence before approval and keeps the thread and monitor settings i
   let monitor!: MonitorCard;
   const writes: string[] = [];
 
-  await page.route('**/api/chat/conversations', async (route) => {
+  await page.route(url => url.pathname === '/api/chat/conversations', async (route) => {
     if (route.request().method() === 'GET') {
       const response = await route.fetch();
       const history = await response.json();

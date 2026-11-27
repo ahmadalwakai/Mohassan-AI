@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ArrowUp, Check, ChevronDown, Copy, ExternalLink, Globe, ImagePlus, KeyRound, Laptop, LogOut, Menu, MessageSquare, MoreHorizontal, PanelLeftClose, Settings2, ShieldAlert, SquarePen, Square, Trash2, X } from "lucide-react";
-import type { ChatCapabilities, ChatConversation as Conversation, ChatConversationSummary as Summary, ChatSecureRequest } from "@mohassan/contracts";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { ArrowUp, Check, ChevronDown, Copy, ExternalLink, Globe, ImagePlus, KeyRound, Laptop, LogOut, Menu, MoreHorizontal, PanelLeftClose, Settings2, ShieldAlert, SquarePen, Square, Trash2, X } from "lucide-react";
+import type { ChatCapabilities, ChatConversation as Conversation, ChatConversationList, ChatConversationSummary as Summary, ChatSecureRequest } from "@mohassan/contracts";
 
 /** What each capability the server reports is called on the banner (2026-11-23: the banner listed a fixed three before). */
 const CAPABILITY_LABELS: Record<ChatCapabilities["available"][number], string> = {
@@ -23,6 +23,7 @@ import { BrowserViewport } from './browser-viewport';
 import { CampaignCard } from "./campaign-card";
 import { TrainingMonitorMenuItem } from "./training-monitor-menu-item";
 import { ConversationActions } from "./conversation-actions";
+import { ConversationHistorySearch, ConversationHistoryStatus, OlderConversations, useConversationHistory } from "./conversation-history";
 
 const ADS_WORDS = /حمل[ةت]|حملات|إعلان|اعلان|google ads|campaign|\bads?\b|advertis|ppc/i;
 import { ActivityLine, AgentActivity } from "./agent-activity";
@@ -74,13 +75,22 @@ const seenTasks = {
   set(value: Record<string, string>) { try { localStorage.setItem(SEEN_TASKS, JSON.stringify(value)); } catch { /* Convenience only. */ } },
 };
 
+class ApiError extends Error { constructor(message: string, readonly status: number) { super(message); } }
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, { ...options, credentials: "same-origin", cache: "no-store", headers: { ...(options.body ? { "Content-Type": "application/json" } : {}), ...options.headers } });
   const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(response.status === 429 && body?.error?.code !== "MEMBER_DAILY_LIMIT" ? "طلبات كثيرة متتابعة. انتظر لحظة ثم حاول مجددًا." : body?.error?.message ?? "تعذر إتمام الطلب. حاول مجددًا.");
+  if (!response.ok) throw new ApiError(response.status === 429 && body?.error?.code !== "MEMBER_DAILY_LIMIT" ? "طلبات كثيرة متتابعة. انتظر لحظة ثم حاول مجددًا." : body?.error?.message ?? "تعذر إتمام الطلب. حاول مجددًا.", response.status);
   return body as T;
 }
 const messageOf = (error: unknown) => error instanceof Error ? error.message : "تعذر الاتصال. حاول مجددًا.";
+function fetchHistoryPage({ query, cursor, signal }: { query?: string; cursor?: string; signal?: AbortSignal }) {
+  // Match the legacy page size. Retrieved 2026-11-27.
+  // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/apps/server/src/command-chat.ts#L1148
+  const params = new URLSearchParams({ limit: "60" });
+  if (query) params.set("q", query);
+  if (cursor) params.set("cursor", cursor);
+  return api<ChatConversationList>(`/api/chat/conversations?${params}`, { signal });
+}
 
 const MAX_ATTACHMENTS = 4;
 interface Attachment { id: string; width: number; height: number; url: string; name: string }
@@ -242,11 +252,10 @@ function DeleteDialog({ target, busy, error, onCancel, onConfirm }: { target: Su
 export type AssistantToolView = "integrations" | "executor" | "desktop";
 
 export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifications }: { name: string; onAdvanced: () => void; onOpenTool?: (view: AssistantToolView) => void; onSignOut: () => void; notifications: NotificationControls }) {
-  const [history, setHistory] = useState<Summary[]>([]);
+  const historyControls = useConversationHistory(fetchHistoryPage);
+  const { history, configured: chatConfigured, capabilities: chatCapabilities, refreshHistory, remove: removeFromHistory } = historyControls;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [conversation, setConversation] = useState<Conversation | null>(null);
-  const [chatConfigured, setChatConfigured] = useState<boolean | null>(null);
-  const [chatCapabilities, setChatCapabilities] = useState<ChatCapabilities | null>(null);
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(0);
@@ -278,14 +287,6 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
   const selection = useRef<string | null>(null);
   selection.current = selectedId;
 
-  const refreshHistory = useCallback(async () => {
-    const result = await api<{ conversations: Summary[]; configured?: boolean; capabilities?: ChatCapabilities }>("/api/chat/conversations");
-    setHistory(result.conversations);
-    if (typeof result.configured === "boolean") setChatConfigured(result.configured);
-    if (result.capabilities) setChatCapabilities(result.capabilities);
-    return result.conversations;
-  }, []);
-
   // Back from Google's consent page: answer the waiting question so the task continues by itself.
   useEffect(() => {
     const result = new URLSearchParams(location.search).get("googleAds");
@@ -302,12 +303,9 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
   }, [refreshHistory]);
 
   useEffect(() => {
-    let active = true;
-    void refreshHistory().then((items) => {
-      const last = saved.get();
-      if (active && last && items.some((item) => item.id === last)) setSelectedId(last);
-    }).catch((caught) => { if (active) setError(messageOf(caught)); });
-    return () => { active = false; };
+    const last = saved.get();
+    if (last) setSelectedId(last);
+    void refreshHistory().catch(() => {});
   }, [refreshHistory]);
 
   useEffect(() => {
@@ -315,9 +313,17 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
     saved.set(selectedId);
     if (conversation?.id === selectedId) return;
     let active = true;
-    void api<Conversation>(`/api/chat/conversations/${selectedId}`).then((result) => { if (active) setConversation(result); }).catch((caught) => { if (active) setError(messageOf(caught)); });
+    void api<Conversation>(`/api/chat/conversations/${encodeURIComponent(selectedId)}`).then((result) => { if (active) setConversation(result); }).catch((caught) => {
+      if (!active) return;
+      if (caught instanceof ApiError && (caught.status === 400 || caught.status === 404)) {
+        saved.set(null);
+        setSelectedId(null);
+        setConversation(null);
+        removeFromHistory(selectedId);
+      } else setError(messageOf(caught));
+    });
     return () => { active = false; };
-  }, [selectedId, conversation?.id]);
+  }, [selectedId, conversation?.id, removeFromHistory]);
 
   const status = conversation?.status;
   const hasThread = Boolean(conversation?.messages.length);
@@ -609,7 +615,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
     setDeleteError("");
     try {
       await api<{ ok: true }>(`/api/chat/conversations/${target.id}`, { method: "DELETE" });
-      setHistory((items) => items.filter((item) => item.id !== target.id));
+      removeFromHistory(target.id);
       if (selection.current === target.id) {
         saved.set(null);
         setSelectedId(null);
@@ -672,9 +678,11 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
         <button className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="إغلاق القائمة" onClick={() => setSidebarOpen(false)}><X size={18} /></button>
       </div>
       <button className={styles.newChat} onClick={startNew}><SquarePen size={16} />محادثة جديدة</button>
+      <ConversationHistorySearch controls={historyControls} />
       <div className={styles.history}>
-        {history.length ? <span className={styles.historyLabel}>المحادثات{unread ? <span className={styles.unreadBadge} aria-label={`${unread} غير مقروء`}>{unread}</span> : null}</span> : <p className={styles.historyEmpty}><MessageSquare size={16} />ستظهر محادثاتك هنا.</p>}
-        {history.map((item) => {
+        {historyControls.items.length && !historyControls.searching ? <span className={styles.historyLabel}>المحادثات{unread ? <span className={styles.unreadBadge} aria-label={`${unread} غير مقروء`}>{unread}</span> : null}</span> : null}
+        <ConversationHistoryStatus controls={historyControls} />
+        {historyControls.items.map((item) => {
           const current = item.id === selectedId;
           const shown = itemMenu === item.id;
           return <div key={item.id} className={`${styles.historyItem} ${current ? styles.current : ""} ${shown ? styles.menuShown : ""}`} data-item-menu="">
@@ -691,6 +699,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
             </div> : null}
           </div>;
         })}
+        <OlderConversations controls={historyControls} />
       </div>
       <div className={styles.account}>
         {menuOpen ? <div className={styles.menu}>

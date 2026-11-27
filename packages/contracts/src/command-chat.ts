@@ -253,6 +253,11 @@ export const ChatConversationSchema = ChatConversationSummarySchema.extend({
 
 export type ChatConversation = z.infer<typeof ChatConversationSchema>;
 export type ChatConversationSummary = z.infer<typeof ChatConversationSummarySchema>;
+export const ChatConversationListSchema = z.object({
+  conversations: z.array(ChatConversationSummarySchema), configured: z.boolean(), capabilities: ChatCapabilitiesSchema,
+  requestKeys: z.literal(true), nextCursor: z.string().nullable().optional(),
+}).strict();
+export type ChatConversationList = z.infer<typeof ChatConversationListSchema>;
 export type ChatQuestion = z.infer<typeof ChatQuestionSchema>;
 export type ChatQuestionField = z.infer<typeof ChatQuestionFieldSchema>;
 export type ChatApproval = z.infer<typeof ChatApprovalSchema>;
