@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentAction, AgentBrowser, SearchProvider } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
-import { createCommandChatControl } from '../apps/server/src/command-chat.js';
-import type { AdsModelChat } from '../apps/server/src/assistant/ads-model-chat.js';
+import { createCommandChatControl, type CommandChatConfig } from '../apps/server/src/command-chat.js';
+import type { AdsBrief, AdsModelChat } from '../apps/server/src/assistant/ads-model-chat.js';
 
 /**
  * Campaign requests through the real chat controller with no chat model (assistant/campaign-request.ts). With the owner's Ads
@@ -14,7 +14,7 @@ let database: Awaited<ReturnType<typeof createDatabase>> | undefined;
 let control: Awaited<ReturnType<typeof createCommandChatControl>> | undefined;
 afterEach(async () => { await control?.shutdown(); await database?.close(); control = undefined; database = undefined; });
 
-async function harness(withAdsModel: boolean) {
+async function harness(withAdsModel: boolean, overrides: Pick<CommandChatConfig, 'adsModel' | 'chromeExtension' | 'tools'> = {}) {
   database = await createDatabase();
   await migrate(database.db);
   const searched: string[] = [], actions: AgentAction[] = [], toAds: string[] = [];
@@ -28,7 +28,7 @@ async function harness(withAdsModel: boolean) {
   const searchProvider: SearchProvider = { name: 'isolated-campaign-search', async search(query) { searched.push(query); return []; } };
   const adsModel: AdsModelChat = { async handle(request) { toAds.push(request); return { status: 'partial', text: 'ADS PATH REACHED' }; } };
   control = await createCommandChatControl(database.db, { browser, models: { fast: [], deep: [], vision: '' }, searchProvider,
-    ...(withAdsModel ? { adsModel } : {}) });
+    ...(withAdsModel ? { adsModel } : {}), ...overrides });
   return { control, searched, actions, toAds };
 }
 async function ask(goal: string, withAdsModel: boolean) {
@@ -52,6 +52,48 @@ describe('campaign requests keep the Ads path', () => {
     expect(reply).toBe('ADS PATH REACHED');
     expect(searched).toEqual([]);
     expect(actions).toEqual([]);
+  });
+
+  // Draft details and prohibition adapted from dev-google-ads-171, retrieved 2026-11-27.
+  // https://github.com/ahmadalwakai/Mohassan-AI/blob/a258b3d47e39b5a2c03c71d4a9eb01107ae3d97f/tests/fixtures/agent-capability-bench/development.json
+  it.each([
+    { transport: 'chrome', asksFirst: false },
+    { transport: 'api', asksFirst: true },
+  ] as const)('keeps an unpublished draft in chat with $transport selected', async ({ transport, asksFirst }) => {
+    const draft = 'Google Ads search campaign draft for violin lessons in York at £7 daily.';
+    const keepUnpublished = 'Keep it unpublished.';
+    const brief: AdsBrief = { url: null, service: null, serviceChoices: [], locations: ['York'], country: 'GB',
+      budget: { amount: '7', currency: '£', period: 'day' }, goal: null, asked: ['service'], rounds: 1 };
+    const unused = async (): Promise<never> => { throw new Error('Unexpected Ads port call'); };
+    const queueCampaign = vi.fn(unused);
+    const createPaused = vi.fn(unused);
+    const handle = vi.fn<AdsModelChat['handle']>(async (_request, _io, saved) => {
+      if (asksFirst && !saved) return { status: 'waiting_user', text: 'What lessons should the campaign promote?', brief };
+      return { status: 'completed', text: draft, campaign: 'SERVICE: violin lessons' };
+    });
+    const { control } = await harness(true, {
+      adsModel: { handle },
+      chromeExtension: {
+        status: async () => ({ preferredTransport: transport, connected: true, binding: null, lastSeenAt: null, latestJob: null }),
+        queueCampaign,
+      },
+      tools: { ads: { status: unused, report: unused, draft: unused, createPaused } },
+    });
+    const goal = asksFirst ? 'Build a Google Ads search campaign in York at £7 daily.' : `Build a Google Ads search campaign draft for violin lessons in York at £7 daily. ${keepUnpublished}`;
+    const { id } = await control.create(owner, { goal });
+    await control.settled(id);
+    if (asksFirst) {
+      expect((await control.detail(owner, id)).status).toBe('waiting_user');
+      await control.send(owner, id, { text: `Violin lessons. ${keepUnpublished}` });
+      await control.settled(id);
+      expect(handle).toHaveBeenCalledTimes(2);
+    }
+    const detail = await control.detail(owner, id);
+    expect(detail.error).toBeNull();
+    expect(detail.status).toBe('idle');
+    expect(detail.messages.at(-1)?.text).toContain(draft);
+    expect(queueCampaign).not.toHaveBeenCalled();
+    expect(createPaused).not.toHaveBeenCalled();
   });
 
   it('stops a waiting letter card when the next message is a whole campaign request, then takes that request as a new one', async () => {
