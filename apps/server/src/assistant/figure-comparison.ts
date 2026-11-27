@@ -9,6 +9,7 @@ interface Period {
   start: number;
   end: number;
   key: string;
+  date?: EvidenceDate;
 }
 
 interface Quantity {
@@ -111,13 +112,21 @@ function periodsOf(text: string, numbers: NumericToken[]): Period[] {
     if (periods.some(period => period.start < end && start < period.end)) continue;
     const bareYear = /^\d{4}$/u.test(text.slice(start, end));
     const part = leadingPeriod(text, start);
+    const periodStart = part?.start ?? start;
     const bareSentence = /^\s*\(?\d{4}\)?[.!؟]?\s*$/u.test(text);
     const yearHeading = !text.slice(0, start).trim() && /^\s*:/u.test(text.slice(end));
-    const parenthetical = text[start - 1] === '(' && text[end] === ')';
+    const opening = /\(\s*$/u.exec(text.slice(0, periodStart));
+    const closing = opening && /^\s*\)/u.exec(text.slice(end));
     const measured = numbers.some(number => number.start <= start && end <= number.end && (number.unit || number.scaled));
     if (measured && (bareYear || date.month === undefined && !part)) continue;
-    if (bareYear && !part && !bareSentence && !yearHeading && !parenthetical) continue;
-    dates.push({ start: part?.start ?? start, end, key: `${dateKey(date)}:${part?.qualifier ?? ''}` });
+    if (bareYear && !part && !bareSentence && !yearHeading && !closing) continue;
+    dates.push({
+      start: closing ? opening.index : periodStart,
+      end: closing ? end + closing[0].length : end,
+      key: `${dateKey(date)}:${part?.qualifier ?? ''}`,
+      // Only unqualified dates can agree at a coarser date precision.
+      date: part?.qualifier ? undefined : date,
+    });
   }
   for (let index = 0; index < dates.length; index++) {
     const current = dates[index]!;
@@ -164,13 +173,13 @@ function adjacentCurrency(before: string, after: string): string | undefined {
   return undefined;
 }
 
-function readFigure(sentence: string, dateOnly: boolean): Quantity | string | undefined {
+function readFigure(sentence: string, dateOnly: boolean): Quantity | Period | undefined {
   const text = normalize(sentence);
   const observed = parseEvidenceNumbers(text);
   const periods = periodsOf(text, observed);
-  const periodKeys = new Set(periods.map(period => period.key));
-  if (periodKeys.size > 1) return;
-  const period = periodKeys.values().next().value;
+  const distinctPeriods = new Map(periods.map(period => [period.key, period]));
+  if (distinctPeriods.size > 1) return;
+  const period = distinctPeriods.values().next().value;
   if (dateOnly) return period;
   const remainder = periods.sort((left, right) => right.start - left.start).reduce(
     (line, { start, end }) => line.slice(0, start) + ' '.repeat(end - start) + line.slice(end), text,
@@ -187,7 +196,16 @@ function readFigure(sentence: string, dateOnly: boolean): Quantity | string | un
   if (AMBIGUOUS_CURRENCY.has(unit ?? '') || code && code !== unit) return;
   if (!unit && !UNIT_FREE_TAIL.test(after)) return;
   if (!unit && POPULATION.test(before)) unit = 'count';
-  return { value: number.value, upper: number.upper, unit, period, roundingStep: roundingStep(remainder.slice(number.start, number.end), number) };
+  return { value: number.value, upper: number.upper, unit, period: period?.key, roundingStep: roundingStep(remainder.slice(number.start, number.end), number) };
+}
+
+function datesAgree(first: Period, second: Period): boolean {
+  if (first.key === second.key) return true;
+  const a = first.date;
+  const b = second.date;
+  return a !== undefined && b !== undefined && a.calendar === b.calendar && a.year === b.year
+    && (a.month === undefined || b.month === undefined || a.month === b.month)
+    && (a.day === undefined || b.day === undefined || a.day === b.day);
 }
 
 function sameMagnitude(first: number, second: number, tolerance: number, converted: boolean): boolean {
@@ -207,12 +225,11 @@ export function compareFigures(first: string, second: string, options?: { kind?:
   const a = readFigure(first, dateOnly);
   const b = readFigure(second, dateOnly);
   if (!a || !b) return { kind: 'uncomparable' };
-  if (typeof a === 'string' && typeof b === 'string') return { kind: a === b ? 'agree' : 'different-period' };
-  if (typeof a === 'string' || typeof b === 'string') return { kind: 'uncomparable' };
+  if ('key' in a && 'key' in b) return { kind: datesAgree(a, b) ? 'agree' : 'different-value' };
+  if ('key' in a || 'key' in b) return { kind: 'uncomparable' };
 
   const converted = a.unit === 'km' && b.unit === 'mi' || a.unit === 'mi' && b.unit === 'km';
   if (a.unit !== b.unit && !converted) return { kind: 'different-unit' };
-  if (a.period && b.period && a.period !== b.period) return { kind: 'different-period' };
   const factorA = converted && a.unit === 'mi' ? MILE_IN_KM : 1;
   const factorB = converted && b.unit === 'mi' ? MILE_IN_KM : 1;
   const tolerance = Math.max(a.roundingStep * factorA, b.roundingStep * factorB) / 2;
@@ -222,6 +239,7 @@ export function compareFigures(first: string, second: string, options?: { kind?:
       return { kind: 'different-value' };
     }
   }
+  if (a.period && b.period && a.period !== b.period) return { kind: 'different-period' };
   if (a.period !== b.period) return { kind: 'agree-period-unstated', unstatedSource: a.period ? 'second' : 'first' };
   return { kind: 'agree' };
 }

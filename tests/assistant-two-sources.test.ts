@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentAction, AgentPage } from '@mohassan/browser';
-import { aspectSubject, entityWords, isOwnArticle, namesEntity, runHands, webQuestion, type HandsIO, type HandsPlan } from '../apps/server/src/assistant/hands.js';
+import { aspectSubject, describe as describeHands, entityWords, isOwnArticle, namesEntity, runHands, webQuestion, type HandsIO, type HandsPlan } from '../apps/server/src/assistant/hands.js';
 
 /** Plan §7.4: a figure comes with a second source when one was read; both are shown when they differ. */
 // The engine normalizes result URLs (`new URL(...).href`), so pages are keyed by that form.
@@ -149,8 +149,8 @@ describe('two sources for a figure', () => {
   });
 
   it('quotes the second page when its figure differs, and names it when it agrees', async () => {
-    const first = pageOf('https://ar.wikipedia.org/wiki/مصر', 'مصر - ويكيبيديا', 'مصر دولة عربية. يبلغ عدد سكان مصر نحو 105 ملايين نسمة في 2024. وعاصمتها القاهرة.');
-    const differing = pageOf('https://stats.example/egypt', 'عدد سكان مصر 2024 - stats.example', 'عدد سكان مصر 104.5 ملايين نسمة في 2024 بحسب الجهاز المركزي للإحصاء.');
+    const first = pageOf('https://ar.wikipedia.org/wiki/مصر', 'مصر - ويكيبيديا', 'مصر دولة عربية. يبلغ عدد سكان مصر نحو 105 ملايين نسمة بحسب تقديرات 2024. وعاصمتها القاهرة.');
+    const differing = pageOf('https://stats.example/egypt', 'عدد سكان مصر 2024 - stats.example', 'عدد سكان مصر 104.5 ملايين نسمة في منتصف 2024 بحسب الجهاز المركزي للإحصاء.');
     // A title made only of the question's words would be read first as the subject's own article; this one is not.
     const agreeing = pageOf('https://facts.example/egypt', 'إحصاءات سكان مصر - facts.example', 'يبلغ عدد سكان مصر 105.3 مليون نسمة في 2024 بحسب التقديرات.');
     const differs = await runHands({ steps: webQuestion('كم عدد سكان مصر؟')!, next: 0, lang: 'ar' },
@@ -158,6 +158,7 @@ describe('two sources for a figure', () => {
     expect(differs).toMatchObject({ kind: 'done', status: 'completed' });
     expect(text(differs).split('\n')[0]).toContain('105 ملايين');
     expect(text(differs)).toContain(`**مصدر ثانٍ يختلف:** «${differing.text}» — [stats.example — ${differing.title}](${differing.url})`);
+    expect(text(differs)).not.toContain('لفترة أخرى');
     const plan: HandsPlan = { steps: webQuestion('كم عدد سكان مصر؟')!, next: 0, lang: 'ar' };
     const agrees = await runHands(plan,
       io(by(first, agreeing), [{ title: first.title, url: first.url }, { title: agreeing.title, url: agreeing.url }]));
@@ -169,7 +170,8 @@ describe('two sources for a figure', () => {
 
   it.each([
     ['بلغ عدد سكان مصر 5 آلاف نسمة في 2024 بحسب التقديرات.', 'مصدر ثانٍ يختلف'],
-    ['بلغ عدد سكان مصر 5 ملايين نسمة عام 2010 بحسب التقديرات.', 'مصدر ثانٍ يذكر رقماً لعام آخر'],
+    ['بلغ عدد سكان مصر 5 ملايين نسمة عام 2010 بحسب التقديرات.', 'مصدر ثانٍ يذكر رقماً لفترة أخرى'],
+    ['بلغ عدد سكان مصر 5 ملايين نسمة في منتصف 2024 بحسب التقديرات.', 'مصدر ثانٍ يذكر رقماً لفترة أخرى'],
   ])('quotes %s under the appropriate second-source label', async (line, label) => {
     const first = pageOf('https://ar.wikipedia.org/wiki/مصر', 'مصر - ويكيبيديا', 'بلغ عدد سكان مصر 5 ملايين نسمة في 2024 بحسب التقديرات.');
     const other = pageOf('https://facts.example/egypt', 'إحصاءات سكان مصر - facts.example', line);
@@ -195,7 +197,7 @@ describe('two sources for a figure', () => {
 
   it.each([
     ['بلغ عدد سكان مصر 5 آلاف نسمة.', '**مصدر ثانٍ يختلف:**'],
-    ['يشير التقدير إلى عام 2024.', 'لم أتحقق من هذا الرقم في مصدر ثانٍ.'],
+    ['يشير التقدير إلى عام 2024.', 'لم أتمكّن من مقارنة هذا الرقم بالمصدر الثاني.'],
   ])('rechecks a saved agreement before displaying %s', async (line, note) => {
     const steps = webQuestion('كم عدد سكان مصر؟')!;
     const plan: HandsPlan = {
@@ -208,6 +210,19 @@ describe('two sources for a figure', () => {
     const outcome = await runHands(plan, io({}, []));
     expect(text(outcome)).toContain(note);
     expect(text(outcome)).not.toContain('مصدر ثانٍ يؤكد');
+  });
+
+  it('reports when two read sources could not be compared in English', () => {
+    const steps = webQuestion('How many people live in Egypt?')!;
+    const result = describeHands({
+      steps, next: steps.length, results: [], lang: 'en',
+      found: {
+        url: 'https://first.example/egypt', title: 'Egypt', lines: ['Egypt has a population of 5 million people.'],
+        second: { url: 'https://second.example/egypt', title: 'Population estimates', line: 'The estimate is for 2024.', agrees: false },
+      },
+    }, null);
+    expect(result.text).toContain('I could not compare this figure with the second source.');
+    expect(result.text).not.toContain('I did not check this figure against a second source.');
   });
 
   it('compares a lone year as a date for a date question', async () => {
@@ -223,15 +238,34 @@ describe('two sources for a figure', () => {
     expect(text(outcome)).toContain('**مصدر ثانٍ يؤكد:** [second.example — تاريخ الجامعة]');
   });
 
+  it.each([
+    ['ar', 'متى افتتح الأرشيف؟', 'افتتح الأرشيف في 1990.', 'افتتح الأرشيف في 9 نوفمبر 1989.', '**مصدر ثانٍ يختلف:**'],
+    ['ar', 'متى افتتح الأرشيف؟', 'افتتح الأرشيف في 1989.', 'افتتح الأرشيف في 9 نوفمبر 1989.', '**مصدر ثانٍ يؤكد:**'],
+    ['en', 'When did the archive open?', 'The archive opened in 1990.', 'The archive opened on 9 November 1989.', '**A second source differs:**'],
+    ['en', 'When did the archive open?', 'The archive opened in 1989.', 'The archive opened on 9 November 1989.', '**A second source agrees:**'],
+  ] as const)('describes a saved %s date answer for %s with %s', (lang, question, firstLine, otherLine, label) => {
+    const steps = webQuestion(question)!;
+    const result = describeHands({
+      steps, next: steps.length, results: [], lang,
+      found: {
+        url: 'https://first.example/archive', title: 'Archive', lines: [firstLine],
+        second: { url: 'https://second.example/archive', title: 'Archive history', line: otherLine, agrees: false },
+      },
+    }, null);
+    expect(result.text).toContain(label);
+    expect(result.text).not.toMatch(/another period|لفترة أخرى/u);
+  });
+
   it('writes the second source in English for an English question', async () => {
     const first = pageOf('https://en.wikipedia.org/wiki/Egypt', 'Egypt - Wikipedia', 'Egypt is a country in North Africa. The population of Egypt is about 105 million people as of 2024. Its capital is Cairo.');
     // A second source must be about the same subject: its title carries the question's words («How many people live in Egypt?»).
-    const differing = pageOf('https://stats.example/egypt', 'How many people live in Egypt? - stats.example', 'The population of Egypt reached 104.5 million people in 2024.');
+    const differing = pageOf('https://stats.example/egypt', 'How many people live in Egypt? - stats.example', 'The population of Egypt reached 104.5 million people in mid-2024 according to the statistics agency.');
     const outcome = await runHands({ steps: webQuestion('How many people live in Egypt?')!, next: 0, lang: 'en' },
       io(by(first, differing), [{ title: first.title, url: first.url }, { title: differing.title, url: differing.url }]));
     expect(outcome).toMatchObject({ kind: 'done', status: 'completed' });
     // The page whose title is the question is read first; whichever page came second is quoted with its differing figure.
     expect(text(outcome)).toMatch(/\*\*A second source differs:\*\* “The population of Egypt (?:is about 105|reached 104\.5) million/u);
+    expect(text(outcome)).not.toContain('another period');
     expect(text(outcome)).toContain(`](${first.url})`);
     expect(text(outcome)).toContain(`](${differing.url})`);
   });

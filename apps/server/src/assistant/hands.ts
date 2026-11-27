@@ -2043,9 +2043,11 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
             ? en ? 'The first source does not state the period.' : 'لم يذكر المصدر الأول الفترة.'
             : en ? 'The second source does not state the period.' : 'لم يذكر المصدر الثاني الفترة.';
           second = `\n\n**${en ? 'A second source gives a matching figure:' : 'مصدر ثانٍ يذكر رقماً موافقاً:'}** ${link} ${unstated}`;
-        } else if (comparison.kind !== 'uncomparable') {
+        } else if (comparison.kind === 'uncomparable') {
+          second = `\n\n${en ? 'I could not compare this figure with the second source.' : 'لم أتمكّن من مقارنة هذا الرقم بالمصدر الثاني.'}`;
+        } else {
           const label = comparison.kind === 'different-period'
-            ? en ? 'A second source reports a figure for another period:' : 'مصدر ثانٍ يذكر رقماً لعام آخر:'
+            ? en ? 'A second source reports a figure for another period:' : 'مصدر ثانٍ يذكر رقماً لفترة أخرى:'
             : en ? 'A second source differs:' : 'مصدر ثانٍ يختلف:';
           second = `\n\n**${label}** ${en ? `“${other.line}”` : `«${other.line}»`} — ${link}`;
         }

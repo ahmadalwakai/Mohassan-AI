@@ -59,14 +59,20 @@ describe('compareFigures', () => {
     ['5 million as of 2024-05-01', '5 million as of May 1, 2024', 'agree'],
     ['5 million as of 2024-05-01', '5 million as of 2024-05-02', 'different-period'],
     ['5 million in 2024', '5 million in mid-2024', 'different-period'],
+    ['105 million in 2024', '104.5 million in mid-2024', 'different-value'],
+    ['105 million in 2024', '105.3 million in 2010', 'different-period'],
     ['5 million since 2024', '5 million in 2024', 'different-period'],
     ['2024: 5 million', '5 million in 2024', 'agree'],
+    ['123,294,513 (2024)', '123,294,513 in 2024', 'agree'],
+    ['123,294,513 ( 2024 )', '123,294,513 in 2023', 'different-period'],
+    ['123,294,513 (kg)', '123,294,513', 'uncomparable'],
     ['5 million in 2024', '5 million as of 2024-05-01', 'different-period'],
     ['5 million from 2010 to 2024.', '5 million between 2010 and 2024.', 'agree'],
     ['5 million from 2010 to 2024.', '5 million between 2010 and 2023.', 'different-period'],
     ['5 million from 2010 to 2024.', '5 million in 2010.', 'different-period'],
     ['5–7 million', 'بين ٥ و٧ ملايين', 'agree'],
     ['5–7 million', 'from 5 to 8 million', 'different-value'],
+    ['5–7 million in 2024', '5–8 million in 2010', 'different-value'],
     ['5–7 million', '5 million', 'different-value'],
     ['2010–2024 people', '2,010 to 2,024 people', 'agree'],
     ['5 million in 2024 and 6 million in 2023', '5 million in 2024', 'uncomparable'],
@@ -86,7 +92,19 @@ describe('compareFigures', () => {
     expect(compareFigures('In 2024.', '2024 people')).toEqual({ kind: 'uncomparable' });
     expect(compareFigures('2024 people', '2,024 people')).toEqual({ kind: 'agree' });
     expect(compareFigures('The university opened in 2024.', 'عام ٢٠٢٤', { kind: 'date' })).toEqual({ kind: 'agree' });
-    expect(compareFigures('The university opened in 2024.', 'عام ٢٠١٠', { kind: 'date' })).toEqual({ kind: 'different-period' });
+    expect(compareFigures('The university opened in 2024.', 'عام ٢٠١٠', { kind: 'date' })).toEqual({ kind: 'different-value' });
     expect(compareFigures('The university opened in 2024.', '2024 people', { kind: 'date' })).toEqual({ kind: 'uncomparable' });
+  });
+
+  it.each([
+    ['1989', '9 November 1989', 'agree'],
+    ['1990', '9 November 1989', 'different-value'],
+    ['November 1989', '9 November 1989', 'agree'],
+    ['October 1989', '9 November 1989', 'different-value'],
+    ['1989-11-09', '9 November 1989', 'agree'],
+    ['1989-11-10', '9 November 1989', 'different-value'],
+  ])('compares the shared calendar date precision in %s and %s', (first, second, kind) => {
+    expect(compareFigures(first, second, { kind: 'date' })).toEqual({ kind });
+    expect(compareFigures(second, first, { kind: 'date' })).toEqual({ kind });
   });
 });
