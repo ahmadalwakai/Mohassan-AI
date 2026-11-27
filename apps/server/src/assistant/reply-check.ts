@@ -12,6 +12,8 @@
  * Shadow first: the findings are recorded and the mechanical fixes are proposed (applyReplyFixes), not sent, until the
  * owner has judged a sample. Thresholds below are proposed, not fixed by the owner.
  */
+import { foldArabicForMatch } from './arabic-fold.js';
+
 export type ReplyLanguage = 'ar' | 'en';
 export type ReplyFindingCode = 'language_mismatch' | 'foreign_heading' | 'byline_lead' | 'site_chrome' | 'duplicate_line' | 'lead_without_answer';
 export interface ReplyFinding {
@@ -124,7 +126,7 @@ export function replyLanguage(reply: string): { replyLang: ReplyCheck['replyLang
   return { replyLang: arabicShare >= 1 - MISMATCH_ARABIC_IN_ENGLISH && arabicShare > 1 - MISMATCH_LATIN_IN_ARABIC ? arabicShare >= MISMATCH_ARABIC_IN_ENGLISH ? 'ar' : 'mixed' : arabicShare <= 1 - MISMATCH_LATIN_IN_ARABIC ? 'en' : 'mixed', arabicShare, words };
 }
 
-const normalizeLine = (line: string) => line.toLowerCase().normalize('NFC').replace(/[ـً-ٰٟ]/gu, '').replace(/[أإآٱ]/gu, 'ا').replace(/ى/gu, 'ي').replace(/ة/gu, 'ه')
+const normalizeLine = (line: string) => foldArabicForMatch(line.toLowerCase())
   .replace(/^[\s\-*•>\d.)]+/u, '').replace(/[«»"“”'‘’*_`]/gu, '').replace(/\s+/gu, ' ').trim();
 const excerptOf = (text: string) => text.replace(/\s+/gu, ' ').trim().slice(0, 140);
 const sentences = (line: string) => line.split(/(?<=[.!?؟])\s+/u).filter(Boolean);

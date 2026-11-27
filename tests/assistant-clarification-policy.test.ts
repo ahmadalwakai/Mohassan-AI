@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ChatQuestionSchema } from '@mohassan/contracts';
 import { clarificationCard, clarificationLanguage, decideClarification, missingClarificationSlot,
   type ClarificationChoice } from '../apps/server/src/assistant/clarify/policy.js';
+import { resolveRequestContext } from '../apps/server/src/assistant/request-context.js';
 
 // Development-only policy assertions. Numeric evidence is constructed in-process.
 // The subject comes from the owner's request. These inputs are never training data.
@@ -43,7 +44,22 @@ describe('clarification choice policy', () => {
   it('leaves an explicitly named document and account alone', () => {
     expect(missingClarificationSlot('Read the file on my computer.')).toBe('file');
     expect(missingClarificationSlot('Read the file AGENTS.md.')).toBeNull();
+    expect(missingClarificationSlot('افتح الملف على جهازي')).toBe('file');
+    expect(missingClarificationSlot('افتح الملف علي جهازي')).toBe('file');
     expect(missingClarificationSlot('Show the balance in my account.')).toBe('account');
     expect(missingClarificationSlot('Show the balance in my personal account.')).toBeNull();
+  });
+
+  it('recognizes the supplied reminder date with either spelling of Friday', () => {
+    for (const request of ['ذكرني يوم الجمعه بالاجتماع', 'ذكرني يوم الجمعة بالاجتماع']) {
+      const resolution = resolveRequestContext(request);
+      expect(resolution.intent).toBe('reminder');
+      expect(missingClarificationSlot(request, resolution)).toBeNull();
+    }
+  });
+
+  it('recognizes the account slot with either spelling of the preposition', () => {
+    expect(missingClarificationSlot('اعرض الفواتير علي حسابي')).toBe('account');
+    expect(missingClarificationSlot('اعرض الفواتير على حسابي')).toBe('account');
   });
 });
