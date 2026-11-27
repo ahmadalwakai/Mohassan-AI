@@ -103,6 +103,18 @@ describe('shortening lists', () => {
     expect(shorten(`${lead}\n\n- ${first}\n- Review the title.`, 'in two sentences')).toBe(`${lead} ${first}`);
   });
 
+  it('fills an explicit sentence limit from supplemental details when the lead has only one sentence', () => {
+    const lead = 'The draft is ready.';
+    const firstDetail = 'Open the draft.';
+    const previous = `${lead}\n\n**More from the same source:**\n- ${firstDetail}\n- Review the title.`;
+    expect(shorten(previous, 'in two sentences')).toBe(`${lead} ${firstDetail}`);
+  });
+
+  it('keeps list items eligible when the list has a heading and no lead', () => {
+    const first = '- Open the draft.';
+    expect(shorten(`**Steps:**\n${first}\n- Review the title.`, 'make it shorter')).toBe(first);
+  });
+
   it.each([
     ['اختصر الجواب السابق', 'المسودة جاهزة.\n\n**المصدر:** [الملاحظات](https://example.test/ar)'],
     ['make it shorter', 'The draft is ready.'],
@@ -110,5 +122,43 @@ describe('shortening lists', () => {
     ['في جملتين', '- افتح المسودة.'],
   ])('finds no shorter excerpt for "%s" when the answer is already short', (prompt, previous) => {
     expect(shorten(previous, prompt)).toBeNull();
+  });
+});
+
+describe('shortening web answers with supplemental details', () => {
+  const ar = {
+    lead: ['المسودة جاهزة للمراجعة.', 'أُضيفت الملاحظات أيضًا.'],
+    details: '**تفاصيل أخرى من نفس المصدر:**\n- راجع العنوان. قارنه بالمخطط.\n- احفظ التعديل.\n- أرسل النسخة.',
+    source: '**المصدر:** [ملاحظات المسودة](https://example.test/ar/draft)',
+    also: '**للمزيد:** [دليل المراجعة](https://example.test/ar/guide)',
+  };
+  const en = {
+    lead: ['The draft is ready for review.', 'Notes were added as well.'],
+    details: '**More from the same source:**\n- Review the title. Compare it with the outline.\n- Save the edit.\n- Send the copy.',
+    source: '**Source:** [Draft notes](https://example.test/en/draft)',
+    also: '**See also:** [Review guide](https://example.test/en/guide)',
+  };
+
+  it.each([
+    { prompt: 'اختصر جوابك', answer: ar, leadCount: 1 },
+    { prompt: 'باختصار', answer: ar, leadCount: 1 },
+    { prompt: 'في جملتين', answer: ar, leadCount: 2 },
+    { prompt: 'make it shorter', answer: en, leadCount: 1 },
+    { prompt: 'in two sentences', answer: en, leadCount: 2 },
+  ])('uses the opening sentences and source for "$prompt"', ({ prompt, answer, leadCount }) => {
+    const previous = [answer.lead.join(' '), answer.details, answer.source, answer.also].join('\n\n');
+    expect(shorten(previous, prompt)).toBe(`${answer.lead.slice(0, leadCount).join(' ')}\n\n${answer.source}`);
+  });
+});
+
+describe('shortening request wording', () => {
+  it.each([
+    ['اختصر القائمة', 'ar'],
+    ['اختصر القائمة السابقة', 'ar'],
+    ['اختصر الاجابه', 'ar'],
+    ['shorten the list', 'en'],
+    ['make the list shorter', 'en'],
+  ])('recognizes "%s" as a request to shorten the previous answer', (prompt, lang) => {
+    expect(shorterRequest(prompt)).toEqual({ sentences: 1, lang });
   });
 });

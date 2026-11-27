@@ -7,8 +7,8 @@
  */
 export interface ShorterRequest { sentences: number; lang: 'ar' | 'en'; asSentences?: true }
 
-const AR = /^(?:من فضلك\s+|لو سمحت\s+)?(?:(?:اختصر|إختصر|اختصري|لخص|لخّص|لخصي|أوجز|اوجز)(?:ه|ها)?(?:\s+لي)?(?:\s+(?:جوابك|إجابتك|اجابتك|ردك|الجواب|الإجابة|الاجابة|الرد|كلامك)(?:\s+(?:السابق|السابقة|الأخير|الاخير|الأخيرة|الاخيرة))?)?|باختصار|بإيجاز|أقصر|اقصر|بشكل (?:أقصر|اقصر|مختصر)|(?=(?:في|ب)\s*(?:جمل|سطر)))(?:\s*(?:في|ب)\s*(جملة|جمله|جملتين|سطر|سطرين)(?:\s+(?:واحدة|واحده|واحد))?)?[\s.!؟?]*$/u;
-const EN = /^(?:please\s+)?(?:make (?:it|that|this) shorter|shorter|shorten (?:it|that|this|your (?:answer|reply))|summari[sz]e (?:it|that|this|your (?:answer|reply))|tl;?dr|briefly|(?=in\s+(?:one|a single|two)\s+sentences?))(?:\s*,?\s*in\s+(one|a single|two)\s+sentences?)?[\s.!?]*$/iu;
+const AR = /^(?:من فضلك\s+|لو سمحت\s+)?(?:(?:اختصر|إختصر|اختصري|لخص|لخّص|لخصي|أوجز|اوجز)(?:ه|ها)?(?:\s+لي)?(?:\s+(?:جوابك|إجابتك|اجابتك|ردك|الجواب|ال[إا]جاب[ةه]|الرد|كلامك|القائمة)(?:\s+(?:السابق|السابقة|الأخير|الاخير|الأخيرة|الاخيرة))?)?|باختصار|بإيجاز|أقصر|اقصر|بشكل (?:أقصر|اقصر|مختصر)|(?=(?:في|ب)\s*(?:جمل|سطر)))(?:\s*(?:في|ب)\s*(جملة|جمله|جملتين|سطر|سطرين)(?:\s+(?:واحدة|واحده|واحد))?)?[\s.!؟?]*$/u;
+const EN = /^(?:please\s+)?(?:make (?:it|that|this|the list) shorter|shorter|shorten (?:it|that|this|the list|your (?:answer|reply))|summari[sz]e (?:it|that|this|your (?:answer|reply))|tl;?dr|briefly|(?=in\s+(?:one|a single|two)\s+sentences?))(?:\s*,?\s*in\s+(one|a single|two)\s+sentences?)?[\s.!?]*$/iu;
 
 /** The request to shorten the previous answer, with the number of sentences asked for (one unless two are named). */
 export function shorterRequest(text: string): ShorterRequest | null {
@@ -30,6 +30,7 @@ const SENTENCE_END = /[.!?؟](?:\*\*|__|`|["”»’)\]])*$/u;
 
 interface AnswerPart {
   marker: string;
+  supplemental: boolean;
   text: string;
   sources: string[];
 }
@@ -38,6 +39,7 @@ function answerParts(previous: string) {
   const parts: AnswerPart[] = [];
   const sources: string[] = [];
   let part: AnswerPart | undefined;
+  let afterLabel = false;
   for (const rawLine of previous.split(/\r?\n/u)) {
     const line = rawLine.trim();
     const sourceAt = line.search(SOURCE);
@@ -47,16 +49,20 @@ function answerParts(previous: string) {
       else {
         sources.push(line);
         part = undefined;
+        afterLabel = false;
       }
       continue;
     }
-    if (!line || LABEL.test(line)) {
+    const label = LABEL.test(line);
+    if (!line || label) {
+      if (label) afterLabel = true;
       part = undefined;
       continue;
     }
     const item = ITEM.exec(line);
     if (item || !part) {
-      part = { marker: item?.[1] ?? '', text: '', sources: [] };
+      if (!item) afterLabel = false;
+      part = { marker: item?.[1] ?? '', supplemental: afterLabel, text: '', sources: [] };
       parts.push(part);
     }
     const text = line.slice(item?.[0].length ?? 0, sourceAt < 0 ? undefined : sourceAt).replace(/^>\s?/u, '').trim();
@@ -98,16 +104,19 @@ export function shorterAnswer(previous: string, request: ShorterRequest): string
   const items = parts.filter(part => part.marker);
   const count = request.sentences;
   if (request.asSentences && items.length) {
-    const ordered = lead ? [lead, ...items] : items;
+    const priorityLead = items.some(item => item.supplemental) ? lead : undefined;
+    const opening = priorityLead?.sentences.map(text => ({ text, sources: priorityLead.sources })) ?? [];
+    const ordered = lead && !priorityLead ? [lead, ...items] : items;
     const first = ordered.map(part => ({ text: part.sentences[0], sources: part.sources }));
     const rest = ordered.flatMap(part => part.sentences.slice(1).map(text => ({ text, sources: part.sources })));
-    const selected = [...first, ...rest].slice(0, count);
+    const selected = [...opening, ...first, ...rest].slice(0, count);
     if (selected.length !== count) return null;
     const text = selected.map(({ text }) => SENTENCE_END.test(text) ? text : `${text}.`).join(' ');
     return [text, ...new Set([...selected.flatMap(part => part.sources), ...parsed.sources])].join('\n\n');
   }
-  const trimItems = items.some(part => part.sentences.length > 1);
-  const selected = trimItems ? items : items.slice(0, count);
+  const mainItems = lead ? items.filter(item => !item.supplemental) : items;
+  const trimItems = mainItems.some(part => part.sentences.length > 1);
+  const selected = trimItems ? mainItems : mainItems.slice(0, count);
   const shortened = trimItems || selected.length < items.length || (lead?.sentences.length ?? 0) > count
     || parts.length > items.length + Number(Boolean(lead));
   if (!shortened) return null;

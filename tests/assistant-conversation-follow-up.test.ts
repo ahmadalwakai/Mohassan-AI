@@ -73,7 +73,7 @@ describe('«اشرح أكثر» and «اختصر جوابك»', () => {
   it('quotes the previous answer’s opening sentence with its source', () => {
     const previous = 'الذكاء الاصطناعي هو فرع من علم الحاسوب. يدرس الآلات التي تحاكي التفكير.\n\n**تفاصيل أخرى من نفس المصدر:**\n- جملة أخرى طويلة بما يكفي لتكون تفصيلًا.\n\n'
       + '**المصدر:** [ويكيبيديا — ذكاء اصطناعي](https://ar.wikipedia.org/wiki/x) · قُرئت 2026-11-23 01:15 UTC';
-    expect(shorterAnswer(previous, { sentences: 1, lang: 'ar', asSentences: true })).toBe('الذكاء الاصطناعي هو فرع من علم الحاسوب.\n\n**المصدر:** [ويكيبيديا — ذكاء اصطناعي](https://ar.wikipedia.org/wiki/x) · قُرئت 2026-11-23 01:15 UTC');
+    expect(shorterAnswer(previous, { sentences: 1, lang: 'ar' })).toBe('الذكاء الاصطناعي هو فرع من علم الحاسوب.\n\n**المصدر:** [ويكيبيديا — ذكاء اصطناعي](https://ar.wikipedia.org/wiki/x) · قُرئت 2026-11-23 01:15 UTC');
     expect(shorterAnswer('37 * 24 = 888', { sentences: 1, lang: 'ar' })).toBeNull();
   });
 });
