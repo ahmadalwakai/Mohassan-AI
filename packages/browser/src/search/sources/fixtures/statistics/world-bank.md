@@ -5,6 +5,7 @@ These recorded JSON responses come from the [World Bank Indicators API](https://
 | Fixture | Request URL |
 | --- | --- |
 | `world-bank-aus-population.json` | <https://api.worldbank.org/v2/country/AUS/indicator/SP.POP.TOTL?format=json&source=2&mrnev=1> |
+| `world-bank-ata-population.json` | <https://api.worldbank.org/v2/country/ATA/indicator/SP.POP.TOTL?format=json&source=2&mrnev=1> |
 | `world-bank-can-population.json` | <https://api.worldbank.org/v2/country/CAN/indicator/SP.POP.TOTL?format=json&source=2&mrnev=1> |
 | `world-bank-sau-population.json` | <https://api.worldbank.org/v2/country/SAU/indicator/SP.POP.TOTL?format=json&source=2&mrnev=1> |
 | `world-bank-egy-gdp.json` | <https://api.worldbank.org/v2/country/EGY/indicator/NY.GDP.MKTP.CD?format=json&source=2&mrnev=1> |
@@ -17,3 +18,5 @@ These recorded JSON responses come from the [World Bank Indicators API](https://
 | `world-bank-usa-life-expectancy-2025.json` | <https://api.worldbank.org/v2/country/USA/indicator/SP.DYN.LE00.IN?format=json&source=2&date=2025> |
 
 The World Bank's [API call documentation](https://datahelpdesk.worldbank.org/knowledgebase/articles/898581-api-basic-call-structures) defines `mrnev=1` as the most recent non-empty value. The 2024–2025 response records a null in 2025 and a value in 2024. The `mrnev=1` response contains the 2024 observation, while the request for 2025 contains a null.
+
+The Antarctica lookup records API code 120 for a territory absent from WDI. [World Bank API error codes](https://datahelpdesk.worldbank.org/knowledgebase/articles/898620-api-error-codes)

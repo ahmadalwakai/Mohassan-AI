@@ -6,6 +6,7 @@ import { SearchEngine } from '../engine.js';
 import { compileQuery } from '../ranking.js';
 import { statisticsProviders } from './statistics.js';
 import imf from './fixtures/statistics/imf.json';
+import antarctica from './fixtures/statistics/world-bank-ata-population.json';
 
 interface Recording { url: string; body: unknown }
 interface WorldBankRow {
@@ -110,6 +111,23 @@ describe('official statistics providers', () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
+  it('returns no WDI observation for a known territory outside WDI coverage', async () => {
+    const url = 'https://api.worldbank.org/v2/country/ATA/indicator/SP.POP.TOTL?format=json&source=2&mrnev=1';
+    const { bank, urls } = replay([{ url, body: antarctica }]);
+    await expect(search(bank, 'population of Antarctica')).resolves.toEqual([]);
+    expect(urls()).toEqual(['https://api.worldbank.org/robots.txt', url]);
+  });
+
+  it('respects explicit site scopes for the linked source pages', async () => {
+    const recording = worldBank('can-population', 'CAN', 'SP.POP.TOTL');
+    const { bank, fund, dispatch } = replay([recording]);
+    expect(bank.supports(compileQuery('population of Canada site:api.worldbank.org'))).toBe(false);
+    expect(fund.supports(compileQuery('population of Canada site:worldbank.org'))).toBe(false);
+    expect(dispatch).not.toHaveBeenCalled();
+    const [hit] = await search(bank, 'population of Canada site:worldbank.org');
+    expect(hit?.url).toBe(recording.page);
+  });
+
   it.each([
     ['inflation in Turkey', imf.turLatest, 2026, imf.turLatest.body.values.PCPIPCH.TUR['2026']],
     ['inflation forecast for Türkiye', imf.turProjection, 2027, imf.turProjection.body.values.PCPIPCH.TUR['2027']],
@@ -162,11 +180,12 @@ describe('official statistics providers', () => {
     expect(outcome.hits.flatMap(hit => hit.providers).sort()).toEqual(['IMF DataMapper', 'World Bank']);
     const [{ date, value }] = recording.body[1];
     hasObservation(outcome.hits.find(hit => hit.providers.includes('World Bank')), recording.page, date, value);
-    const [[code, countries]] = Object.entries(alternate.body.values);
+    const values: Record<string, Record<string, Record<string, number>>> = alternate.body.values;
+    const [[code, countries]] = Object.entries(values);
     const [[country, years]] = Object.entries(countries);
     const year = Math.max(...Object.keys(years).map(Number));
     const imfHit = outcome.hits.find(hit => hit.providers.includes('IMF DataMapper'));
-    hasObservation(imfHit, `https://www.imf.org/external/datamapper/${code}@WEO/${country}`, year, years[year as keyof typeof years]);
+    hasObservation(imfHit, `https://www.imf.org/external/datamapper/${code}@WEO/${country}`, year, years[String(year)]);
     expect(imfHit?.snippet).toMatch(qualifier);
   });
 

@@ -45,6 +45,7 @@ function requestsFor(network: SafeNetwork, origin: string, now: () => number) {
   const robots = new RobotsPolicy(robotsNetwork, now);
 
   return {
+    host: new URL(origin).hostname,
     cooldownMs: () => Math.max(0, state.next - now()),
     async request(url: URL, signal: AbortSignal): Promise<unknown> {
       signal.throwIfAborted();
@@ -122,12 +123,12 @@ export function statisticsProviders(network: SafeNetwork, now: () => number): Pl
   type Lookup = NonNullable<ReturnType<typeof lookup>>;
 
   function provider(
-    name: string, terms: string, hosts: string[], client: ReturnType<typeof requestsFor>,
+    name: string, terms: string, resultHost: string, client: ReturnType<typeof requestsFor>,
     supportsIndicator: (request: Lookup) => boolean,
     searchStatistic: (request: Lookup, signal: AbortSignal) => Promise<StatisticsObservation | undefined>,
   ): PlannedProvider {
     function supported(query: SearchQuery) {
-      if (query.sites.length && !query.sites.some(site => hosts.some(host => host === site || host.endsWith(`.${site}`)))) {
+      if (query.sites.length && !query.sites.some(site => resultHost === site || resultHost.endsWith(`.${site}`))) {
         return undefined;
       }
       const request = lookup(query);
@@ -135,7 +136,10 @@ export function statisticsProviders(network: SafeNetwork, now: () => number): Pl
     }
     return {
       name, coverage: 'web', accessBasis: 'documented_api',
-      planned: { domains: ['official_statistics'], languages: ['ar', 'en'], access: 'documented_api', contract: { url: terms, checked: CHECKED }, hosts },
+      planned: {
+        domains: ['official_statistics'], languages: ['ar', 'en'], access: 'documented_api',
+        contract: { url: terms, checked: CHECKED }, hosts: [...new Set([resultHost, client.host])],
+      },
       cooldownMs: client.cooldownMs,
       supports: query => supported(query) !== undefined,
       async search(query, limit, signal) {
@@ -150,10 +154,10 @@ export function statisticsProviders(network: SafeNetwork, now: () => number): Pl
   }
 
   return [
-    provider('World Bank', WORLD_BANK_TERMS, ['data.worldbank.org', 'api.worldbank.org'], worldBank,
+    provider('World Bank', WORLD_BANK_TERMS, 'data.worldbank.org', worldBank,
       ({ indicator, projection }) => Boolean(indicator.worldBank) && !projection,
       ({ indicator, country, year }, signal) => worldBankStatistic(worldBank.request, country, indicator, signal, year)),
-    provider('IMF DataMapper', IMF_TERMS, ['www.imf.org'], imf,
+    provider('IMF DataMapper', IMF_TERMS, 'www.imf.org', imf,
       ({ indicator }) => Boolean(indicator.imf),
       ({ indicator, country, year, projection }, signal) =>
         imfStatistic(imf.request, country, indicator, signal, year, new Date(now()).getUTCFullYear(), projection)),

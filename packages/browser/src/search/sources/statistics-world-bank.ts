@@ -31,7 +31,11 @@ export async function worldBankStatistic(
   else endpoint.searchParams.set('date', String(year));
 
   const data = await request(endpoint, signal);
-  if (!Array.isArray(data) || data.length !== 2) throw new SearchProviderFailure('invalid_response');
+  if (!Array.isArray(data)) throw new SearchProviderFailure('invalid_response');
+  // A CLDR territory can fall outside WDI's coverage. The API returns 120 for invalid parameters.
+  // https://datahelpdesk.worldbank.org/knowledgebase/articles/898620-api-error-codes (2026-11-27).
+  if (data.length === 1 && data[0]?.message?.[0]?.id === '120') return undefined;
+  if (data.length !== 2) throw new SearchProviderFailure('invalid_response');
   const rows: unknown = data[1];
   if (rows === null) return;
   if (!Array.isArray(rows)) throw new SearchProviderFailure('invalid_response');
