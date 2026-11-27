@@ -1,3 +1,4 @@
+import { performance } from 'node:perf_hooks';
 import { ModelCouncilSchema } from '@mohassan/contracts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { COUNCIL_WEB_BUDGET_MS, runCouncilWebAnswer } from '../apps/server/src/assistant/council-web-answer.js';
@@ -39,7 +40,13 @@ function fakeCouncil(
   });
 }
 
-afterEach(() => { vi.useRealTimers(); });
+function useBudgetClock() {
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+  const started = Date.now();
+  vi.spyOn(performance, 'now').mockImplementation(() => Date.now() - started);
+}
+
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('council web answers', () => {
   it('finishes search and reads before the council; sends its chosen answer and names the source', async () => {
@@ -138,7 +145,7 @@ describe('council web answers', () => {
   });
 
   it('returns the time-limit reply immediately when the queued request is already over budget', async () => {
-    vi.useFakeTimers({ toFake: ['performance', 'setTimeout', 'clearTimeout'] });
+    useBudgetClock();
     const search = vi.fn();
     const deliberate = vi.fn();
     const progress = vi.fn();
@@ -150,7 +157,7 @@ describe('council web answers', () => {
   });
 
   it('cancels a hung search at the shared deadline and never starts deliberation afterwards', async () => {
-    vi.useFakeTimers({ toFake: ['performance', 'setTimeout', 'clearTimeout'] });
+    useBudgetClock();
     let searchSignal: AbortSignal | undefined;
     const search: NonNullable<CouncilTurn['search']> = (_question, signal) => {
       searchSignal = signal;
@@ -167,6 +174,7 @@ describe('council web answers', () => {
   });
 
   it('sends the verified council decision with a time-limit label if a member is still running', async () => {
+    useBudgetClock();
     const hungMember = vi.fn((_modelInput: unknown, _signal?: AbortSignal): Promise<ModelRunResult> => new Promise(() => {}));
     const council = fakeCouncil({
       'reading-v3-last': async () => ok({ text: opening }),
@@ -176,7 +184,9 @@ describe('council web answers', () => {
       await new Promise(resolve => setTimeout(resolve, 20));
       return { pages: [evidence] };
     };
-    const outcome = await runCouncilWebAnswer({ ...input, search, deliberate: council.deliberate, budgetMs: 350 });
+    const answer = runCouncilWebAnswer({ ...input, search, deliberate: council.deliberate, budgetMs: 350 });
+    await vi.advanceTimersByTimeAsync(350);
+    const outcome = await answer;
     expect(hungMember).toHaveBeenCalledOnce();
     expect(hungMember.mock.lastCall?.[1]?.aborted).toBe(true);
     expect(outcome.status).toBe('completed');
@@ -186,6 +196,7 @@ describe('council web answers', () => {
   });
 
   it('retains a completed verifier objection when its next check reaches the deadline', async () => {
+    useBudgetClock();
     const verify = vi.fn<() => Promise<ModelRunResult>>()
       .mockResolvedValueOnce(ok({ label: 'insufficient' }))
       .mockImplementation(() => new Promise(() => {}));
@@ -193,9 +204,11 @@ describe('council web answers', () => {
       'reading-v3-last': async () => ok({ text: opening }),
       'head-sufficiency': verify,
     });
-    const outcome = await runCouncilWebAnswer({
+    const answer = runCouncilWebAnswer({
       ...input, search: async () => ({ pages: [evidence] }), deliberate: council.deliberate, budgetMs: 350,
     });
+    await vi.advanceTimersByTimeAsync(350);
+    const outcome = await answer;
     expect(verify).toHaveBeenCalledTimes(2);
     expect(outcome.council?.discussion?.checks).toContainEqual({
       checker: 'head-sufficiency', member: 'pipeline', verdict: 'contradicts',
