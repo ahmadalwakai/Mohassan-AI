@@ -44,7 +44,7 @@ async function harness(mode?: string, options: { holdSearch?: Promise<void>; pag
     return { text, status, chosen, changed: text !== input.pipeline.text,
       council: { version: 1 as const, members: [], elapsedMs: 0, reason: 'Fixture decision.', chosen, changed: text !== input.pipeline.text } };
   });
-  const browser = { setCheckpointStore() {}, async bindAccount() {}, async hasPage() { return false; }, async close() {} } as unknown as AgentBrowser;
+  const browser = { setCheckpointStore() {}, async bindAccount() {}, async hasPage() { return false; }, async dropHeld() { calls.push('drop held'); }, async close() {} } as unknown as AgentBrowser;
   const control = await createCommandChatControl(database.db, {
     models: { fast: [], deep: [], vision: '' }, browser, searchProvider: { name: 'fixture', search }, readPage, modelCouncil: { deliberate },
     fullAccess: async id => id === owner, accountFullAccess: async id => id === owner && (options.canPublish?.() ?? true),
@@ -55,7 +55,7 @@ async function harness(mode?: string, options: { holdSearch?: Promise<void>; pag
     await control.settled(thread.id);
     return (await control.detail(id, thread.id)).messages.at(-1);
   };
-  return { control, calls, deliberate, search, readPage, send };
+  return { control, database, calls, deliberate, search, readPage, send };
 }
 
 it('plans and reads before council, exposes progress and stores the council decision with its label', async () => {
@@ -102,6 +102,25 @@ it('rechecks owner access in the transaction that stores the decision', async ()
   const reply = await send(question);
   expect(reply?.text).toContain('access to the council changed');
   expect(reply).not.toHaveProperty('council');
+}, 20_000);
+
+it('drops an invalidated browser submission before researching the corrected question', async () => {
+  let releaseSearch!: () => void;
+  const holdSearch = new Promise<void>(resolve => { releaseSearch = resolve; });
+  const { control, database, calls } = await harness('council-web', { holdSearch });
+  const thread = await control.create(owner, { goal: question });
+  try {
+    await vi.waitFor(() => expect(calls).toEqual(['search']));
+    const run = await database.db.selectFrom('chat_runs').select(['id', 'state']).where('conversation_id', '=', thread.id).executeTakeFirstOrThrow();
+    await database.db.updateTable('chat_runs').set({ state: JSON.stringify({ ...run.state, pendingHeld: { id: 'fixture-held' } }) }).where('id', '=', run.id).execute();
+    await control.send(owner, thread.id, { text: 'When was Marlow Library founded?' });
+    await vi.waitFor(() => expect(calls).toEqual(['search', 'drop held', 'search']));
+  } finally {
+    releaseSearch();
+  }
+  await control.settled(thread.id);
+  expect(calls).toEqual(['search', 'drop held', 'search', 'read', 'council']);
+  expect((await control.detail(owner, thread.id)).messages.at(-1)?.text).toContain(decision);
 }, 20_000);
 
 it('uses the same legacy council and reply for explicit off and an unset switch', async () => {

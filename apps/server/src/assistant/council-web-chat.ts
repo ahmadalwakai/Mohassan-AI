@@ -38,6 +38,7 @@ interface CouncilWebChatInput {
   council: ModelCouncilService;
   search: SearchProvider;
   readPage?: WritingPageReader;
+  dropHeld: () => Promise<void>;
   authorizeSearch: (query: string) => void;
   progress: (label: string) => Promise<void>;
   history: () => Promise<CouncilHistory>;
@@ -47,6 +48,11 @@ export async function answerCouncilWebChat(input: CouncilWebChatInput): Promise<
   const { request, state, ownerId, db, conversationId, scrub, recentLimit, signal, council, search, readPage, authorizeSearch, progress, history } = input;
   const turn = classifyCouncilWebTurn(request, state, new Date(input.evaluatedAt));
   if (turn.kind === 'exempt') return;
+  if (state.dropHeld) {
+    // A steered turn may inherit a live, held request from the superseded run.
+    await input.dropHeld();
+    state.dropHeld = false;
+  }
   const ar = questionLanguage(request) === 'ar';
   if (turn.query === null) return {
     status: 'partial',

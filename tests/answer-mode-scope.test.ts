@@ -83,7 +83,8 @@ describe('council-web turn scope', () => {
   });
 
   it('keeps an implicit question carrying personal details out of public search', () => {
-    expect(classify('What should I do about my headache?')).toMatchObject({ kind: 'factual', query: null, reason: 'unsafe_query' });
+    expect(classifyCouncilWebTurn('What should I do about my headache?', {}))
+      .toMatchObject({ kind: 'factual', query: null, reason: 'unsafe_query' });
   });
 
   it('rejects contextual additions with no authorized public provenance', () => {
