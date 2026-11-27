@@ -20,7 +20,7 @@ const migrationVersion = '060_reply_preferences';
 export async function migrateReplyPreferences(tx: Kysely<any>): Promise<void> {
   const applied = await tx.selectFrom('schema_migrations').select('version').where('version', '=', migrationVersion).executeTakeFirst();
   if (applied) return;
-  await sql`ALTER TABLE chat_conversations ADD COLUMN reply_preferences jsonb NOT NULL DEFAULT '{}'::jsonb
+  await sql`ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS reply_preferences jsonb NOT NULL DEFAULT '{}'::jsonb
     CHECK (jsonb_typeof(reply_preferences) = 'object')`.execute(tx);
   await tx.insertInto('schema_migrations').values({ version: migrationVersion }).execute();
 }

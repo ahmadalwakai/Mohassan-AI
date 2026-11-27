@@ -23,7 +23,7 @@ import { V5_CHAT_LABEL } from './v5-chat.js';
 import { applyHandsReplyConstraints } from './assistant/hands.js';
 import { migrateReplyPreferences } from './assistant/reply-preferences.js';
 import { enforceReplyConstraints } from './assistant/reply-constraint-review.js';
-import { acceptReplyTurn, advanceReplyTurn, bindAcceptedReplyTurn, bindReplyTurn, experimentalReplyBody, experimentalReplyText, replyConstraintsFor, replyPreferenceAcknowledgement, verifiedExperimentalReply, withReplyConstraintPrompt, withReplyTurn } from './assistant/reply-turn.js';
+import { admitReplyTurn, advanceReplyTurn, bindAcceptedReplyTurn, completeReplyPreference, experimentalReplyBody, pauseReplyConstraints, prepareReplyPublication, replyConstraintsFor, requiresVerbatimReply, reviewReplyCandidate, shapePausedReply, verifiedExperimentalReply, withReplyTurn } from './assistant/reply-turn.js';
 import { classifyExperience, escapedContextLength, recordExperience, type ExperienceInput } from '@mohassan/learning';
 import {
   boundedDecisionJsonSchema, decisionJsonSchema, decisionSchema, recoverDecision, ModelPool, buildPrompt, chooseTier, cookieRejectButton, directRoute, estimateTokens, newBrainState,
@@ -837,7 +837,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   }
 
   async function addMessage(connection: Kysely<any>, id: string, role: 'user' | 'assistant', text: string, experiment?: 'v5', council?: ModelCouncil) {
-    if (role === 'assistant' && !experiment) text = enforceReplyConstraints(text, replyConstraintsFor()).text;
     await connection.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role, text: clean(text), run_id: role === 'assistant' ? execution.getStore()?.runId ?? null : null,
       ...(experiment && { experiment }),
       // The council's members quote model outputs and page titles: the same scrub as the reply text.
@@ -1353,7 +1352,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     // The run ledger: the run is suspended, waiting for the owner. An approval card is bound to its exact action first; an
     // action already refused in this run ends the run instead of being asked again.
     const pausedAt = Date.now();
-    if (say) say = enforceReplyConstraints(say, replyConstraintsFor(state)).text;
+    say = shapePausedReply(say, state);
     if (status === 'waiting_approval') {
       const gated = gateApprovalCard(id, runId, state, fields, pausedAt);
       if (gated === 'refused') {
@@ -1435,7 +1434,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const applyFix = Boolean(allowChange && config.judgeFixForOwner && current.full);
       const applyWithhold = Boolean(allowChange && config.judgeWithholdForOwner && current.full);
       const verdict = config.judgeShadow.observe({ conversationId: id, runId, question: asked?.question ?? current.request, previous: asked ? asked.previous : current.previousRequest ?? null, reply, status,
-        constraints: replyConstraintsFor(current.state),
+        constraints: status.startsWith('waiting_') ? pauseReplyConstraints(current.state) : replyConstraintsFor(current.state),
         applyFix, applyWithhold, keepText: config.judgeLogText !== 'owner' || Boolean(current.full), ...(evidence.length ? { evidence } : {}) });
       if (applyWithhold && verdict?.decision === 'withhold' && verdict.withholdText?.trim()) return { text: verdict.withholdText, withheld: true };
       if (applyFix && verdict?.decision === 'fix' && verdict.fixedReply?.trim()) return { text: verdict.fixedReply, withheld: false };
@@ -1478,9 +1477,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     if (!v5Chat || !current) return;
     const turns = await v5Turns(id, runId, current);
     if (!turns) return;
-    const constraints = replyConstraintsFor(current.state);
-    const reply = await v5Chat.generate(withReplyConstraintPrompt(turns, constraints), current.controller.signal);
-    return verifiedExperimentalReply(reply && vault.scrub(id, clean(reply)), constraints);
+    const reply = await v5Chat.generate(turns, current.controller.signal);
+    return verifiedExperimentalReply(reply && vault.scrub(id, clean(reply)), replyConstraintsFor(current.state));
   }
 
   /**
@@ -1513,9 +1511,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       noModelFallback = false) {
     const source = execution.getStore();
     const replyConstraints = replyConstraintsFor(state);
-    const blockedMonitor = monitor && !preparedMonitor && status !== 'completed' && source?.request && !memoryPublication ? await monitor.forBlockedTurn({ ownerId: source.ownerId, conversationId: id, runId, text: source.request, signal: source.controller.signal, trail: state.trail, pages: [...(source.readPages ?? []), ...(source.page ? [source.page] : [])] }) : null;
+    const verbatim = requiresVerbatimReply(state, memoryPublication);
+    const blockedMonitor = monitor && !preparedMonitor && status !== 'completed' && source?.request && !verbatim ? await monitor.forBlockedTurn({ ownerId: source.ownerId, conversationId: id, runId, text: source.request, signal: source.controller.signal, trail: state.trail, pages: [...(source.readPages ?? []), ...(source.page ? [source.page] : [])] }) : null;
     const noAction = !state.actionCompletion?.contract.requirements.length && !state.actionCompletion?.events.length && !state.actionCompletion?.fault;
-    const v5MayAnswer = noModelFallback && status === 'blocked' && !blockedMonitor && !state.steps && noAction;
+    const v5MayAnswer = noModelFallback && status === 'blocked' && !blockedMonitor && !state.steps && noAction && !verbatim;
     // The owner's model council answers the owner's answer turns: no step but reading ones (a search, page reads, a memory or
     // knowledge lookup, a calculation), so a turn that acted (browser, desktop, documents, Ads) is published as before.
     // It replaces the separate v5 last resort below.
@@ -1551,14 +1550,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     // The judge sees the reply first: logged in shadow for everyone; for the owner's account its fix, or its fixed withhold
     // sentence, is what goes on. Memory publications keep their own stricter checks and are never changed here.
     // A reply the council picked from a model was already judged there.
-    const judged = modelReply || council?.changed || prejudged || !config.judgeShadow ? { text, withheld: false } : await reviewJudgedReply(work => runTransaction(id, runId, work), { id, runId, clean, allowApply: !memoryPublication && state.supervision?.contract.mode !== 'enforced' }, () => judgeReply(id, runId, text, status, !memoryPublication));
-    text = judged.text;
-    // A withheld answer is not a completed task.
-    if (judged.withheld && status === 'completed') status = 'partial';
-    const constrained = enforceReplyConstraints(text, replyConstraints);
-    if (constrained.withheld && status === 'completed') status = 'partial';
-    if (!memoryPublication && state.supervision?.contract.mode !== 'enforced') text = constrained.text;
-    if (state.supervision) state.completionReview = reviewChatAnswer(state.supervision, text);
+    const judged = modelReply || council?.changed || prejudged || !config.judgeShadow ? { text, withheld: false } : await reviewJudgedReply(work => runTransaction(id, runId, work), { id, runId, clean, allowApply: !verbatim }, () => judgeReply(id, runId, text, status, !verbatim));
+    ({ text, status } = reviewReplyCandidate(state, { ...judged, text: clean(judged.text) }, status, verbatim));
     // A campaign task the reply leaves open ends with it, stating only what was really checked or done.
     const campaignEnd = campaignEndEvent(state.campaign, Boolean(state.adsApproved));
     const campaignTask = state.campaign ? campaignTaskId(runId, state.campaign.serial) : null;
@@ -1619,10 +1612,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           criterionLabels: Object.fromEntries((state.supervision?.contract.criteria ?? []).map(item => [item.id, criterionLabel(ledger, item.id, item.description)])) }).status;
       });
       if (blockedMonitor && !monitorError) finalText += `\n\n${blockedMonitor.text}`;
-      if (!experiment && !council?.changed && monitor?.v2 && !preparedMonitor && finalStatus === 'completed' && !judged.withheld && !memoryPublication && !state.questionAnswer && source?.request) finalText += await monitor.publishAnswerOffer(tx, { ownerId: source.ownerId, conversationId: id, runId, text: source.request, pages: [...(source.readPages ?? []), ...(source.page ? [source.page] : [])] }, finalText);
-      const publication = enforceReplyConstraints(finalText, replyConstraints);
-      finalText = experiment ? experimentalReplyText(modelReply!, V5_CHAT_FOOTER, replyConstraints) : publication.text;
-      if (!experiment && publication.withheld && finalStatus === 'completed') finalStatus = 'partial';
+      if (!experiment && !council?.changed && monitor?.v2 && !preparedMonitor && finalStatus === 'completed' && !judged.withheld && !verbatim && !state.questionAnswer && source?.request) finalText += await monitor.publishAnswerOffer(tx, { ownerId: source.ownerId, conversationId: id, runId, text: source.request, pages: [...(source.readPages ?? []), ...(source.page ? [source.page] : [])] }, finalText);
+      ({ text: finalText, status: finalStatus } = prepareReplyPublication(state, finalText, finalStatus, verbatim, experiment && modelReply ? { text: modelReply, footer: V5_CHAT_FOOTER } : undefined));
       await addMessage(tx, id, 'assistant', finalText, experiment, councilRecord);
       if (state.completionReview) await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId,
         kind: 'task_review', message: 'مراجعة شروط المهمة المعلنة؛ لا تعني تصديق كل عبارة في الجواب.',
@@ -2189,11 +2180,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const constraints = parseUserRequestConstraints(request);
       const currentExecution = execution.getStore()!;
       currentExecution.request = request; currentExecution.constraints = constraints; currentExecution.state = state;
-      const preferenceReply = replyPreferenceAcknowledgement(state.replyTurn);
-      if (preferenceReply) {
-        if (state.dropHeld) { await browser.dropHeld(ownerId, id); state.dropHeld = false; }
-        await finish(id, runId, state, preferenceReply, 'completed', undefined, undefined, true); return;
-      }
+      if (await completeReplyPreference(state, () => browser.dropHeld(ownerId, id), text => finish(id, runId, state, text, 'completed', undefined, undefined, true))) return;
       // The run ledger: the worker starts (or resumes, after a card or an approval) by understanding the request.
       ledgerSafe(state, runId, ledger => tryEnterPhase(ledger, 'understanding', Date.now()));
       const refusal = run.intent === 'task' && reviewWorkRefusal(request, state, currentExecution.full,
@@ -2573,7 +2560,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (run.intent === 'task' && !state.steps && await routeLiveDataChat({ request: actionRequest, evaluatedAt: effectiveSource.evaluatedAt, signal, trail: state.trail,
         allowSource: requestCapabilityAllowed(constraints, 'public_search'), reply: (text, status) => finish(id, runId, state, vault.scrub(id, text), status),
         ask: question => pause(id, runId, state, 'waiting_user', { question: JSON.stringify(question) }, question.prompt),
-        notice: text => runTransaction(id, runId, tx => addMessage(tx, id, 'assistant', text)) })) return;
+        notice: text => runTransaction(id, runId, tx => addMessage(tx, id, 'assistant', enforceReplyConstraints(text, replyConstraintsFor(state)).text)) })) return;
       if (requestCapabilityAllowed(constraints, 'browser_navigation') && requestCapabilityAllowed(constraints, 'browser_action')
         && reviewBrowserRequestScope(request, 'browser_action', state.requestResolution ?? undefined).allowed) {
         if (await browser.hasPage(ownerId, id)) {
@@ -4148,7 +4135,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const message = { id: randomUUID(), createdAt: new Date(), text: clean(say) };
       await tx.insertInto('chat_messages').values({ id: message.id, conversation_id: id, role: 'user', text: message.text, created_at: message.createdAt }).execute();
       await change(state, tx, { ...message, createdAt: message.createdAt.getTime(), ...(priorSource ? { priorRequest: priorSource.request } : {}) });
-      if (expected.replyInstruction) await advanceReplyTurn(tx, ownerId, id, state, message.text);
+      await advanceReplyTurn(tx, ownerId, id, state, message.text, expected.replyInstruction);
       await tx.updateTable('chat_runs').set({ status:expected.stop?'cancelled':'running', state: JSON.stringify(state),lease_token:token,attempt:run.attempt+1,lease_expires_at:sql`CURRENT_TIMESTAMP + ${leaseMs} * interval '1 millisecond'`, updated_at: new Date() }).where('id', '=', runId).execute();
       await tx.updateTable('chat_conversations').set({ status:expected.stop?'idle':'running',active_run_id:expected.stop?null:runId, question: null, approval: null, secure: null, error: null, progress:expected.stop?null:'يتابع العمل…', updated_at: new Date() }).where('id', '=', id).execute();
       if (expected.stop) await recordTerminalRun(tx, runId, 'cancelled');
@@ -4317,11 +4304,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         // A request the page tried to send, held for the corrected run's approval, is dropped: it belonged to the old objective.
         ...((superseded as { held: boolean } | null)?.held ? { dropHeld: true } : {}) };
       bindTestDrivenCodingHash(initialState, input.text);
-      initialState.replyTurn = await acceptReplyTurn(tx, ownerId, id, clean(input.text), intent === 'task' && !input.answers);
-      await withReplyTurn(() => {
-        bindReplyTurn(initialState, input.text);
-        return addMessage(tx, id, 'user', input.text);
-      });
+      await admitReplyTurn(tx, ownerId, id, initialState, clean(input.text), intent === 'task' && !input.answers, () => addMessage(tx, id, 'user', input.text));
       await tx.insertInto('chat_runs').values({ id: runId, conversation_id: id, owner_id: ownerId, status: 'running', intent, goal: clean(input.text), steps: 0, lease_token:token,worker_id:instanceId,lease_expires_at:sql`CURRENT_TIMESTAMP + ${leaseMs} * interval '1 millisecond'`, state: JSON.stringify(initialState), created_at: createdAt }).execute();
       await tx.updateTable('chat_conversations').set({ status: 'running', active_run_id: runId, question: null, approval: null, secure: null, error: null, progress: 'يفهم طلبك…', updated_at: new Date() }).where('id', '=', id).execute();
       // The browser level the request asks for (plan §6.1), logged with its reason and time after the run row it refers to. detail() re-derives the current level from the rows.

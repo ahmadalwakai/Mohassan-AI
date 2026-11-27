@@ -2023,7 +2023,7 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
         && (linkLimit === Infinity || !corroboration || withoutHash(item.url) !== withoutHash(corroboration.url))
         && topic.length > 0 && titleScore(plainTitle(item.title), topic) >= (topic.length >= 3 ? 2 : 1)).slice(0, maxOthers);
       // «in two sentences»: no more of the page's sentences than were asked for.
-      const shownLines = plan.found.lines.slice(0, reply?.brief ? 1 : reply?.sentences);
+      const shownLines = plan.found.lines.slice(0, reply?.sentences ?? (reply?.brief ? 1 : undefined));
       // «Return the page title and source link»: the page that was read and found about the question, named first.
       const named = wantsNamedSource(reply)
         ? `**${en ? 'Page title:' : 'عنوان الصفحة:'}** ${plainTitle(title)}${linkLimit === Infinity ? `\n**${en ? 'Source link:' : 'رابط المصدر:'}** ${url}` : ''}\n\n` : '';

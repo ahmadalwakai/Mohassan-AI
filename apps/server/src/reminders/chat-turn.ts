@@ -3,8 +3,8 @@ import type { Kysely, Transaction } from 'kysely';
 import type { SkillGapObservation } from '@mohassan/contracts';
 import { collectStateEvidence, criterionLabel, decideVerdict, settleOpenSteps, tryEnterPhase, type RunLedger } from '../assistant/agent-run.js';
 import type { BrainState } from '../assistant/brain.js';
-import { reviewChatAnswer } from '../assistant/chat-supervision.js';
 import type { EffectiveRequestSource } from '../assistant/effective-request-source.js';
+import { requiresVerbatimReply, reviewReplyCandidate } from '../assistant/reply-turn.js';
 import { monitorChat } from '../monitors/chat.js';
 import { registerReminderContext } from './chat-context.js';
 import { handleReminderChat, reminderRouting, type ChatReminderStore } from './chat.js';
@@ -65,12 +65,11 @@ export async function dispatchReminderTurn(turn: ReminderTurn): Promise<boolean>
   // change, its reply and the run verdict commit together even on edit or cancel.
   await transact(async tx => {
     const result = await handled.publish(tx);
-    const text = scrub(result.text);
-    let status: 'completed' | 'partial' | 'blocked' = result.status;
-    if (state.supervision) {
-      state.completionReview = reviewChatAnswer(state.supervision, text);
-      if (state.supervision.contract.mode === 'enforced' && status === 'completed' && !state.completionReview.allowCompletion) status = 'partial';
-    }
+    const verbatim = requiresVerbatimReply(state);
+    const reply = reviewReplyCandidate(state, { text: scrub(result.text) }, result.status, verbatim);
+    const { text } = reply;
+    let { status } = reply;
+    if (verbatim && status === 'completed' && state.completionReview && !state.completionReview.allowCompletion) status = 'partial';
     const at = new Date();
     ledgerSafe(state, runId, ledger => {
       collectStateEvidence(ledger, state, at.getTime());

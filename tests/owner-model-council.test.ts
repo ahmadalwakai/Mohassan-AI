@@ -89,14 +89,15 @@ describe('owner model council over signed-in sessions', () => {
     expect(share.statusCode).toBe(409);
   });
 
-  it('passes the turn constraints to the council and stores a trimmed reply with its model label', async () => {
+  it('stores a trimmed council reply with its model label using the original v5 transcript', async () => {
     const verses = ['ضوء القمر فوق التلال.', 'يلمع فوق الطريق.', 'يغيب مع الفجر.'];
     mockGenerate.mockResolvedValue(verses.join(' '));
-    const conversation = await sendNew(`${goal.slice(0, -1)} in two Arabic sentences.`, ownerCookie);
+    const constrainedGoal = `${goal.slice(0, -1)} in two Arabic sentences.`;
+    const conversation = await sendNew(constrainedGoal, ownerCookie);
     expect(conversation.status, JSON.stringify({ question: conversation.question, error: conversation.error })).toBe('idle');
     expect(conversation.messages.at(-1)).toMatchObject({ role: 'assistant', experiment: 'v5',
       text: `${verses.slice(0, 2).join(' ')}\n\n${V5_CHAT_LABEL}`, council: { chosen: 'chat-v5' } });
-    expect(mockGenerate.mock.calls[0]?.[1]?.at(-1)?.content).toMatch(/Arabic\.[\s\S]*2 sentences/u);
+    expect(mockGenerate.mock.calls[0]?.[1]).toEqual([{ role: 'user', content: constrainedGoal }]);
   });
 
   it('keeps a local answer and records that the pipeline stood', async () => {

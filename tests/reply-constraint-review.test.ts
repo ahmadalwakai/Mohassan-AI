@@ -3,8 +3,24 @@ import { judge } from '../apps/server/src/assistant/judge.js';
 import { enforceReplyConstraints } from '../apps/server/src/assistant/reply-constraint-review.js';
 import { reviewReply } from '../apps/server/src/assistant/review/checks.js';
 import { buildConversationLedger } from '../apps/server/src/assistant/review/ledger.js';
+import { conversationReviewForJudge, reviewJudgedReply } from '../apps/server/src/assistant/review/publication.js';
 
 describe('reply constraint enforcement', () => {
+  it('logs a preference conflict without rewriting text bound to an evidence receipt', async () => {
+    const context = { id: 'conversation', runId: 'run', allowApply: false, clean: (text: string) => text };
+    const input = { conversationId: context.id, runId: context.runId, question: 'What did the reader find?', previous: null,
+      reply: 'The reader returned a result. One title was available. The window title is "Fixture window".',
+      status: 'completed', constraints: { sentences: 2 } };
+    const ledger = buildConversationLedger([{ id: 'message', role: 'user', content: input.question }]);
+    const reply = await reviewJudgedReply(async () => ledger, context, () => {
+      expect(conversationReviewForJudge(input, judge(input), false)).toMatchObject({
+        applied: false, findings: expect.arrayContaining([{ check: 'preferences', code: 'reply_length' }]),
+      });
+      return { text: input.reply, withheld: false };
+    });
+    expect(reply).toEqual({ text: input.reply, withheld: false });
+  });
+
   it('keeps whole sentences, a decimal, an inline link, and the primary citation', () => {
     const draft = 'The result was 2.5. Read [the summary](https://example.com/reports/v1.2). A third sentence follows.\n\n**Source:** [Report v1.2](https://example.com/reports/v1.2)';
     const reply = enforceReplyConstraints(draft, { sentences: 2 });

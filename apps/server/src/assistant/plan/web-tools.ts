@@ -290,7 +290,8 @@ export function createPlanWebTools(context: PlanWebToolContext) {
     if (step.output !== 'text') return { ok: false, reason: 'invalid_result' };
     if (!quotes.length) return { ok: false, reason: 'no_result' };
     const text = quotes.join('\n');
-    const displayed = context.replyConstraints?.brief ? quotes[0] : text;
+    const reply = context.replyConstraints;
+    const displayed = quotes.slice(0, reply?.sentences ?? (reply?.brief ? 1 : undefined)).join('\n');
     return { ok: true, value: { type: 'text', value: text }, text: `${displayed}\n${citation(page.title, page.url)}`,
       evidence: { kind: 'source', label: page.title, reference: page.url, independent: true } };
   }

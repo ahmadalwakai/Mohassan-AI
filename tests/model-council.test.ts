@@ -44,14 +44,6 @@ describe('model council building blocks', () => {
     expect(readerPrompt('When was it built?', 'Text')).toBe('Text\n\nQuestion: When was it built?\nAnswer:');
   });
 
-  it('passes the requested reply language to the reader with its original passage and question', () => {
-    const question = turn().question;
-    const prompt = readerPrompt(question, PARIS, { lang: 'ar' });
-    expect(prompt).toContain('Arabic');
-    expect(prompt).toMatch(/^Paris is the capital.*\n\n/su);
-    expect(prompt).toContain(`\n\nQuestion: ${question}\nAnswer:`);
-  });
-
   it('checks that a text states an answer, numbers exactly', () => {
     expect(states(PARIS, 'Paris')).toBe(true);
     expect(states('Completed in 1889 for the fair.', '1889')).toBe(true);
@@ -120,16 +112,15 @@ describe('deliberation', () => {
     expect(outcome).toMatchObject({ changed: false, chosen: 'pipeline', text: sentences.slice(0, 2).join(' '), status: 'completed' });
   });
 
-  it('prompts the models with current constraints and never selects a wrong-language last resort', async () => {
+  it('uses the original v4 and v5 inputs and rejects a wrong-language last resort', async () => {
     const generate = vi.fn(async () => 'The message was delivered to the recipient. The alert was closed.');
     const run = vi.fn(runner({}).run);
     const council = createModelCouncil({ runner: { run }, v5: generate });
     const source = turn({ constraints: { lang: 'ar', sentences: 2 }, v5MayAnswer: true,
       pipeline: { text: 'تعذّر التحقق من الجواب.', status: 'blocked' } });
     const outcome = await council.deliberate(source);
-    expect(generate).toHaveBeenCalledWith([{ role: 'user', content: expect.stringContaining('Arabic') }], source.signal);
-    expect(source.history[0]?.content).toBe(source.question);
-    expect(run).toHaveBeenCalledWith('chat-v4', expect.objectContaining({ text: expect.stringContaining('Arabic') }));
+    expect(generate).toHaveBeenCalledWith([{ role: 'user', content: source.question }], source.signal);
+    expect(run).toHaveBeenCalledWith('chat-v4', { text: source.question, maxNewTokens: 48 });
     expect(outcome).toMatchObject({ changed: false, chosen: 'pipeline' });
     expect(outcome.council.members.find(member => member.model === 'chat-v5')?.judge).toBe('withhold');
   });
@@ -142,13 +133,15 @@ describe('deliberation', () => {
     expect(outcome).toMatchObject({ changed: true, chosen: 'chat-v5', text: sentences.slice(0, 2).join(' '), status: 'completed' });
   });
 
-  it('preserves the selected reader’s source and disclosure with a sentence limit', async () => {
+  it('uses the original reader prompt and trims its answer while keeping the source and disclosure', async () => {
     const [first, second] = PARIS.split(/(?<=\.) /u);
     const source = page(PARIS);
-    const models = runner({ 'reading-v3-last': { ok: true, output: { text: PARIS }, elapsedMs: 1 } });
-    const council = createModelCouncil({ runner: models, v5: async () => first });
-    const outcome = await council.deliberate(turn({ constraints: { sentences: 1 },
-      pipeline: { text: 'I could not find it.', status: 'blocked' }, evidence: [source] }));
+    const run = vi.fn(runner({ 'reading-v3-last': { ok: true, output: { text: PARIS }, elapsedMs: 1 } }).run);
+    const council = createModelCouncil({ runner: { run }, v5: async () => first });
+    const input = turn({ constraints: { sentences: 1 },
+      pipeline: { text: 'I could not find it.', status: 'blocked' }, evidence: [source] });
+    const outcome = await council.deliberate(input);
+    expect(run).toHaveBeenCalledWith('reading-v3-last', { prompt: `${PARIS}\n\nQuestion: ${input.question}\nAnswer:`, maxNewTokens: 20 });
     expect(outcome).toMatchObject({ changed: true, chosen: 'reading-v3-last', status: 'completed' });
     expect(outcome.text).toContain(first);
     expect(outcome.text).not.toContain(second);

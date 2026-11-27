@@ -6,6 +6,27 @@ import { expect, it } from 'vitest';
 import { loadReplyPreferences, resolveReplyTurn } from '../apps/server/src/assistant/reply-preferences.js';
 import { commandChatMigration } from '../apps/server/src/command-chat.js';
 
+it('restores the reply preferences migration record without losing saved preferences', async () => {
+  const { db, close } = await createDatabase();
+  const ownerId = 'reply-owner';
+  const conversationId = 'reply-conversation';
+  const version = '060_reply_preferences';
+  try {
+    await migrate(db);
+    await commandChatMigration(db);
+    await db.insertInto('chat_conversations').values({ id: conversationId, owner_id: ownerId, title: 'Existing chat' }).execute();
+    await resolveReplyTurn(db, ownerId, conversationId, 'Always answer in English');
+    await db.deleteFrom('schema_migrations').where('version', '=', version).execute();
+
+    await commandChatMigration(db);
+
+    expect(await db.selectFrom('schema_migrations').select('version').where('version', '=', version).execute()).toEqual([{ version }]);
+    expect(await loadReplyPreferences(db, ownerId, conversationId)).toEqual({ lang: 'en' });
+  } finally {
+    await close();
+  }
+}, 20_000);
+
 it('keeps explicit preferences across turns and reopening, with scoped overrides and removals', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'mohassan-reply-preferences-'));
   const ownerId = 'reply-owner';

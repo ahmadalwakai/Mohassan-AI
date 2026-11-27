@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BrowserError, type AgentAction, type AgentElement, type AgentPage } from '@mohassan/browser';
 import { applyHandsReplyConstraints, articleUrl, describe as describeReply, excerpt, headlines, findSearchBox, findTarget, ordinalOf, parseHands, realUrl, relevantLines, resultLinks, runHands, readableText, webQuestion, WIKI_SEARCH, type HandsIO, type HandsPlan } from '../apps/server/src/assistant/hands.js';
+import { enforceReplyConstraints } from '../apps/server/src/assistant/reply-constraint-review.js';
 
 const el = (ref: string, role: string, label: string, extra: Partial<AgentElement> = {}): AgentElement => ({ ref, role, label, inViewport: true, ...extra });
 const pageOf = (url: string, elements: AgentElement[], text = ''): AgentPage => ({
@@ -271,6 +272,33 @@ describe('question answers from the web', () => {
     expect(outcome.text).not.toContain(detail);
     expect(outcome.text).not.toContain(extra);
     expect(outcome.text).not.toContain('للمزيد:');
+  });
+
+  it.each([
+    { request: 'What is Luma? In two short sentences.', title: 'Luma', lines: [
+      'Luma is a fixture for checking reply format.', 'Luma documents how the chat output is rendered.', 'Luma contains more material than requested.',
+    ] },
+    { request: 'ما هو مرصد السرو؟ في جملتين قصيرتين.', title: 'مرصد السرو', lines: [
+      'مرصد السرو موقع تجريبي مفتوح للزوار في هذه الصفحة.', 'تشرح صفحة مرصد السرو نظام الجولة التجريبية خطوة بخطوة.', 'يعرض مرصد السرو سجل الجولات التجريبية في قسم الأرشيف.',
+    ] },
+  ])('keeps both short sentences for $request', ({ request, title, lines }) => {
+    const primary = 'https://observatory.example/guide';
+    const secondary = 'https://observatory.example/archive';
+    const [step] = webQuestion(request)!;
+    if (step?.kind !== 'search') throw new Error('Expected a web question');
+    expect(step.reply).toMatchObject({ sentences: 2, brief: true });
+
+    const plan: HandsPlan = { steps: [step], next: 0, found: { url: primary, title, lines },
+      results: [{ url: primary, title }, { url: secondary, title: `${title} archive` }] };
+    const rendered = describeReply(plan, null);
+    const reviewed = enforceReplyConstraints(rendered.text, step.reply);
+    expect(rendered.status).toBe('completed');
+    expect(reviewed.withheld).toBe(false);
+    for (const text of [rendered.text, reviewed.text]) {
+      expect(text.split('\n\n')[0]).toBe(lines.slice(0, 2).join('\n'));
+      expect(text).toContain(primary);
+      expect(text).not.toContain(secondary);
+    }
   });
 
   it('uses a preferred Arabic source for an English question', async () => {

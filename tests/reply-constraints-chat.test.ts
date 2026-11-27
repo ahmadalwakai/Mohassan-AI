@@ -1,9 +1,12 @@
 import type { AgentBrowser } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
 import { InferenceRouter, UsageMonitor } from '@mohassan/providers';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildPrompt, newBrainState } from '../apps/server/src/assistant/brain.js';
+import * as computerRead from '../apps/server/src/assistant/local-computer-read.js';
+import { taskEvidenceHash } from '../apps/server/src/assistant/task-supervisor.js';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
+import { V5_CHAT_LABEL } from '../apps/server/src/v5-chat.js';
 
 const owner = 'reply-preference-fixture-owner';
 const options = () => ({
@@ -81,6 +84,72 @@ describe('reply preferences across real chat turns', () => {
       expect(messages.at(-1)?.text).toBe(`${first} ${second}`);
     } finally {
       await modelChat.shutdown();
+    }
+  });
+
+  it('answers an incomplete persistent instruction with a clarification and saves no preference', async () => {
+    const { id } = await chat.create(owner);
+    expect(await answer(id, 'أجب دائماً')).toBe('كيف تفضّل أن أجيبك؟');
+    const row = await database.db.selectFrom('chat_conversations').select('reply_preferences').where('id', '=', id).executeTakeFirstOrThrow();
+    expect(row.reply_preferences).toEqual({});
+  });
+
+  it('preserves an Arabic question at a pause with a saved English reply preference', async () => {
+    const { id } = await chat.create(owner);
+    await answer(id, 'Always answer in English.');
+    await answer(id, 'From now on, answer in two sentences.');
+    const question = 'أفتح الموقع الذي تختاره وأعرض لك محتواه من نص الصفحة نفسها. أي موقع؟';
+    expect(await answer(id, 'افتح موقعًا واعرض لي محتواه')).toBe(question);
+    expect(await chat.detail(owner, id)).toMatchObject({ status: 'waiting_user', question: { prompt: question } });
+  });
+
+  it('publishes the verified third sentence of an enforced reply under a two-sentence preference', async () => {
+    const title = 'Fixture window';
+    const rendered = `The reader returned a result. One title was available. The window title is "${title}".`;
+    const assess = computerRead.assessLocalComputerRead;
+    const fixture = vi.spyOn(computerRead, 'assessLocalComputerRead').mockImplementation((...args) => {
+      const result = assess(...args);
+      if (result.status !== 'completed' || !result.proof) return result;
+      return { ...result, reply: rendered, proof: { ...result.proof, answerHash: taskEvidenceHash(rendered) } };
+    });
+    const computerChat = await createCommandChatControl(database.db, { ...options(), recordExperiences: false,
+      tools: { computer: { async view() { return { title, canAct: true, hasPasswordField: false, jpeg: '', elements: [] }; },
+        async perform() { throw new Error('Unexpected input on a read-only request.'); } } } });
+    try {
+      const { id } = await computerChat.create(owner, { goal: 'From now on, answer in two sentences.' });
+      await computerChat.settled(id);
+      await computerChat.send(owner, id, { text: 'What is the title of the current PC window?' });
+      await computerChat.settled(id);
+      const detail = await computerChat.detail(owner, id);
+      const run = await database.db.selectFrom('chat_runs').select(['status', 'state']).where('conversation_id', '=', id)
+        .orderBy('created_at', 'desc').limit(1).executeTakeFirstOrThrow();
+      expect(fixture).toHaveBeenCalledOnce();
+      expect(run).toMatchObject({ status: 'completed', state: {
+        replyTurn: { constraints: { sentences: 2 } }, supervision: { contract: { mode: 'enforced' } },
+        completionReview: { allowCompletion: true, criteria: [{ id: 'computer-title', status: 'verified' }] },
+      } });
+      expect(detail.messages.at(-1)?.text).toBe(rendered);
+    } finally {
+      await computerChat.shutdown();
+      fixture.mockRestore();
+    }
+  });
+
+  it('keeps the standalone v5 request native and constrains its published output', async () => {
+    const goal = 'Write a poem about a silver moon in two Arabic sentences.';
+    const sentences = ['ضوء القمر فوق التلال.', 'يلمع فوق الطريق.', 'يغيب مع الفجر.'];
+    const generate = vi.fn(async () => sentences.join(' '));
+    const v5Chat = await createCommandChatControl(database.db, { ...options(), recordExperiences: false,
+      accountFullAccess: async () => true, v5Chat: { ready: () => true, generate } });
+    try {
+      const { id } = await v5Chat.create(owner, { goal });
+      await v5Chat.settled(id);
+      expect(generate).toHaveBeenCalledExactlyOnceWith([{ role: 'user', content: goal }], expect.any(AbortSignal));
+      expect((await v5Chat.detail(owner, id)).messages.at(-1)).toMatchObject({
+        experiment: 'v5', text: `${sentences.slice(0, 2).join(' ')}\n\n${V5_CHAT_LABEL}`,
+      });
+    } finally {
+      await v5Chat.shutdown();
     }
   });
 });

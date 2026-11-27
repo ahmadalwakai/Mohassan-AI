@@ -50,16 +50,36 @@ describe('a request, its label and its closing instruction about the reply', () 
 describe('reply constraints and conversation preferences', () => {
   it.each([
     ['أجب بالعربية دائماً', { lang: 'ar' }],
+    ['أجب دائماً بالعربية', { lang: 'ar' }],
+    ['أجب دائماً في جملتين', { sentences: 2, brief: null }],
     ['العربية دائماً', { lang: 'ar' }],
     ['من فضلك أجب بالعربية دائماً', { lang: 'ar' }],
+    ['رد علي بالعربي دايما', { lang: 'ar' }],
+    ['جاوبني بالعربية دائماً', { lang: 'ar' }],
+    ['تكلم معي بالعربية من الآن', { lang: 'ar' }],
+    ['أريد الإجابات بالعربية دائماً', { lang: 'ar' }],
     ['من الآن إجابات مختصرة', { brief: true, sentences: null }],
     ['إجابات مختصرة', { brief: true, sentences: null }],
+    ['من الآن الردود القصيرة', { brief: true, sentences: null }],
     ['always answer in English', { lang: 'en' }],
+    ['answer always in English', { lang: 'en' }],
     ['From now on, use a numbered list', { list: true }],
     ['I prefer brief answers', { brief: true, sentences: null }],
     ['Remember that I prefer brief answers', { brief: true, sentences: null }],
+    ['تذكر أنني أفضل الإجابات المختصرة', { brief: true, sentences: null }],
+    ['رد علي، بالعربي دايما', { lang: 'ar' }],
   ])('treats %s as a conversation preference without a separate task', (text, preferences) => {
     expect(parseReplyRequest(text)).toMatchObject({ body: '', preferenceOnly: true, preferences });
+  });
+
+  it('holds a reply command with no format without writing or clearing a preference', () => {
+    const parsed = parseReplyRequest('أجب دائماً');
+    expect(parsed).toMatchObject({ body: '', preferenceOnly: true });
+    expect(parsed.preferences).toEqual({});
+    expect(parsed.overrides).toEqual({});
+    expect(mergeReplyConstraints(parsed, { lang: 'en', sentences: 2 })).toEqual({ lang: 'en', sentences: 2 });
+    const action = 'أجب دائماً على كل الرسائل الواردة';
+    expect(parseReplyRequest(action)).toMatchObject({ body: action, preferenceOnly: false, directive: null });
   });
 
   it('reads mixed-language format clauses in order and keeps them out of the task', () => {
@@ -90,6 +110,12 @@ describe('reply constraints and conversation preferences', () => {
     const parsed = parseReplyRequest('What is 2 + 3? Reply in two sentences. No need to be brief anymore. Briefly.');
     expect(parsed.preferences).toEqual({ brief: null, sentences: null });
     expect(mergeReplyConstraints(parsed, saved)).toEqual({ lang: 'ar', brief: true });
+  });
+
+  it.each(['Stop answering briefly', 'توقف عن الاختصار'])('clears saved brevity on %s', text => {
+    const parsed = parseReplyRequest(text);
+    expect(parsed).toMatchObject({ body: '', preferenceOnly: true, preferences: { brief: null, sentences: null } });
+    expect(mergeReplyConstraints(parsed, { lang: 'ar', brief: true })).toEqual({ lang: 'ar' });
   });
 
   it('reads numeric link and sentence limits, plus requested page fields', () => {

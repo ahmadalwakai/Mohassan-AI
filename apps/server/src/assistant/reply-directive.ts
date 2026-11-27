@@ -98,9 +98,13 @@ const FIELD_NOUN_EN: [RegExp, ReplyField][] = [
 const LANG_AR: [RegExp, ReplyLanguage][] = [[/^(?:بال)?عربي(?:ه)?$|^باللغه العربيه$|^العربيه$/u, 'ar'], [/^(?:بال)?(?:انجليزي|انكليزي|إنجليزي)(?:ه)?$|^باللغه الانجليزيه$|^الانجليزيه$/u, 'en']];
 const COUNT_AR: Record<string, number> = { جمله: 1, سطر: 1, فقره: 1, جملتين: 2, جملتان: 2, سطرين: 2, فقرتين: 2 };
 const MODIFIER_AR = /^(?:واحده|واحد|قصيره|قصيرتين|قصيرتان|قصير|مختصره|مختصرتين|بسيطه|بسيطتين|واضحه|فقط|عربيه|عربي|انجليزيه|انجليزي|بالعربيه|بالعربي|بالانجليزيه|بالانجليزي|بالانكليزيه|باللغه|العربيه|الانجليزيه|ثلاث|ثلاثه|جمل|اسطر)$/u;
+const REPLY_VERB_AR = '(?:و)?(?:(?:اجب|جاوب)(?:ني| (?:لي|علي))?|رد(?: (?:لي|علي))?|تكلم معي|اريد (?:ال)?(?:اجابات|ردود))';
+const REPLY_LEAD_AR = new RegExp(`^${REPLY_VERB_AR}(?= |$)`, 'u');
 const VERB_AR = /^(?:و)?(?:اجب|اجبني|رد|جاوب|اكتب|اكتبها|اكتبه|اعطني|اعطيني|قدم|قدمها|اذكر|اذكرها|اشرح|اشرحها|لخص|لخصها|صغ|صغها|قل|قلها)(?:\s+لي)?$/u;
 const OBJECT_AR = /^(?:ال)?(?:نتيجه|ناتج|جواب|اجابه|رد)$/u;
 const BRIEF_AR = /^(?:و)?(?:باختصار|بايجاز|باقتضاب|اختصر|مختصرا|مختصر)$/u;
+const SHORT_REPLIES_AR = '(?:ال)?(?:اجابات|ردود) (?:ال)?(?:قصيره|مختصره)';
+const BRIEF_PHRASE_AR = new RegExp(`^(?:بشكل مختصر|${SHORT_REPLIES_AR})$`, 'u');
 const NO_LIST_AR = /^(?:بدون|بلا|من دون|دون|لا تستخدم) (?:نقاط(?: تعداد)?|قوائم|قائمه)$/u;
 const LIST_AR = /^(?:(?:علي شكل|في|استخدم) (?:قائمه(?: مرقمه)?|نقاط)|بنقاط|بقائمه(?: مرقمه)?)$/u;
 const NO_LINKS_AR = /^(?:بدون|بلا|من دون|دون|لا (?:تضف|تذكر|ترسل)) (?:اي )?(?:رابط|روابط)$/u;
@@ -141,7 +145,8 @@ function englishDirective(text: string): ReplyConstraints | null {
 }
 
 function arabicDirective(text: string): ReplyConstraints | null {
-  const words = text.replace(/^(?:من فضلك|لو سمحت|رجاءا?) +/u, '').replace(/[.!؟?،,]+/gu, ' ').split(/\s+/u).filter(Boolean);
+  const plainStyle = text.replace(/^(?:من فضلك|لو سمحت|رجاءا?) +/u, '').replace(REPLY_LEAD_AR, '');
+  const words = plainStyle.replace(/[.!؟?،,]+/gu, ' ').split(/\s+/u).filter(Boolean);
   if (!words.length) return null;
   let at = 0;
   const lead = words.slice(0, 2).join(' ');
@@ -151,7 +156,7 @@ function arabicDirective(text: string): ReplyConstraints | null {
   const rest = words.slice(at);
   const phrase = rest.join(' ').replace(/^و(?=(?:بدون|بلا|مع|في|بنقاط|بالتفصيل|دون))/u, '');
   if (rest.length === 1 && BRIEF_AR.test(rest[0]!)) return { brief: true };
-  if (/^(?:بشكل مختصر|(?:اجابات|ردود) (?:قصيره|مختصره))$/u.test(phrase)) return { brief: true };
+  if (BRIEF_PHRASE_AR.test(phrase)) return { brief: true };
   if (/^(?:بالتفصيل|بشكل مفصل|(?:اجابات|ردود) مفصله)$/u.test(phrase)) return { brief: false };
   if (NO_LIST_AR.test(phrase)) return { list: false };
   if (LIST_AR.test(phrase)) return { list: true };
@@ -189,11 +194,14 @@ function arabicDirective(text: string): ReplyConstraints | null {
 
 const PREFERENCE_MARKER = 'always|from now on|going forward|for (?:the rest of )?this (?:conversation|chat)|دايما|دائما|من الان(?: فصاعدا)?|بعد الان|في هذه المحادثه';
 const PREFERENCE_START = new RegExp(String.raw`^(?:(?:please|من فضلك) +)?(?:${PREFERENCE_MARKER})[ ,،:]+|^(?:(?:remember (?:that )?)?i prefer|(?:تذكر انني )?افضل) +`, 'u');
+const REPLY_VERB = `(?:(?:please|من فضلك|لو سمحت|رجاءا?) )?(?:${REPLY_VERB_AR}|(?:reply|answer|respond)(?: to me)?)`;
+const REPLY_ONLY = new RegExp(`^${REPLY_VERB}$`, 'u');
+const PREFERENCE_MIDDLE = new RegExp(`^(${REPLY_VERB}) (?:${PREFERENCE_MARKER})(?:[ ,،:]+|$)`, 'u');
 const PREFERENCE_END = new RegExp(String.raw`[ ,،]+(?:${PREFERENCE_MARKER})$`, 'u');
-const STANDALONE_BREVITY = /^(?:(?:short|brief|concise) (?:answers|replies|responses)|(?:اجابات|ردود) (?:قصيره|مختصره))[.!؟?]*$/u;
+const STANDALONE_BREVITY = new RegExp(`^(?:(?:short|brief|concise) (?:answers|replies|responses)|${SHORT_REPLIES_AR})$`, 'u');
 const TURN_ONLY_START = /^(?:this time|for this (?:reply|answer)|هذه المره|لهذا الرد|في هذا الرد|لهذه الاجابه)[ ,،:]+/u;
 const TURN_ONLY_END = /[ ,،]+(?:this time|for this (?:reply|answer)|هذه المره|لهذا الرد|في هذا الرد|لهذه الاجابه)$/u;
-const CLEAR_LENGTH = /^(?:(?:no need to (?:answer |reply )?(?:briefly|be brief)|(?:don't|do not) (?:keep (?:it|answers) brief|(?:answer|reply) briefly|be brief)) (?:anymore|any longer)|(?:forget|clear|reset|remove) (?:my |the )?(?:brevity|reply length|reply-length) preference|(?:لا داعي (?:للاختصار|للايجاز|للرد باختصار)|لا تختصر) (?:بعد الان|من الان)|الغ (?:تفضيل|شرط) (?:الاختصار|الايجاز))$/u;
+const CLEAR_LENGTH = /^(?:(?:no need to (?:answer |reply )?(?:briefly|be brief)|(?:don't|do not) (?:keep (?:it|answers) brief|(?:answer|reply) briefly|be brief)) (?:anymore|any longer)|(?:forget|clear|reset|remove) (?:my |the )?(?:brevity|reply length|reply-length) preference|stop (?:answering|replying|responding) (?:briefly|concisely)|(?:لا داعي (?:للاختصار|للايجاز|للرد باختصار)|لا تختصر) (?:بعد الان|من الان)|الغ (?:تفضيل|شرط) (?:الاختصار|الايجاز)|توقف عن (?:الاختصار|الايجاز))$/u;
 const CLEAR_LANGUAGE = /^(?:(?:forget|clear|reset|remove) (?:my |the )?(?:reply )?language preference|no need to (?:answer|reply|respond) in (?:english|arabic) (?:anymore|any longer)|لا داعي (?:للاجابه|للرد) ب(?:اللغه )?(?:العربيه|الانجليزيه) بعد الان|الغ (?:تفضيل|شرط) (?:لغه الرد|اللغه))$/u;
 const CLEAR_LIST = /^(?:forget|clear|reset|remove) (?:my |the )?(?:list|list format) preference$|^الغ (?:تفضيل|شرط) (?:القوائم|القائمه)$/u;
 const CLEAR_LINKS = /^(?:forget|clear|reset|remove) (?:my |the )?(?:link|link count) preference$|^الغ (?:تفضيل|شرط) (?:الروابط|عدد الروابط)$/u;
@@ -203,15 +211,18 @@ interface DirectiveGroup {
   preferences: ReplyPreferencePatch;
 }
 
+const directiveText = (clause: string) => fold(clause).replace(/[.!؟?]+$/u, '').replace(/[’‘]/gu, "'").trim();
+const preferenceStyle = (text: string) => text.replace(PREFERENCE_START, '').replace(PREFERENCE_MIDDLE, '$1 ').replace(PREFERENCE_END, '').trim();
+
 function clauseOf(clause: string): DirectiveGroup | null {
-  const text = fold(clause).replace(/[.!؟?]+$/u, '').replace(/[’‘]/gu, "'").trim();
+  const text = directiveText(clause);
   const clear = CLEAR_LENGTH.test(text) ? { brief: null, sentences: null }
     : CLEAR_LANGUAGE.test(text) ? { lang: null }
     : CLEAR_LIST.test(text) ? { list: null }
     : CLEAR_LINKS.test(text) ? { links: null } : null;
   if (clear) return { overrides: clear, preferences: clear };
 
-  const preferred = text.replace(PREFERENCE_START, '').replace(PREFERENCE_END, '').trim();
+  const preferred = preferenceStyle(text);
   const style = preferred.replace(TURN_ONLY_START, '').replace(TURN_ONLY_END, '').trim();
   const constraints = englishDirective(style) ?? arabicDirective(style);
   if (!constraints) return null;
@@ -276,12 +287,14 @@ export function parseReplyRequest(text: string): ReplyRequest {
   const working = labelled?.rest ?? text.trim();
   // Literal data and quoted text cannot set reply preferences. The matching copy preserves offsets.
   const matching = maskRequestLiteralData(working).replace(/[أإآٱ]/gu, 'ا').replace(/ى/gu, 'ي').replace(/ة/gu, 'ه');
-  const whole = directiveOf(working);
-  if (whole && STANDALONE_BREVITY.test(fold(working))) whole.preferences = { brief: true, sentences: null };
-  const preferenceOnly = Boolean(whole && Object.keys(whole.preferences).length);
-  let body = working, group = whole, style = whole ? working : '';
-  if (preferenceOnly) body = '';
-  if (!whole) {
+  const standalone = directiveText(working);
+  const standaloneStyle = preferenceStyle(standalone);
+  const incompletePreference = standaloneStyle !== standalone && REPLY_ONLY.test(standaloneStyle);
+  const whole = incompletePreference ? { overrides: {}, preferences: {} } : directiveOf(working);
+  if (whole && STANDALONE_BREVITY.test(standalone)) whole.preferences = { brief: true, sentences: null };
+  let group = whole;
+  let body = working, style = group ? working : '';
+  if (!group) {
     let start = 0;
     for (const point of matching.matchAll(CLAUSE_BREAKS)) {
       const end = point.index + point[0].length;
@@ -308,6 +321,9 @@ export function parseReplyRequest(text: string): ReplyRequest {
       break;
     }
   }
+  const preferenceOnly = incompletePreference || Boolean(group && Object.keys(group.preferences).length
+    && (whole || REPLY_ONLY.test(directiveText(body))));
+  if (preferenceOnly) { body = ''; style = working; }
   if (!group || (!preferenceOnly && body.length < 2)) return { ...none, body: working, label: labelled?.label ?? null };
   const parsed: ReplyRequest = { body, label: labelled?.label ?? null, directive: null, preferenceOnly, ...group };
   return { ...parsed, directive: { ...mergeReplyConstraints(parsed), text: style } };

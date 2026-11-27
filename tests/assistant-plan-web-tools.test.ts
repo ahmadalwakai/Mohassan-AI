@@ -32,11 +32,11 @@ function watchPage(text: string): AgentPage {
 }
 
 describe('public web plan adapters', () => {
-  it('shortens the displayed web answer while retaining the text for dependent steps', async () => {
+  it.each([undefined, 2])('uses the explicit sentence limit %s before shortening the displayed web answer', async sentences => {
     const goal = 'Search for a solar panel guide.';
     const [lookup] = compilePlan(`${goal} Then read the result.`).steps;
     const step = { ...lookup!, output: 'text' as const };
-    const { tools, search, readPage } = fixture(goal, { brief: true });
+    const { tools, search, readPage } = fixture(goal, { brief: true, sentences });
     const title = 'Solar panel guide';
     const lead = 'The solar panel guide introduces the equipment used during the workshop.';
     const extra = 'The solar panel guide lists the materials kept at each workbench.';
@@ -46,7 +46,7 @@ describe('public web plan adapters', () => {
     const result = await tools.search(step, { text: step.text, references: [] }, initial);
     expect(result).toMatchObject({ ok: true, value: { type: 'text', value: text } });
     if (!result.ok) throw new Error('Expected a web result');
-    expect(result.text).toBe(`${lead}\n[${title}](${source1})`);
+    expect(result.text).toBe(`${sentences ? text : lead}\n[${title}](${source1})`);
   });
 
   it('uses the original query and cached references for physical current quantities', async () => {

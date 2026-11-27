@@ -47,7 +47,7 @@ export function conversationReviewForJudge(input: JudgeShadowInput, verdict: Jud
       if (!preserveContent) { scope.replacement = clean(result.reply); scope.withheld = result.withheld; }
       else if (result.reply.startsWith(candidate)) scope.replacement = candidate + clean(result.reply.slice(candidate.length));
     }
-    if (input.constraints) {
+    if (allowApply && input.constraints) {
       const checked = enforceReplyConstraints(scope.replacement ?? candidate, input.constraints);
       if (checked.text !== candidate) scope.replacement = checked.text;
       scope.withheld ||= checked.withheld;
