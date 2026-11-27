@@ -18,13 +18,24 @@ export class ImageReaderUnavailable extends Error {
   constructor() { super('IMAGE_READER_UNAVAILABLE'); }
 }
 
+const unavailableImageReader: ImageReader = {
+  available: false, modelId: null, async read() { throw new ImageReaderUnavailable(); }, async close() {},
+};
+
 export async function createImageReader(options: { modelDir: string; workers?: number }): Promise<ImageReader> {
   const dir = options.modelDir;
   if (!existsSync(join(dir, 'manifest.json')) || !existsSync(join(dir, 'weights.bin'))) {
-    return { available: false, modelId: null, async read() { throw new ImageReaderUnavailable(); }, async close() {} };
+    return unavailableImageReader;
   }
-  const files = await readOcrModelFiles(dir);
-  const model: OcrModel = loadOcrModelFromBytes(files.manifestBytes, files.weightsBytes);
+  let files: Awaited<ReturnType<typeof readOcrModelFiles>>;
+  let model: OcrModel;
+  try {
+    files = await readOcrModelFiles(dir);
+    model = loadOcrModelFromBytes(files.manifestBytes, files.weightsBytes);
+  } catch {
+    console.warn(JSON.stringify({ level: 'warn', event: 'image_reader_unavailable', reason: 'invalid_model_export' }));
+    return unavailableImageReader;
+  }
   let pool: OcrPool | null = null, poolReady: Promise<boolean> | null = null;
   const ensurePool = async (): Promise<OcrPool | null> => {
     if (!pool) {
