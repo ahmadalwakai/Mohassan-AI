@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ChevronDown, Chrome, CircleHelp, Link2, Square, Unplug } from "lucide-react";
 import type { ChromeExtensionStatus, ChromeJob } from "@mohassan/contracts";
+import { chatHttpErrorMessage, sessionFetch } from "./chat-request";
 import styles from "./chrome-extension-panel.module.css";
 
 const JOB_LABELS: Record<ChromeJob["status"], string> = {
@@ -14,7 +15,7 @@ const JOB_LABELS: Record<ChromeJob["status"], string> = {
 };
 
 async function request<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(`/api/chrome-extension${path}`, {
+  const response = await sessionFetch(`/api/chrome-extension${path}`, {
     method: body === undefined ? "GET" : "POST",
     credentials: "same-origin",
     cache: "no-store",
@@ -22,7 +23,7 @@ async function request<T>(path: string, body?: unknown, signal?: AbortSignal): P
     ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
   });
   const value = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(value?.error?.message ?? "تعذر الاتصال بإضافة Chrome. حاول التحديث.");
+  if (!response.ok) throw new Error(chatHttpErrorMessage(response.status, value?.error, "تعذر الاتصال بإضافة Chrome. حاول التحديث."));
   return value as T;
 }
 

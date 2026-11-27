@@ -1,11 +1,12 @@
 import type { ZodType } from "zod";
+import { chatHttpErrorMessage, sessionFetch } from "./chat-request";
 
 export const shareListPath = "/api/chat/conversation-shares";
 export const shareSettingsPath = "/api/chat/conversation-share-settings";
 export const conversationPath = (id: string) => `/api/chat/conversations/${encodeURIComponent(id)}`;
 
 export async function shareFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  const response = await fetch(path, {
+  const response = await sessionFetch(path, {
     ...init,
     cache: "no-store",
     credentials: "same-origin",
@@ -13,7 +14,7 @@ export async function shareFetch(path: string, init: RequestInit = {}): Promise<
   });
   if (!response.ok) {
     const body = await response.json().catch(() => null);
-    throw Object.assign(new Error(body?.error?.message ?? "تعذر إتمام الطلب. حاول مجددًا."), { status: response.status });
+    throw Object.assign(new Error(chatHttpErrorMessage(response.status, body?.error)), { status: response.status });
   }
   return response;
 }

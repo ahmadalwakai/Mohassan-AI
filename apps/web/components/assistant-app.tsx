@@ -38,10 +38,11 @@ import { BackgroundRunCard } from "./background-run-card";
 import { ConversationMonitors, MonitorSettings } from "./smart-monitors";
 import { ConversationMessageFeedback } from "../lib/monitor-feedback/alert-feedback";
 import { MonitorConversationControls } from "./smart-monitors-v2";
+import { chatErrorMessage, OFFLINE_MESSAGE, POLL_INTERVAL_MS as POLL_MS } from "./chat-connection";
+import { startChatPoll, useBrowserOffline } from "./chat-poll";
+import { requestChatConversation, requestChatHistory, requestChatJson as api } from "./chat-request";
 import styles from "./assistant-app.module.css";
 
-/** Plan §5.2 P5: the first useful progress line should show within half a second; a local answer is ready in ~30 ms. */
-const POLL_MS = 450;
 /** How long the server may hold one request open for a change (its own cap is 8 s, chat-wait.ts). */
 const WAIT_MS = 8_000;
 /** Proposed in the plan (§6.3): a hidden tab keeps following its task, slowly, instead of stopping. */
@@ -74,13 +75,7 @@ const seenTasks = {
   set(value: Record<string, string>) { try { localStorage.setItem(SEEN_TASKS, JSON.stringify(value)); } catch { /* Convenience only. */ } },
 };
 
-async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, { ...options, credentials: "same-origin", cache: "no-store", headers: { ...(options.body ? { "Content-Type": "application/json" } : {}), ...options.headers } });
-  const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(response.status === 429 && body?.error?.code !== "MEMBER_DAILY_LIMIT" ? "طلبات كثيرة متتابعة. انتظر لحظة ثم حاول مجددًا." : body?.error?.message ?? "تعذر إتمام الطلب. حاول مجددًا.");
-  return body as T;
-}
-const messageOf = (error: unknown) => error instanceof Error ? error.message : "تعذر الاتصال. حاول مجددًا.";
+const messageOf = (error: unknown) => chatErrorMessage(error, navigator.onLine === false);
 
 const MAX_ATTACHMENTS = 4;
 interface Attachment { id: string; width: number; height: number; url: string; name: string }
@@ -242,9 +237,18 @@ function DeleteDialog({ target, busy, error, onCancel, onConfirm }: { target: Su
 export type AssistantToolView = "integrations" | "executor" | "desktop";
 
 export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifications }: { name: string; onAdvanced: () => void; onOpenTool?: (view: AssistantToolView) => void; onSignOut: () => void; notifications: NotificationControls }) {
+  const offline = useBrowserOffline();
   const [history, setHistory] = useState<Summary[]>([]);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+  const [historyRetry, setHistoryRetry] = useState(0);
+  const lastHistoryApplied = useRef(0);
+  const historyRequest = useRef(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [conversation, setConversation] = useState<Conversation | null>(null);
+  const [detailError, setDetailError] = useState<{ id: string; message: string } | null>(null);
+  const [detailRetry, setDetailRetry] = useState(0);
+  const [pollError, setPollError] = useState("");
   const [chatConfigured, setChatConfigured] = useState<boolean | null>(null);
   const [chatCapabilities, setChatCapabilities] = useState<ChatCapabilities | null>(null);
   const [draft, setDraft] = useState("");
@@ -278,12 +282,26 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
   const selection = useRef<string | null>(null);
   selection.current = selectedId;
 
-  const refreshHistory = useCallback(async () => {
-    const result = await api<{ conversations: Summary[]; configured?: boolean; capabilities?: ChatCapabilities }>("/api/chat/conversations");
-    setHistory(result.conversations);
-    if (typeof result.configured === "boolean") setChatConfigured(result.configured);
-    if (result.capabilities) setChatCapabilities(result.capabilities);
-    return result.conversations;
+  const refreshHistory = useCallback(async (signal?: AbortSignal) => {
+    const request = ++historyRequest.current;
+    try {
+      const result = await requestChatHistory(signal);
+      if (!signal?.aborted && request >= lastHistoryApplied.current) {
+        lastHistoryApplied.current = request;
+        setHistory(result.conversations);
+        setHistoryLoaded(true);
+        setHistoryError("");
+        if (typeof result.configured === "boolean") setChatConfigured(result.configured);
+        if (result.capabilities) setChatCapabilities(result.capabilities);
+      }
+      return result.conversations;
+    } catch (caught) {
+      if (!signal?.aborted && request >= lastHistoryApplied.current) {
+        lastHistoryApplied.current = request;
+        setHistoryError(messageOf(caught));
+      }
+      throw caught;
+    }
   }, []);
 
   // Back from Google's consent page: answer the waiting question so the task continues by itself.
@@ -296,70 +314,66 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
     saved.set(pending.conversationId);
     setSelectedId(pending.conversationId);
     if (result !== "connected") { setError(adsConnectProblems[result] ?? adsConnectProblems.failed!); return; }
-    void api<Conversation>(`/api/chat/conversations/${pending.conversationId}/respond`, { method: "POST", body: JSON.stringify({ questionId: pending.questionId, optionId: "connected" }) })
+    void requestChatConversation(`/api/chat/conversations/${pending.conversationId}/respond`, { method: "POST", body: JSON.stringify({ questionId: pending.questionId, optionId: "connected" }) })
       .then((next) => { setConversation(next); void refreshHistory().catch(() => {}); })
       .catch((caught) => setError(messageOf(caught)));
   }, [refreshHistory]);
 
   useEffect(() => {
-    let active = true;
-    void refreshHistory().then((items) => {
+    if (offline || navigator.onLine === false) return;
+    const controller = new AbortController();
+    void refreshHistory(controller.signal).then((items) => {
       const last = saved.get();
-      if (active && last && items.some((item) => item.id === last)) setSelectedId(last);
-    }).catch((caught) => { if (active) setError(messageOf(caught)); });
-    return () => { active = false; };
-  }, [refreshHistory]);
+      if (!controller.signal.aborted && !selection.current && last && items.some((item) => item.id === last)) setSelectedId(last);
+    }).catch(() => {});
+    return () => controller.abort();
+  }, [offline, historyRetry, refreshHistory]);
 
   useEffect(() => {
     if (!selectedId) return;
     saved.set(selectedId);
-    if (conversation?.id === selectedId) return;
-    let active = true;
-    void api<Conversation>(`/api/chat/conversations/${selectedId}`).then((result) => { if (active) setConversation(result); }).catch((caught) => { if (active) setError(messageOf(caught)); });
-    return () => { active = false; };
-  }, [selectedId, conversation?.id]);
+    if (conversation?.id === selectedId || offline || navigator.onLine === false) return;
+    const controller = new AbortController();
+    setDetailError(null);
+    void requestChatConversation(`/api/chat/conversations/${selectedId}`, { signal: controller.signal }).then((result) => {
+      if (!controller.signal.aborted && selection.current === selectedId) setConversation(result);
+    }).catch((caught) => {
+      if (!controller.signal.aborted && selection.current === selectedId) setDetailError({ id: selectedId, message: messageOf(caught) });
+    });
+    return () => controller.abort();
+  }, [selectedId, conversation?.id, offline, detailRetry]);
 
   const status = conversation?.status;
   const hasThread = Boolean(conversation?.messages.length);
   useEffect(() => {
-    if (!conversation || status !== "running") return;
+    setPollError("");
+    if (!conversation || status !== "running" || conversation.id !== selectedId) return;
     const id = conversation.id;
-    let active = true;
-    let inFlight = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const held = new AbortController();
     // The server's mark of what this view shows (2026-11-23). While the tab is shown, the next request asks the server to
     // answer as soon as the mark changes (up to WAIT_MS), so a reply appears when it is written, not on the next poll.
     // A server without marks, or one that answers at once with the same mark, is polled every POLL_MS as before.
     let since = conversation.version;
-    // A hidden tab keeps following its task every 15 s instead of stopping, and catches up the moment it is shown again.
-    const schedule = (delay: number) => { clearTimeout(timer); timer = setTimeout(poll, delay); };
-    const poll = () => {
-      if (!active) return;
-      if (inFlight) { schedule(POLL_MS); return; }
-      inFlight = true;
-      const waiting = Boolean(since) && !document.hidden;
-      const sent = Date.now(), asked = since;
-      let next = POLL_MS;
-      void api<Conversation>(`/api/chat/conversations/${id}${waiting ? `?since=${asked}&wait=${WAIT_MS}` : ""}`, { signal: held.signal }).then((result) => {
-        if (!active || selection.current !== id) return;
+    return startChatPoll({
+      interval: POLL_MS, hiddenInterval: HIDDEN_POLL_MS, firstDelay: since ? 0 : POLL_MS,
+      onError: (caught) => setPollError(messageOf(caught)),
+      async run(signal) {
+        const waiting = Boolean(since) && !document.hidden;
+        const sent = Date.now(), asked = since;
+        const result = await requestChatConversation(`/api/chat/conversations/${id}${waiting ? `?since=${asked}&wait=${WAIT_MS}` : ""}`, { signal });
+        if (signal.aborted || selection.current !== id) return;
         // A slow answer never moves the view back past a newer one (run-view.ts isNewerSnapshot).
         setConversation((current) => isNewerSnapshot(current, result) ? result : current);
-        setError("");
+        setPollError("");
         if (result.status !== "running") void refreshHistory().catch(() => {});
         since = result.version;
         // Waited on and answered: ask again at once. The same mark back within moments means the server did not wait.
         // An answer that shows the task ended waits POLL_MS instead: this effect is replaced within moments and its timer
         // cleared, so no request starts only to be cancelled (browser check of 2026-11-23); and when the view kept a newer
         // snapshot over it (isNewerSnapshot, a task superseded while running), the following goes on.
-        if (result.status === "running" && waiting && result.version && !(result.version === asked && Date.now() - sent < WAIT_MS / 2)) next = 0;
-      }).catch((caught) => { if (active) setError(messageOf(caught)); }).finally(() => { inFlight = false; if (active) schedule(document.hidden ? HIDDEN_POLL_MS : next); });
-    };
-    const shown = () => { if (!document.hidden) schedule(0); };
-    document.addEventListener("visibilitychange", shown);
-    schedule(document.hidden ? HIDDEN_POLL_MS : since ? 0 : POLL_MS);
-    return () => { active = false; clearTimeout(timer); held.abort(); document.removeEventListener("visibilitychange", shown); };
-  }, [conversation?.id, status, refreshHistory]);
+        if (result.status === "running" && waiting && result.version && !(result.version === asked && Date.now() - sent < WAIT_MS / 2)) return 0;
+      },
+    });
+  }, [conversation?.id, selectedId, status, refreshHistory]);
 
   useEffect(() => { setSetting(panelSetting.get()); }, []);
 
@@ -384,11 +398,10 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
   const anyRunning = status === "running" || history.some((item) => WORKING.has(item.status) && item.status === "running");
   useEffect(() => {
     if (!anyRunning) return;
-    let active = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const tick = () => { if (active) void refreshHistory().catch(() => {}).finally(() => { if (active) timer = setTimeout(tick, document.hidden ? HIDDEN_POLL_MS : HISTORY_POLL_MS); }); };
-    timer = setTimeout(tick, document.hidden ? HIDDEN_POLL_MS : HISTORY_POLL_MS);
-    return () => { active = false; clearTimeout(timer); };
+    return startChatPoll({
+      interval: HISTORY_POLL_MS, hiddenInterval: HIDDEN_POLL_MS, firstDelay: HISTORY_POLL_MS,
+      async run(signal) { await refreshHistory(signal); },
+    });
   }, [anyRunning, refreshHistory]);
   useEffect(() => {
     seen.current ??= seenTasks.get();
@@ -481,7 +494,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
   // While a task works or waits for approval or for the owner's hands, a typed message corrects it (the server ends the
   // old run, drops what it had queued and starts the corrected one); «توقف» alone stops it. Images do not steer.
   const steering = Boolean(selectedId) && steerable(status, conversation?.secure?.kind);
-  const canSend = !busy && uploading === 0 && (steering ? draft.trim().length > 0 && attachments.length === 0
+  const canSend = !offline && (!selectedId || conversation?.id === selectedId) && !busy && uploading === 0 && (steering ? draft.trim().length > 0 && attachments.length === 0
     : !running && !blocked && (draft.trim().length > 0 || attachments.length > 0));
   // The brain's questions take the input's place, one at a time, as in Claude.
   const asking = answering && !!conversation?.question?.fields?.length;
@@ -505,7 +518,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
       setBusy(false);
     }
   }
-  const post = (path: string, body: unknown) => api<Conversation>(`/api/chat/conversations/${conversation!.id}/${path}`, { method: "POST", body: JSON.stringify(body) });
+  const post = (path: string, body: unknown) => requestChatConversation(`/api/chat/conversations/${conversation!.id}/${path}`, { method: "POST", body: JSON.stringify(body) });
 
   async function connectGoogleAds() {
     if (busy || !conversation?.question) return;
@@ -562,8 +575,8 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
     const images = attachments.map((item) => item.id);
     const withImages = images.length ? { images } : {};
     const sent = await act(() => selectedId
-      ? api<Conversation>(`/api/chat/conversations/${selectedId}/messages`, { method: "POST", body: JSON.stringify({ ...(text ? { text } : {}), ...withImages }) })
-      : api<Conversation>("/api/chat/conversations", { method: "POST", body: JSON.stringify({ ...(text.trim() ? { goal: text } : {}), ...withImages, ...(browserAccount.trim() ? { browserAccount: browserAccount.trim() } : {}) }) }));
+      ? requestChatConversation(`/api/chat/conversations/${selectedId}/messages`, { method: "POST", body: JSON.stringify({ ...(text ? { text } : {}), ...withImages }) })
+      : requestChatConversation("/api/chat/conversations", { method: "POST", body: JSON.stringify({ ...(text.trim() ? { goal: text } : {}), ...withImages, ...(browserAccount.trim() ? { browserAccount: browserAccount.trim() } : {}) }) }));
     if (sent) { setDraft((current) => current === text ? "" : current); setAttachments((current) => current.filter((item) => !images.includes(item.id))); }
     composer.current?.focus();
   }
@@ -638,6 +651,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
   async function enableNotices() { await requestNoticePermission(); setNoticeOffer(false); }
 
   const empty = !conversation || !conversation.messages.length;
+  const loadingDetail = Boolean(selectedId && conversation?.id !== selectedId);
   // The Chrome bar belongs to Google Ads work: campaign events, or a campaign asked for in this conversation.
   const adsConversation = Boolean(conversation?.campaign?.events.length
     || conversation?.messages.some(message => message.role === "user" && ADS_WORDS.test(message.text)));
@@ -673,7 +687,12 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
       </div>
       <button className={styles.newChat} onClick={startNew}><SquarePen size={16} />محادثة جديدة</button>
       <div className={styles.history}>
-        {history.length ? <span className={styles.historyLabel}>المحادثات{unread ? <span className={styles.unreadBadge} aria-label={`${unread} غير مقروء`}>{unread}</span> : null}</span> : <p className={styles.historyEmpty}><MessageSquare size={16} />ستظهر محادثاتك هنا.</p>}
+        {historyError ? <div className={styles.card}>
+          <p className={styles.problem} role="alert">تعذّر تحميل المحادثات. {historyError}</p>
+          <button type="button" className={styles.secondary} disabled={offline} onClick={() => { setHistoryError(""); setHistoryRetry((value) => value + 1); }}>إعادة المحاولة</button>
+        </div> : null}
+        {history.length ? <span className={styles.historyLabel}>المحادثات{unread ? <span className={styles.unreadBadge} aria-label={`${unread} غير مقروء`}>{unread}</span> : null}</span>
+          : !historyError && !offline ? <p className={styles.historyEmpty}><MessageSquare size={16} />{historyLoaded ? "ستظهر محادثاتك هنا." : "جارٍ تحميل المحادثات…"}</p> : null}
         {history.map((item) => {
           const current = item.id === selectedId;
           const shown = itemMenu === item.id;
@@ -720,13 +739,20 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
         {conversation ? <button className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="محادثة جديدة" onClick={startNew}><SquarePen size={18} /></button> : null}
         <RemindersSettings conversation={conversation} selection={selection} setConversation={setConversation} refreshHistory={refreshHistory} onOpenConversation={open} />
       </header>
+      {offline || pollError ? <p className={styles.noticeBar} role="status">{offline ? OFFLINE_MESSAGE : pollError}</p> : null}
       {noticeOffer ? <div className={styles.noticeBar} role="status" data-testid="notice-offer">
         <span>مهمة تعمل في الخلفية منذ أكثر من 20 ثانية. أعلمك عند انتهاء المهام حين يكون التبويب مخفيًا؟</span>
         <button type="button" className={styles.primary} onClick={() => void enableNotices()}>تفعيل الإشعارات</button>
         <button type="button" className={styles.secondary} onClick={() => { declineNoticeOffer(); setNoticeOffer(false); }}>ليس الآن</button>
       </div> : null}
       {onOpenTool ? <ChromeExtensionPanel relevant={adsConversation} /> : null}
-      {empty ? <div className={styles.welcome}>
+      {loadingDetail ? <div className={styles.welcome}>
+        {detailError?.id === selectedId ? <>
+          <h1>تعذّر عرض المحادثة.</h1>
+          <p className={styles.problem} role="alert">{detailError?.message}</p>
+          <button type="button" className={styles.secondary} disabled={offline} onClick={() => setDetailRetry((value) => value + 1)}>إعادة المحاولة</button>
+        </> : !offline ? <p role="status">جارٍ تحميل المحادثة…</p> : null}
+      </div> : empty ? <div className={styles.welcome}>
         <span className={styles.welcomeMark} aria-hidden="true">م</span>
         <h1>كيف أساعدك اليوم، {firstName}؟</h1>
         {form}

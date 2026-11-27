@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { chatHttpErrorMessage, sessionFetch } from './chat-request';
 import styles from './browser-files-panel.module.css';
 
 type Target = { ref: string; label: string; url?: string };
@@ -7,9 +8,9 @@ type Transfer = { id: string; direction: 'upload' | 'download'; status: string; 
 const types: Record<string, string> = { txt: 'text/plain', md: 'text/markdown', csv: 'text/csv', json: 'application/json', png: 'image/png' };
 const labels: Record<string, string> = { pending: 'بانتظار موافقتك', dispatching: 'جارٍ النقل', responded: 'وصل رد الموقع؛ راجع النتيجة فيه', unknown: 'النتيجة غير محسومة؛ لا إعادة تلقائية', quarantined: 'في الحجر بعد فحص النوع والحجم', released: 'محرر للتنزيل', revoked: 'ملغى', failed: 'تعذر النقل', expired: 'انتهت الصلاحية' };
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, { ...options, credentials: 'same-origin', cache: 'no-store', headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers } });
+  const response = await sessionFetch(path, { ...options, credentials: 'same-origin', cache: 'no-store', headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers } });
   const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(body?.error?.message ?? 'تعذر نقل الملف.');
+  if (!response.ok) throw new Error(chatHttpErrorMessage(response.status, body?.error, 'تعذر نقل الملف.'));
   return body as T;
 }
 

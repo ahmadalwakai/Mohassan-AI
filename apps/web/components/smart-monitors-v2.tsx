@@ -4,6 +4,7 @@ import { useEffect, useId, useState } from "react";
 import { MonitorCardSchema, MonitorManagementResultSchema, MonitorV2ControlSchema, monitorV2Targets,
   type MonitorCard, type MonitorManagementCard, type MonitorSpec, type MonitorV2Target } from "@mohassan/contracts";
 import { changeMonitor, publishMonitorUpdate } from "./monitors-client";
+import { chatHttpErrorMessage, sessionFetch } from "./chat-request";
 import styles from "./smart-monitors.module.css";
 
 const endpoint = "/api/chat/monitors";
@@ -29,10 +30,10 @@ const copy = {
 };
 
 async function monitorRequest(path: string, fallback: string, options: { body?: object; signal?: AbortSignal } = {}) {
-  const response = await fetch(`${endpoint}${path}`, { credentials: "same-origin", cache: "no-store", signal: options.signal,
+  const response = await sessionFetch(`${endpoint}${path}`, { credentials: "same-origin", cache: "no-store", signal: options.signal,
     ...(options.body && { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(options.body) }) });
   const data = await response.json().catch(() => null);
-  if (!response.ok || !data) throw new Error(data?.error?.message ?? fallback);
+  if (!response.ok || !data) throw new Error(chatHttpErrorMessage(response.status, data?.error, fallback));
   return data;
 }
 

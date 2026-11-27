@@ -22,6 +22,9 @@ import { CodingProjects } from "./coding-projects";
 import { CodingResultView } from "./coding-result";
 import { BrowserOpenResult } from "./browser-open-result";
 import { releaseThisBrowser, useTaskNotifications } from "./notification-client";
+import { ChatHttpError, chatErrorMessage, isSessionExpired, OFFLINE_MESSAGE } from "./chat-connection";
+import { startChatPoll, useBrowserOffline } from "./chat-poll";
+import { onSessionExpired, renewChatSession, requestChatJson } from "./chat-request";
 import browserStyles from "./browser-open-result.module.css";
 
 const StudioAiResult = dynamic(() => import("./studio-ai-panel").then(module => module.StudioAiResult));
@@ -86,25 +89,15 @@ const phases = [
   ["الإصدار الإنتاجي", "اختبارات متكاملة ونشر وتشغيل"],
 ];
 
-class ApiError extends Error {
-  constructor(message: string, readonly status: number) { super(message); }
-}
-
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
-    ...options, cache: "no-store", credentials: "same-origin",
-    headers: { "Content-Type": "application/json", ...options.headers },
-  });
-  const body = await response.json().catch(() => null);
-  if (!response.ok) {
-    const message = response.status === 429 ? "طلبات متتابعة كثيرة. انتظر قليلًا ثم أعد المحاولة." : body?.error?.message ?? (typeof body?.message === "string" ? body.message : "تعذر إتمام الطلب. حاول مجددًا.");
-    throw new ApiError(message, response.status);
-  }
-  return body as T;
+function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const publicRequest = path === "/api/setup" || path === "/api/auth/get-session" || path === "/api/auth/sign-in/email";
+  const headers = new Headers(options?.headers);
+  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  return requestChatJson<T>(path, { ...options, headers }, publicRequest ? fetch : undefined);
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof ApiError ? error.message : "تعذر الاتصال بالخدمة. تأكد من تشغيلها وحاول مجددًا.";
+  return chatErrorMessage(error, navigator.onLine === false);
 }
 
 function dateLabel(value: string): string {
@@ -146,7 +139,7 @@ function TaskResult({ result, capabilityId, goal, offline = false, onChanged, on
   return <section className="result-box"><h3><CheckCheck size={18} />{result.kind === "shadow" ? "اقتراح المهمة" : "نتيجة المهمة"}</h3>{capabilityId === "system.diagnostic" && goal && detectBrowserOpenIntent(goal) ? <p className="inline-error" role="alert">اكتمل تشخيص الخدمة فقط. هذا السجل لا يثبت فتح الصفحة أو التقاط صورة لها. أنشئ مهمة بقدرة فتح الصفحة في المتصفح لتنفيذ طلبك.</p> : null}<p className="result-summary">{summary}</p>{result.kind === "shadow" ? <><p className="shadow-notice"><ShieldCheck size={15} />{capabilityId === "browser.open" ? "وضع الاقتراح: لم تُفتح الصفحة ولم تُلتقط صورة لها." : capabilityId === "plan.draft" ? "وضع الاقتراح: لم يُرسل طلب إلى Groq ولم تُشغّل أدوات الخطة." : ["coding.change", "studio.change"].includes(capabilityId ?? "") ? "وضع الاقتراح: لم يُرسل طلب إلى النموذج ولم تُعدّل ملفات أو تُشغّل اختبارات." : "وضع الاقتراح: لم تُشغّل أداة التشخيص."}</p>{proposed.length ? <ul className="proposed-checks">{proposed.map((name) => <li key={name}>{checkLabels[name] ?? name}</li>)}</ul> : null}</> : <>{checks.map((check, index) => <div className="result-check" key={typeof check.name === "string" ? check.name : index}><div><span>{check.passed === true ? <Check size={15} /> : <X size={15} />}{typeof check.name === "string" ? checkLabels[check.name] ?? check.name : "فحص مسجل"}</span>{check.passed === true && typeof check.name === "string" && checkEvidence[check.name] ? <small>{checkEvidence[check.name]}</small> : null}</div><strong>{check.passed === true ? "اجتاز الفحص" : "لم يجتز الفحص"}</strong></div>)}{typeof result.observedAt === "string" ? <p className="result-observed">وقت الفحص: <time dateTime={result.observedAt}>{dateLabel(result.observedAt)}</time></p> : null}</>}<details className="evidence-details"><summary>الأدلة التفصيلية</summary><pre dir="ltr">{JSON.stringify(result, null, 2)}</pre></details></section>;
 }
 
-function AuthScreen({ needsSetup, onAuthenticated, onRetry }: { needsSetup: boolean; onAuthenticated: (session: Session) => void; onRetry: () => void }) {
+function AuthScreen({ needsSetup, notice, onAuthenticated, onRetry }: { needsSetup: boolean; notice: string; onAuthenticated: (session: Session) => void; onRetry: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -163,11 +156,11 @@ function AuthScreen({ needsSetup, onAuthenticated, onRetry }: { needsSetup: bool
       if (!session?.user) throw new Error("missing session");
       onAuthenticated(session);
     } catch (caught) {
-      setError(errorMessage(caught));
+      setError(isSessionExpired(caught) ? "البريد الإلكتروني أو كلمة المرور غير صحيحة." : errorMessage(caught));
       if (needsSetup) onRetry();
     } finally { setBusy(false); }
   }
-  return <main className="auth-shell"><section className="auth-form-panel"><div className="auth-form-wrap"><h2>{needsSetup ? "أنشئ حساب المالك" : "تسجيل الدخول"}</h2><form onSubmit={submit} className="stack-form">{needsSetup ? <label>الاسم<input name="name" autoComplete="name" required maxLength={80} placeholder="كيف نناديك؟" /></label> : null}<label>البريد الإلكتروني<input name="email" type="email" dir="ltr" autoComplete="email" required placeholder="you@example.com" /></label><label>كلمة المرور<input name="password" type="password" dir="ltr" autoComplete={needsSetup ? "new-password" : "current-password"} required minLength={needsSetup ? 12 : undefined} placeholder={needsSetup ? "12 حرفًا على الأقل" : "كلمة المرور"} /></label>{needsSetup ? <label>رمز الإعداد المحلي<input name="setupToken" type="password" dir="ltr" autoComplete="off" required placeholder="رمز التحقق المحلي" /><small>تجده في الملف المحلي <code dir="ltr">.data/setup-token</code> داخل المشروع.</small></label> : null}{error ? <p className="inline-error" role="alert">{error}</p> : null}<Button type="submit" className="primary-button auth-submit" loading={busy} disabled={busy}>{needsSetup ? "إنشاء الحساب" : "دخول"}</Button></form></div></section></main>;
+  return <main className="auth-shell"><section className="auth-form-panel"><div className="auth-form-wrap"><h2>{needsSetup ? "أنشئ حساب المالك" : "تسجيل الدخول"}</h2><form onSubmit={submit} className="stack-form">{needsSetup ? <label>الاسم<input name="name" autoComplete="name" required maxLength={80} placeholder="كيف نناديك؟" /></label> : null}<label>البريد الإلكتروني<input name="email" type="email" dir="ltr" autoComplete="email" required placeholder="you@example.com" /></label><label>كلمة المرور<input name="password" type="password" dir="ltr" autoComplete={needsSetup ? "new-password" : "current-password"} required minLength={needsSetup ? 12 : undefined} placeholder={needsSetup ? "12 حرفًا على الأقل" : "كلمة المرور"} /></label>{needsSetup ? <label>رمز الإعداد المحلي<input name="setupToken" type="password" dir="ltr" autoComplete="off" required placeholder="رمز التحقق المحلي" /><small>تجده في الملف المحلي <code dir="ltr">.data/setup-token</code> داخل المشروع.</small></label> : null}{error ? <p className="inline-error" role="alert">{error}</p> : notice ? <p className="inline-error" role="status">{notice}</p> : null}<Button type="submit" className="primary-button auth-submit" loading={busy} disabled={busy}>{needsSetup ? "إنشاء الحساب" : "دخول"}</Button></form></div></section></main>;
 }
 
 function CapabilityCard({ capability }: { capability: Capability }) {
@@ -316,29 +309,45 @@ export function Workspace() {
     window.addEventListener("hashchange", openSite);
     return () => window.removeEventListener("hashchange", openSite);
   }, []);
-  const [offline, setOffline] = useState(false);
+  const browserOffline = useBrowserOffline();
+  const [snapshotUnavailable, setSnapshotUnavailable] = useState(false);
+  const offline = browserOffline || snapshotUnavailable;
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [sessionNotice, setSessionNotice] = useState("");
   const [query, setQuery] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<string | null>(null);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const refresh = useCallback(() => setRefreshKey((key) => key + 1), []);
+  const [bootAttempt, setBootAttempt] = useState(0);
+  const retryBoot = useCallback(() => setBootAttempt((attempt) => attempt + 1), []);
   const [access, setAccess] = useState<Access | null>(null);
   const [inviteToken, setInviteToken] = useState<string | null>(null);
   useEffect(() => { const match = /^#invite=([A-Za-z0-9_-]{43})$/.exec(location.hash); if (match) setInviteToken(match[1]!); }, []);
   const closeInvite = useCallback(() => { setInviteToken(null); history.replaceState(null, "", location.pathname); }, []);
+  const returnToSignIn = useCallback((notice: string) => {
+    renewChatSession();
+    setSnapshot(null); setSession(null); setAccess(null); setView("overview"); setAdvanced(false);
+    setMobileMenu(false); setSelectedTask(null); setCreateOpen(false);
+    setQuery(""); setSnapshotUnavailable(false); setError(""); setLastUpdated(null);
+    setSessionNotice(notice); setBoot("signin");
+  }, [setAdvanced]);
+  useEffect(() => {
+    if (boot === "ready") return onSessionExpired(() => returnToSignIn(errorMessage(new ChatHttpError(401))));
+  }, [boot, returnToSignIn]);
   useEffect(() => {
     if (boot !== "ready" || !session) { setAccess(null); return; }
-    let active = true;
-    request<Access>("/api/access").then(value => { if (active) setAccess(value); }).catch((caught) => {
-      if (!active) return;
-      if (caught instanceof ApiError && [401, 403].includes(caught.status)) { setSession(null); setBoot("signin"); setError(caught.status === 403 ? caught.message : ""); }
+    if (browserOffline) return;
+    const controller = new AbortController();
+    request<Access>("/api/access", { signal: controller.signal }).then(value => { if (!controller.signal.aborted) setAccess(value); }).catch((caught) => {
+      if (controller.signal.aborted || isSessionExpired(caught)) return;
+      if (caught instanceof ChatHttpError && caught.status === 403) returnToSignIn(errorMessage(caught));
       else setError(errorMessage(caught));
     });
-    return () => { active = false; };
-  }, [boot, session]);
+    return () => controller.abort();
+  }, [boot, session, browserOffline, returnToSignIn]);
   const owner = access?.role === "owner";
 
   useEffect(() => {
@@ -350,50 +359,38 @@ export function Workspace() {
         const [setup, existing] = await Promise.all([request<{ needsSetup: boolean; setupAvailable?: boolean }>("/api/setup", { signal: controller.signal }), request<Session | null>("/api/auth/get-session", { signal: controller.signal })]);
         if (!active) return;
         if (existing?.user) { setSession(existing); setBoot("ready"); } else setBoot(setup.needsSetup ? setup.setupAvailable === false ? "unconfigured" : "setup" : "signin");
-      } catch (caught) { if (active && !(caught instanceof DOMException && caught.name === "AbortError")) { setError(errorMessage(caught)); setBoot("error"); } }
+      } catch (caught) {
+        if (!active) return;
+        if (isSessionExpired(caught)) returnToSignIn(errorMessage(caught));
+        else { setError(errorMessage(caught)); setBoot("error"); }
+      }
     }
     void initialize();
     return () => { active = false; controller.abort(); };
-  }, []);
+  }, [bootAttempt, returnToSignIn]);
+  useEffect(() => {
+    if (boot !== "error") return;
+    window.addEventListener("online", retryBoot);
+    return () => window.removeEventListener("online", retryBoot);
+  }, [boot, retryBoot]);
 
   useEffect(() => {
     if (boot !== "ready" || !advanced || !owner) return;
-    let active = true;
-    let controller: AbortController | null = null;
-    let fetching = false;
-    async function load() {
-      if (document.hidden || fetching) return;
-      fetching = true; controller = new AbortController();
-      try {
-        const result = await request<WorkspaceSnapshot>("/api/workspace", { signal: controller.signal });
-        if (active) { setSnapshot(result); setOffline(false); setError(""); setLastUpdated(new Date().toISOString()); }
-      } catch (caught) {
-        if (active && !(caught instanceof DOMException && caught.name === "AbortError")) {
-          if (caught instanceof ApiError && caught.status === 401) { setSession(null); setSnapshot(null); setBoot("signin"); }
-          else { setOffline(true); setError(errorMessage(caught)); }
-        }
-      } finally { fetching = false; }
-    }
-    void load();
-    const interval = setInterval(() => { void load(); }, 3000);
-    const visible = () => { if (!document.hidden) void load(); };
-    const disconnected = () => setOffline(true);
-    document.addEventListener("visibilitychange", visible); window.addEventListener("online", visible); window.addEventListener("offline", disconnected);
-    return () => { active = false; controller?.abort(); clearInterval(interval); document.removeEventListener("visibilitychange", visible); window.removeEventListener("online", visible); window.removeEventListener("offline", disconnected); };
+    return startChatPoll({
+      interval: 3000, hiddenInterval: null, firstDelay: 0,
+      async run(signal) {
+        const result = await request<WorkspaceSnapshot>("/api/workspace", { signal });
+        if (!signal.aborted) { setSnapshot(result); setSnapshotUnavailable(false); setError(""); setLastUpdated(new Date().toISOString()); }
+      },
+      onError(caught) { setSnapshotUnavailable(true); setError(errorMessage(caught)); },
+    });
   }, [boot, refreshKey, advanced, owner]);
 
-  async function retryBoot() {
-    try { const setup = await request<{ needsSetup: boolean; setupAvailable?: boolean }>("/api/setup"); setBoot(setup.needsSetup ? setup.setupAvailable === false ? "unconfigured" : "setup" : "signin"); setError(""); }
-    catch (caught) { setError(errorMessage(caught)); setBoot("error"); }
-  }
   async function signOut() {
     try {
       await releaseThisBrowser(session?.user.id);
       await request("/api/auth/sign-out", { method: "POST", body: "{}" });
-      setSnapshot(null); setSession(null); setAccess(null); setView("overview"); setAdvanced(false);
-      setMobileMenu(false); setSelectedTask(null); setCreateOpen(false);
-      setQuery(""); setOffline(false); setError(""); setLastUpdated(null);
-      setBoot("signin");
+      returnToSignIn("");
     }
     catch (caught) { setError(errorMessage(caught)); }
   }
@@ -402,7 +399,7 @@ export function Workspace() {
   if (boot === "loading") return <div className="boot-screen"><Brand compact /><Spinner size="lg" /><p>نجهّز مساحة عملك…</p></div>;
   if (boot === "error") return <div className="boot-screen"><Brand compact /><span className="empty-icon"><Unplug size={28} /></span><h1>الخدمة غير متاحة الآن</h1><p role="alert">{error}</p><Button className="primary-button" onClick={() => { void retryBoot(); }}><RefreshCw size={16} />إعادة المحاولة</Button></div>;
   if (boot === "unconfigured") return <main className="boot-screen"><Brand compact /><span className="empty-icon"><ShieldCheck size={28} /></span><h1>يلزم إعداد حساب المالك</h1><p>إنشاء الحساب الأول متاح من بيئة الخادم فقط. بعد إتمامه، أعد المحاولة للدخول إلى مساحة العمل.</p><Button className="primary-button" onClick={() => { void retryBoot(); }}><RefreshCw size={16} />إعادة المحاولة</Button></main>;
-  if (boot === "setup" || boot === "signin") return <AuthScreen needsSetup={boot === "setup"} onAuthenticated={(value) => { setSession(value); setBoot("ready"); }} onRetry={() => { void request<{ needsSetup: boolean; setupAvailable?: boolean }>("/api/setup").then((value) => { if (!value.needsSetup) setBoot("signin"); }).catch(() => {}); }} />;
+  if (boot === "setup" || boot === "signin") return <AuthScreen needsSetup={boot === "setup"} notice={browserOffline ? OFFLINE_MESSAGE : sessionNotice} onAuthenticated={(value) => { renewChatSession(); setSessionNotice(""); setSession(value); setBoot("ready"); }} onRetry={() => { void request<{ needsSetup: boolean; setupAvailable?: boolean }>("/api/setup").then((value) => { if (!value.needsSetup) setBoot("signin"); }).catch(() => {}); }} />;
 
   if (shouldMountMemberDataAccess(access, advanced)) return <MemberDataAccessMount access={access} error={error} tools={MemberTools} onChat={() => setAdvanced(false)} onSignOut={() => { void signOut(); }} />;
   if (!advanced || !owner) return <AssistantApp name={session?.user.name ?? "بك"} onAdvanced={() => setAdvanced(true)} onOpenTool={owner ? (target) => { setView(target); setAdvanced(true); } : undefined} onSignOut={() => { void signOut(); }} notifications={notifications} />;

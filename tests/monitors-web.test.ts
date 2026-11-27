@@ -148,8 +148,14 @@ describe("web monitor requests", () => {
     expect(update).toHaveBeenCalledTimes(1);
   });
 
-  it("surfaces the server error when approval fails", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: { message: "Monitor quota reached" } }, { status: 429 })));
-    await expect(changeMonitor(proposal.id, "approve", "Could not save")).rejects.toThrow("Monitor quota reached");
+  // HTTP status semantics, retrieved 2026-11-27.
+  // https://www.rfc-editor.org/rfc/rfc9110.html#section-15 and https://www.rfc-editor.org/rfc/rfc6585.html#section-4
+  it.each([
+    [403, "ليست لديك صلاحية لتنفيذ هذا الطلب."],
+    [429, "طلبات كثيرة متتابعة. انتظر قليلًا ثم حاول مجددًا."],
+    [503, "الخدمة غير متاحة مؤقتًا. حاول مجددًا بعد قليل."],
+  ])("localizes HTTP %i when approval fails", async (status, message) => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: { message: "Monitor request failed" } }, { status })));
+    await expect(changeMonitor(proposal.id, "approve", "Could not save")).rejects.toThrow(message);
   });
 });

@@ -1,0 +1,46 @@
+.page {
+  box-sizing: border-box;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 1rem;
+  min-height: 100vh;
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--ink, CanvasText);
+  background: var(--background, Canvas);
+  font-family: var(--font-chat, Tahoma), Arial, sans-serif;
+}
+
+.page h1,
+.page p {
+  margin: 0;
+}
+
+.page p {
+  color: var(--text, CanvasText);
+  line-height: 1.75;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.primary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  padding-inline: 1rem;
+  border: 1px solid var(--green, ButtonBorder);
+  border-radius: .5rem;
+  color: var(--surface, ButtonText);
+  background: var(--green, ButtonFace);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
