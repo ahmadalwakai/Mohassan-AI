@@ -42,9 +42,8 @@ export function registerNotificationRoutes(app: FastifyInstance, options: {
   db: Kysely<any>;
   owner: (request: FastifyRequest) => Promise<{ id: string }>;
   isActive: (userId: string) => Promise<boolean>;
-  recoverChatRuns: () => Promise<void>;
 }) {
-  const { db, owner, isActive, recoverChatRuns } = options;
+  const { db, owner, isActive } = options;
   registerIosPushRoutes(app, db, owner);
   const config = webPushConfigFromEnv(process.env);
   const send: PushSender | undefined = config ? (subscription, payload) => sendWebPushNotification(config, subscription, payload) : undefined;
@@ -95,12 +94,7 @@ export function registerNotificationRoutes(app: FastifyInstance, options: {
 
   if (send || sendIos) {
     let inFlight: Promise<void> | undefined;
-    let recoverAfter = Date.now() + 15_000;
     async function drain() {
-      if (send && Date.now() >= recoverAfter) {
-        recoverAfter = Date.now() + 15_000;
-        await recoverChatRuns().catch(() => { app.log.error('Chat notification recovery could not finish.'); });
-      }
       const now = new Date();
       await Promise.all([
         send && dispatchPushNotifications(db, send, isActive, now),

@@ -1312,13 +1312,18 @@ export function normalizeHandsPlan(plan: HandsPlan): HandsPlan {
 /** A public page read over HTTP without the browser; `unreadable` (no text, not HTML, timeout) falls back to the browser, `disallowed` (robots) is skipped. */
 export type HandsRead = { kind: 'page'; page: AgentPage } | { kind: 'unreadable' } | { kind: 'disallowed' };
 
-export interface HandsIO {
-  /** The conversation's live page, or null when no page is open. */
-  page(): Promise<AgentPage | null>;
+export interface HandsPublicIO {
   /** The same public web search used by the model, with topic relevance and source ranking. */
   search?(query: string, limit: number): Promise<SearchHit[]>;
   /** Reads a search result over HTTP, so a question is answered without opening the browser. */
   read?(url: string): Promise<HandsRead>;
+}
+
+export interface HandsIO extends HandsPublicIO {
+  /** Authorize a group of concurrent public operations and validate their observations together. */
+  publicWork?<T>(work: (io: HandsPublicIO) => Promise<T>, label?: string): Promise<T>;
+  /** The conversation's live page, or null when no page is open. */
+  page(): Promise<AgentPage | null>;
   act(action: AgentAction): Promise<AgentPage>;
   prepare(action: AgentAction): Promise<AgentRequestPermit | null>;
   /** Cookie banners, sign-in and human checks; null when the run paused or ended there. */
@@ -1407,6 +1412,12 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
   const first = plan.steps[0];
   const publicPageRead = plan.steps.length === 1 && first?.kind === 'ask_page' && first.conversationPage?.readPublic;
   let page = publicPageRead ? null : await io.page();
+  const publicWork = async <T>(work: (publicIO: HandsPublicIO) => Promise<T>, label?: string) => {
+    if (io.publicWork) return io.publicWork(work, label);
+    if (label) await io.step(label);
+    return work(io);
+  };
+  const tryRead = (web: HandsPublicIO, url: string) => web.read!(url).catch((): HandsRead => ({ kind: 'unreadable' }));
   const go = async (action: AgentAction, label: string): Promise<AgentPage | null> => {
     let next: AgentPage;
     try { next = await io.act(action); }
@@ -1454,9 +1465,9 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
     // The search providers did not answer (unavailable, rate limited, invalid answer): a failed request, told apart from a
     // search that answered with nothing about the question.
     let providerFailure: string | null = null;
-    const lookup = async (words: string) => {
+    const lookup = async (words: string, web: HandsPublicIO) => {
       let hits: SearchHit[] = [];
-      try { hits = await io.search!(words, 6); }
+      try { hits = await web.search!(words, 6); }
       catch (error) {
         if (error instanceof BrowserError && error.code === 'RESEARCH_PROVIDERS_FAILED') providerFailure = error.message;
         // Cancellation, rejected query policy and lost execution authority must stop the run.
@@ -1493,10 +1504,12 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
     // Wikipedia opens a subject's article by its name and follows its redirects («المياه البيضاء» → «الساد», «الشاي الأخضر»
     // → «شاي أخضر», measured 2026-11-22), so the article is read while the search runs, not searched for after it: the search
     // lookup cost 1.1 to 1.9 s a question (the engine's one-second spacing, then the search). The page reader caches it.
-    const direct = subject.length && !live && surface.trim() && io.read
-      ? io.read(articleUrl(surface, questionLanguage(query))).catch((): HandsRead => ({ kind: 'unreadable' })) : null;
-    let results = await lookup(query);
-    const openedByName = direct ? await direct : null;
+    const directUrl = subject.length && !live && surface.trim() && io.read ? articleUrl(surface, questionLanguage(query)) : null;
+    const [openedByName, searched] = await publicWork(web => Promise.all([
+      directUrl ? tryRead(web, directUrl) : null,
+      lookup(query, web),
+    ]));
+    let results = searched;
     const named = openedByName?.kind === 'page' && readableOverHttp(openedByName.page.text) && !isDisambiguationPage(openedByName.page) ? openedByName.page : null;
     if (named) {
       const title = tidy(named.title) || hostOf(named.url);
@@ -1517,7 +1530,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
     if (!results.length && !live && fold(narrower) !== fold(query) && topicWords(narrower).length) {
       await io.step(`لم يُجب البحث الأول؛ البحث عن «${narrower.slice(0, 60)}»`);
       await pause(PROVIDER_SPACING_MS);
-      results = await lookup(narrower);
+      results = await publicWork(web => lookup(narrower, web));
       looked.add(fold(narrower));
     }
     // A subject-name retry can recover its article when the first hits don't answer. Read the
@@ -1527,7 +1540,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
       const retrySubject = async () => {
         await io.step(`البحث عن مقالة «${surface.slice(0, 60)}»`);
         await pause(PROVIDER_SPACING_MS);
-        return (await lookup(surface)).filter(hit => isOwnArticle(hit.title, searchable));
+        return (await publicWork(web => lookup(surface, web))).filter(hit => isOwnArticle(hit.title, searchable));
       };
       if (ask && results.length) return { results, retrySubject };
       const own = await retrySubject();
@@ -1569,8 +1582,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         // general search runs as before.
         const release = !template && !box && step.ask && io.read ? releaseQuestion(step.query) : null;
         if (release) {
-          await io.step(readingLabel([release.page]));
-          const read = await io.read!(release.page).catch((): HandsRead => ({ kind: 'unreadable' }));
+          const read = await publicWork(web => tryRead(web, release.page), readingLabel([release.page]));
           const official = read.kind === 'page' ? read.page : null;
           const fact = official ? release.parse(official.text) : null;
           if (official && fact) {
@@ -1641,7 +1653,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
           // Engine results are read over HTTP, all together, so no browser opens for a question. A page that
           // gives no readable text (built by JavaScript, not HTML, timed out) is opened in the hidden browser instead.
           const reads: (HandsRead | null)[] = searched && io.read && fitting.length
-            ? (await io.step(readingLabel(fitting.map(item => item.url))), await Promise.all(fitting.map(item => io.read!(item.url).catch((): HandsRead => ({ kind: 'unreadable' })))))
+            ? await publicWork(web => Promise.all(fitting.map(item => tryRead(web, item.url))), readingLabel(fitting.map(item => item.url)))
             : fitting.map(() => null);
           for (const [index, item] of fitting.entries()) {
             tried.add(withoutHash(item.url));
@@ -1843,7 +1855,8 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
       case 'ask_page': {
         const context = step.conversationPage;
         if (publicPageRead && context?.expectedUrl && safeResumeUrl(context.expectedUrl) === context.expectedUrl && io.read) {
-          const result = await io.read(context.expectedUrl);
+          const expectedUrl = context.expectedUrl;
+          const result = await publicWork(web => web.read!(expectedUrl));
           page = result.kind === 'page' ? result.page : null;
         }
         if (context && page && !matchesConversationPage(page, context)) page = null;

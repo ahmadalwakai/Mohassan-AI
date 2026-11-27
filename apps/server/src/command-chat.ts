@@ -26,7 +26,8 @@ import {
   SEARCH_REPEATED, SEARCH_UNUSABLE, asksToRemember, needsReview, noteAttempt, reviewRequest, searchKey, sensitiveAction, siteOf, situation, skillContextBudget, stepLabel, systemPrompt, type BrainState, type Decision, type ModelTier, type WorkTool,
 } from './assistant/brain.js';
 import { ADS_DRAFT_NOTE, ADS_SKILL_SLUG } from './assistant/ads-check.js';
-import { isLiveWebQuestion, PROVIDER_SPACING_MS, answerSubject, isBareAddress, isFollowUp, normalizeHandsPlan, notWebReason, parseHands, plainTitle, refersBack, runHands, siteQuestion, siteToOpen, tidy, topicWords, unnamedSite, webQuestion, type HandsIO, type HandsOutcome, type HandsPlan, type HandsRead, type HandsStep } from './assistant/hands.js';
+import { isLiveWebQuestion, PROVIDER_SPACING_MS, answerSubject, isBareAddress, isFollowUp, normalizeHandsPlan, notWebReason, parseHands, plainTitle, refersBack, runHands, siteQuestion, siteToOpen, tidy, topicWords, unnamedSite, webQuestion, type HandsIO, type HandsOutcome, type HandsPlan, type HandsStep } from './assistant/hands.js';
+import { createHandsWebIO } from './assistant/hands-web-io.js';
 import { liveLabel } from './assistant/activity.js';
 import { routeLiveDataChat } from './live-data/chat.js';
 import type { DesktopCommand, DesktopOutcome, ParsedDesktopCommand } from '@mohassan/desktop';
@@ -125,7 +126,10 @@ import { guardMemorySave } from './assistant/mind/index.js';
 import { stopChromeJobsForRun, type ChromeExtensionControl } from './chrome-extension.js';
 import { assessBrowserVerification } from './assistant/verification.js';
 import { newGoalState, observeFailure, observeOutcome, reviewOpen, reviewStop, stagnationWarning, type BrainVersion } from './assistant/goal-integrity.js';
-import { ChatWaitQuerySchema, abortWhenClosed, conversationVersion, waitForChange } from './chat-wait.js';
+import { ChatWaitQuerySchema, abortWhenClosed, conversationVersion, versionFromConversationRow, waitForChange } from './chat-wait.js';
+import { readChatMessageWindow, readLatestChatRun, readOwnedChat } from './chat-detail-reads.js';
+import { withChatDetailRole } from './chat-detail-role.js';
+import { lockExpiredConversations, lockStillExpiredRun, migrateChatStatusIndex, startChatRecoveryTimer, WAITING_STATUSES, type ChatRecoveryScope } from './chat-lease-recovery.js';
 import { finalizeChatFailure, recordChatNotification } from './chat-notification-lifecycle.js';
 import { noPreviousAnswer, shorterAnswer, shorterRequest } from './assistant/answer-reshape.js';
 import { initialProgressMarker } from './ops/metrics/chat-progress.js';
@@ -277,9 +281,6 @@ const HISTORY_MESSAGES = 6;
 const V5_CHAT_FOOTER = `\n\n${V5_CHAT_LABEL}`;
 /** Trail steps an answer turn may hold for the model council: reading only (searches, page reads, lookups, a calculation). */
 const COUNCIL_ANSWER_STEP = /^(?:search |read |calculate$|calculation_memory$|memory_search$|knowledge_search$|skill_read$|shorten_previous_answer$|correction$|local_sequence$)/u;
-/** The newest messages a conversation's detail carries; `olderMessages` counts the rest. */
-const MESSAGE_WINDOW = 300;
-const WAITING_STATUSES = ['waiting_user', 'waiting_input', 'waiting_approval'];
 const GOOGLE_SIGN_IN_ORIGIN = 'https://accounts.google.com';
 const GOOGLE_SIGN_IN_STOP = 'توقفت عند صفحة تسجيل الدخول إلى Google. متصفح موحسن الحالي لا يدعم إكمال تسجيل الدخول إلى Google داخل هذه الجلسة.';
 const GOOGLE_SIGN_IN_HANDS_ON = 'سجّل دخولك إلى Google بنفسك من لوحة المتصفح، ثم اضغط «أكملت». لا تكتب كلمة المرور في المحادثة.';
@@ -465,6 +466,7 @@ export async function commandChatMigration(db: Kysely<any>, beforeShares?: (tx: 
       await sql`ALTER TABLE chat_messages ADD COLUMN council jsonb CHECK (council IS NULL OR role = 'assistant')`.execute(tx);
       await tx.insertInto('schema_migrations').values({ version: 'chat_message_council_v1' }).execute();
     }
+    await migrateChatStatusIndex(tx);
     await campaignEventsMigration(tx);
     await beforeShares?.(tx);
     await migrateConversationShares(tx);
@@ -696,27 +698,26 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     });
   }
 
-  async function recoverExpired() {
+  async function recoverExpired(scope?: ChatRecoveryScope) {
     const abandoned:{ownerId:string;state:unknown}[]=[];
     await db.transaction().execute(async tx => {
-      const conversations = await tx.selectFrom('chat_conversations as c').innerJoin('chat_runs as r','r.id','c.active_run_id')
-        .select(['c.id','r.id as run_id','r.owner_id','r.state']).where('c.status','in',['running',...WAITING_STATUSES])
-        .where(eb => eb.or([eb('r.lease_expires_at','<',sql<Date>`CURRENT_TIMESTAMP`),eb('r.worker_id','is',null)]))
-        .forUpdate('c').skipLocked().limit(50).execute();
+      const conversations = await lockExpiredConversations(tx, scope);
       for (const row of conversations) {
-        await tx.selectFrom('chat_runs').select('id').where('id','=',row.run_id).forUpdate().executeTakeFirstOrThrow();
+        const run = await lockStillExpiredRun(tx, row);
+        if (!run) continue;
         await tx.updateTable('chat_runs').set({status:'interrupted',lease_token:randomUUID(),updated_at:new Date()}).where('id','=',row.run_id).execute();
         await tx.updateTable('chat_effect_receipts').set({status:'unknown',finished_at:new Date()}).where('run_id','=',row.run_id).where('status','=','started').execute();
         await tx.updateTable('chat_model_receipts').set({status:'unknown',error_code:'CHAT_LEASE_EXPIRED',finished_at:new Date()}).where('run_id','=',row.run_id).where('status','=','started').execute();
         await recordTerminalRun(tx, row.run_id, 'interrupted');
         await closeOpenCampaignTasks(tx, row.id, row.run_id, unresolved => campaignCancelEvent('run_interrupted', unresolved));
         await tx.updateTable('chat_conversations').set({status:'failed',active_run_id:null,progress:null,question:null,approval:null,secure:null,error:'انتهت مهلة العامل أو انقطع. لم يُكرر أي إجراء؛ راجع الأثر قبل طلب جديد.',updated_at:new Date()}).where('id','=',row.id).execute();
-        abandoned.push({ownerId:row.owner_id,state:row.state});
+        abandoned.push({ownerId:row.owner_id,state:run.state});
       }
     });
     for(const entry of abandoned)await dropUnapproved(entry.ownerId,entry.state);
   }
   await recoverExpired();
+  const stopRecoveryTimer = startChatRecoveryTimer(recoverExpired);
 
   async function lockedExecution(tx: Kysely<any>, id: string, runId: string) {
     const current = execution.getStore();
@@ -811,11 +812,20 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     };
   }
 
-  async function owned(ownerId: string, id: string) {
-    await recoverExpired();
-    const row = await db.selectFrom('chat_conversations').selectAll().where('id', '=', id).where('owner_id', '=', ownerId).executeTakeFirst();
+  async function owned(ownerId: string, id: string, withVersion = false) {
+    let row = await readOwnedChat(db, ownerId, id, withVersion);
+    if (row?.lease_expired) {
+      await recoverExpired({ ownerId, id });
+      row = await readOwnedChat(db, ownerId, id, withVersion);
+    }
     if (!row) throw notFound();
     return row;
+  }
+
+  // Browser frames and activity only need ownership. Detail and the timer handle run status.
+  async function assertOwnsBrowserRead(ownerId: string, id: string) {
+    const row = await db.selectFrom('chat_conversations').select('id').where('id', '=', id).where('owner_id', '=', ownerId).executeTakeFirst();
+    if (!row) throw notFound();
   }
 
   async function effectiveSourceForRun(row: Record<string, any>,
@@ -838,13 +848,20 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       ...(council && role === 'assistant' && { council: JSON.stringify(vault.scrubValue(id, council, clean)) }) }).execute();
   }
 
-  async function addStep(id: string, runId: string, text: string) {
-    await runTransaction(id,runId,tx=>tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId, kind: 'step', message: vault.scrub(id,clean(text)) }).execute());
+  async function addStep(id: string, runId: string, text: string, progress?: string) {
+    await runTransaction(id, runId, async tx => {
+      await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId, kind: 'step', message: vault.scrub(id,clean(text)) }).execute();
+      if (progress !== undefined) await writeProgress(tx, id, progress);
+    });
+  }
+
+  function writeProgress(tx: Kysely<any>, id: string, text: string) {
+    return tx.updateTable('chat_conversations').set({ progress: text, updated_at: new Date() }).where('id', '=', id).execute();
   }
 
   async function setProgress(id: string, text: string) {
     const current=execution.getStore(); if(!current)throw new RunEnded();
-    await runTransaction(id,current.runId,tx=>tx.updateTable('chat_conversations').set({ progress: text, updated_at: new Date() }).where('id', '=', id).execute());
+    await runTransaction(id, current.runId, tx => writeProgress(tx, id, text));
   }
 
   async function keepPage(id: string, page: AgentPage) {
@@ -855,9 +872,12 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     current.page = page;
   }
 
-  async function saveState(runId: string, state: BrainState) {
+  async function saveState(runId: string, state: BrainState, transition?: () => void) {
     const current=execution.getStore(); if(!current)throw new RunEnded();
-    await runTransaction(current.id,runId,tx=>tx.updateTable('chat_runs').set({ state: JSON.stringify(vault.scrubValue(current.id,state,clean)), steps: state.steps, updated_at: new Date() }).where('id', '=', runId).execute());
+    await runTransaction(current.id, runId, async tx => {
+      transition?.();
+      await tx.updateTable('chat_runs').set({ state: JSON.stringify(vault.scrubValue(current.id,state,clean)), steps: state.steps, updated_at: new Date() }).where('id', '=', runId).execute();
+    });
   }
 
   /**
@@ -1080,26 +1100,26 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   }
 
   async function detail(ownerId: string, id: string): Promise<ChatConversation> {
-    const row = await owned(ownerId, id);
-    // The mark is read before the lists, so the lists are never older than it: a change in between only makes the next
-    // held request (chat-wait.ts) answer at once.
-    const version = await conversationVersion(db, ownerId, id);
-    const lastRun = await db.selectFrom('chat_runs').select(['id', 'state', 'status', 'created_at', 'updated_at', 'worker_id', 'goal']).where('conversation_id', '=', id).orderBy('created_at', 'desc').limit(1).executeTakeFirst();
-    // The newest 300 messages. Until 2026-11-23 these were the first 300, so a conversation past 300 messages kept its new
-    // questions and answers in the database and never showed them.
-    const [newest, steps] = await Promise.all([
-      db.selectFrom('chat_messages').selectAll().where('conversation_id', '=', id).orderBy('created_at', 'desc').orderBy('id', 'desc').limit(MESSAGE_WINDOW).execute(),
-      lastRun
-        ? db.selectFrom('chat_events').select(['id', 'message', 'created_at']).where('conversation_id', '=', id).where('run_id', '=', lastRun.id).where('kind', '=', 'step').orderBy('created_at', 'desc').limit(40).execute()
-        : Promise.resolve([]),
+    // The mark is captured before the lists, so the lists are never older than it.
+    const row = await owned(ownerId, id, true);
+    const version = versionFromConversationRow(row);
+    const saved = AgentSessionCheckpointSchema.safeParse(row.browser_checkpoint);
+    const checkpoint = saved.success ? saved.data : null;
+    const page = (row.browser_state ?? (checkpoint ? { url: checkpoint.resumeUrl ?? 'about:blank', title: 'جلسة محفوظة',
+      observedAt: checkpoint.observedAt ?? checkpoint.savedAt, version: checkpoint.pageHash ?? 'saved' } : null)) as { url: string; title: string; observedAt: string; version: string } | null;
+
+    const [{ messages, olderMessages }, lastRun, campaign, { full, capabilities, monitorView }, live] = await Promise.all([
+      readChatMessageWindow(db, id),
+      readLatestChatRun(db, id, row.active_run_id),
+      readCampaignEvents(db, id),
+      withChatDetailRole(db, ownerId, async () => {
+        const full = config.fullAccess?.(ownerId) ?? Promise.resolve(true);
+        const [allowed, capabilities, monitorView] = await Promise.all([full, capabilitiesFor(ownerId, full), monitor?.view(ownerId, id)]);
+        return { full: allowed, capabilities, monitorView };
+      }),
+      page ? browser.hasPage(ownerId, id) : false,
     ]);
-    const olderMessages = newest.length < MESSAGE_WINDOW ? 0 : Math.max(0, Number((await db.selectFrom('chat_messages')
-      .select(eb => eb.fn.countAll<string | number>().as('n')).where('conversation_id', '=', id).executeTakeFirstOrThrow()).n) - newest.length);
-    const messages = newest.reverse();
-    const saved=AgentSessionCheckpointSchema.safeParse(row.browser_checkpoint);
-    const checkpoint=saved.success?saved.data:null;
-    const page = (row.browser_state??(checkpoint?{url:checkpoint.resumeUrl??'about:blank',title:'جلسة محفوظة',observedAt:checkpoint.observedAt??checkpoint.savedAt,version:checkpoint.pageHash??'saved'}:null)) as { url: string; title: string; observedAt: string; version: string } | null;
-    const capabilities = await capabilitiesFor(ownerId);
+    const steps = lastRun?.steps.reverse() ?? [];
     return ChatConversationSchema.parse({
       id, title: row.title, status: row.status, browserAccount: row.browser_account ?? null,
       messages: messages.map((item) => ({ id: item.id, role: item.role, text: item.text, createdAt: iso(item.created_at), ...messageImages(item.images),
@@ -1107,23 +1127,21 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       question: row.question ?? null,
       approval: row.approval ?? null,
       secure: row.secure ?? null,
-      browser: page ? { url: page.url, title: page.title, observedAt: page.observedAt, live: await browser.hasPage(ownerId, id), screenUrl: `/api/chat/conversations/${id}/screen?v=${page.version}`, recovery: row.browser_checkpoint ? row.browser_checkpoint.status === 'ready' && row.browser_checkpoint.resumeUrl ? 'available' : 'review_required' : 'unavailable',...(checkpoint?{recoveryToken:checkpointToken(checkpoint)}:{}) } : null,
-      progress: row.progress, error: row.error, campaign: await readCampaignEvents(db, id),
-      steps: steps.reverse().map((item) => ({ id: item.id, text: item.message, createdAt: iso(item.created_at) })),
+      browser: page ? { url: page.url, title: page.title, observedAt: page.observedAt, live, screenUrl: `/api/chat/conversations/${id}/screen?v=${page.version}`, recovery: row.browser_checkpoint ? row.browser_checkpoint.status === 'ready' && row.browser_checkpoint.resumeUrl ? 'available' : 'review_required' : 'unavailable',...(checkpoint?{recoveryToken:checkpointToken(checkpoint)}:{}) } : null,
+      progress: row.progress, error: row.error, campaign,
+      steps: steps.map((item) => ({ id: item.id, text: item.message, createdAt: iso(item.created_at) })),
       updatedAt: iso(row.updated_at), configured: capabilities.chatModel, capabilities,
       // The browser level (plan §6.1) is read from the rows above, never stored apart from them: the UI opens the panel by itself only at 3.
-      visibility: deriveBrowserVisibility({ request: messages.findLast(item => item.role === 'user')?.text ?? '', route: lastRun?.state?.routing?.route ?? null,
-        role: (config.fullAccess ? await config.fullAccess(ownerId) : true) ? 'owner' : 'member', hasPage: Boolean(page), status: row.status,
+      visibility: deriveBrowserVisibility({ request: messages.findLast(item => item.role === 'user')?.text ?? '', route: lastRun?.route ?? null,
+        role: full ? 'owner' : 'member', hasPage: Boolean(page), status: row.status,
         secure: row.secure ?? null, approval: row.approval ?? null, firstStep: steps[0]?.message ?? null, decidedAt: iso(row.updated_at) }),
       ...(version ? { version } : {}),
       ...(olderMessages ? { olderMessages } : {}),
       ...backgroundRunView(lastRun, row.active_run_id),
-      ...(monitor ? await monitor.view(ownerId, id) : {}),
+      ...monitorView,
       // The latest run as the runtime committed it (assistant/agent-run.ts); its row status is the authority for the verdict.
-      run: lastRun ? projectRunView({ runId: lastRun.id, status: lastRun.status, ledger: lastRun.state?.agentRun, createdAt: lastRun.created_at, updatedAt: lastRun.updated_at,
-        // Model calls are counted in the ledger; only a run recorded before ledgers existed is counted from its receipts.
-        ...(lastRun.state?.agentRun ? {} : { modelCalls: Number((await db.selectFrom('chat_model_receipts').select(eb => eb.fn.countAll<string | number>().as('n'))
-          .where('run_id', '=', lastRun.id).where('status', '=', 'succeeded').executeTakeFirstOrThrow()).n) }) }) : null,
+      run: lastRun ? projectRunView({ runId: lastRun.id, status: lastRun.status, ledger: lastRun.agent_run, createdAt: lastRun.created_at,
+        updatedAt: lastRun.updated_at, ...(lastRun.legacy_model_calls == null ? {} : { modelCalls: Number(lastRun.legacy_model_calls) }) }) : null,
     });
   }
 
@@ -1131,8 +1149,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
    * What this account's session can do now, from the runtime: the same facts the self-knowledge answers use, filtered by
    * the account's reach (a member has no Ads model or computer). The web's banner listed a fixed three until 2026-11-23.
    */
-  async function capabilitiesFor(ownerId: string): Promise<ChatCapabilities> {
-    const full = config.fullAccess ? await config.fullAccess(ownerId) : true;
+  async function capabilitiesFor(ownerId: string, access = config.fullAccess?.(ownerId)): Promise<ChatCapabilities> {
+    const full = access ? await access : true;
     const facts: Record<(typeof chatCapabilityIds)[number], boolean> = {
       computation: true, web: true, browser: true, memory: Boolean(tools?.memory), knowledge: Boolean(config.knowledgeSearch),
       documents: Boolean(config.documents), sites: Boolean(config.sites), skills: Boolean(config.skillAnswer), planner: true, letters: true,
@@ -1144,7 +1162,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   }
 
   async function list(ownerId: string) {
-    await recoverExpired();
     const rows = await db.selectFrom('chat_conversations').select(['id', 'title', 'status', 'updated_at','browser_account']).where('owner_id', '=', ownerId).orderBy('updated_at', 'desc').limit(60).execute();
     // `requestKeys` tells a client that the changing routes honour an Idempotency-Key, so a resend after a lost reply runs once.
     const capabilities = await capabilitiesFor(ownerId);
@@ -3143,25 +3160,14 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           await finish(id, runId, state, planRefusal(), 'partial');
           return;
         }
-        const readPage = config.readPage;
-        // A live question (a price, the weather, a score) reads its pages afresh; anything else may come from the page cache.
-        const liveQuestion = plan.steps.some(step => step.kind === 'search' && isLiveWebQuestion(step.query));
-        const read = readPage ? async (url: string): Promise<HandsRead> => {
-          await active();
-          const result = await readPage(url, signal, { live: liveQuestion });
-          await active();
-          const action = `read ${url}`.slice(0, 300);
-          if (result === 'disallowed') { state.trail.push({ step: ++state.steps, action, result: 'robots.txt disallows this page', changed: false }); return { kind: 'disallowed' }; }
-          if (!result || !result.text.trim()) { state.trail.push({ step: ++state.steps, action, result: 'no readable text over HTTP', changed: false }); return { kind: 'unreadable' }; }
-          state.trail.push({ step: ++state.steps, action, result: `HTTP ${result.status} ${result.url} · ${result.text.length} chars`.slice(0, 1100), changed: true });
-          const readPageObject: AgentPage = { id: result.url, url: result.url, title: result.title, text: result.text, elements: [],
-            signals: { captcha: false, password: false, otp: false, card: false }, scroll: { top: 0, height: 0, viewport: 0 },
-            hash: createHash('sha256').update(result.text).digest('hex'), observedAt: result.fetchedAt ?? new Date().toISOString(), documentStatus: result.status };
-          currentExecution.readPages = [...(currentExecution.readPages ?? []).filter(item => item.url !== readPageObject.url).slice(-4), readPageObject];
-          return { kind: 'page', page: readPageObject };
-        } : undefined;
+        const step = (label: string) => addStep(id, runId, label, `${liveLabel(label)}…`);
+        const web = createHandsWebIO({ ownerId, signal, state, active, step, search, readPage: config.readPage,
+          live: plan.steps.some(step => step.kind === 'search' && isLiveWebQuestion(step.query)),
+          assertPublicSearch: query => assertPublicSearch(request, query, state, Boolean(returnName && query.includes(returnName))),
+          observePage: observed => { currentExecution.readPages = [...(currentExecution.readPages ?? []).filter(item => item.url !== observed.url).slice(-4), observed]; },
+        });
         const io: HandsIO = {
-          ...(read ? { read } : {}),
+          ...web,
           page: async () => {
             assertBrowserRequestScope(request, 'browser_action', state);
             const observed = page ?? (await browser.hasPage(ownerId, id) ? (await observeBrowser(ownerId, id)).page : null);
@@ -3172,35 +3178,13 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             await keepPage(id, settled);
             return settled;
           },
-          search: async (query, limit) => {
-            await active();
-            assertPublicSearch(request, query, state, Boolean(returnName && query.includes(returnName)));
-            // The shared engine reports each provider's failure: a search whose providers did not answer is a failed request
-            // (RESEARCH_PROVIDERS_FAILED), told apart from one that answered with nothing about the question (2026-11-23).
-            const engine = search as Partial<Pick<SearchEngine, 'execute'>>;
-            let hits: Awaited<ReturnType<SearchProvider['search']>>;
-            if (typeof engine.execute === 'function') {
-              const outcome = await engine.execute.call(search, query, limit, signal, { ownerId });
-              if (!outcome.hits.length) {
-                state.trail.push({ step: ++state.steps, action: `search ${query}`.slice(0, 300), changed: false,
-                  result: `no results; provider failures: ${outcome.failures.map(item => `${item.provider} ${item.kind}`).join(', ') || 'none'}`.slice(0, 1100) });
-                if (outcome.failures.length) throw new BrowserError('RESEARCH_PROVIDERS_FAILED', outcome.failures.map(item => `${item.provider}: ${item.kind === 'rate_limited' ? 'rate limited' : item.kind === 'invalid_response' ? 'invalid response' : 'unavailable'}`).join(', '), 502);
-                throw new BrowserError('RESEARCH_SEARCH_UNAVAILABLE', 'لم يُرجع البحث مصادر مرتبطة بالسؤال قابلة للقراءة.', 502);
-              }
-              hits = outcome.hits.map(hit => hit.coverage === 'local_only' ? { ...hit, snippet: `نسخة مفهرسة بتاريخ ${hit.fetchedAt}. ${hit.snippet}` } : hit);
-            } else hits = await search.search(query, limit, signal, { ownerId });
-            state.publicQueryTerms = mergePublicQueryTerms(state.publicQueryTerms, hits.flatMap(hit => [hit.title, hit.snippet]));
-            await active();
-            state.trail.push({ step: ++state.steps, action: `search ${query}`.slice(0, 300), result: `results: ${hits.map(hit => `${hit.title} | ${hit.url}`).join('\n')}`.slice(0, 1100), changed: hits.length > 0 });
-            return hits;
-          },
           act: async action => { await active(); const result = await actBrowser(ownerId, id, action, authority()); page = result.page; await keepPage(id, page); state.trail.push({ step: ++state.steps, action: `${action.kind} ${action.text ?? action.ref ?? ''}`.trim().slice(0, 300), result: `now at ${page.url}`, changed: result.changed }); return page; },
           prepare: action => prepareBrowserAction(ownerId, id, action),
           settle: async next => { const settled = await instincts(ownerId, id, runId, state, next, signal, personalSignIn); if (settled) { page = settled; await keepPage(id, settled); } return settled; },
-          begin: async index => { await active(); beginHandsStep(ledgerOf(state, runId), plan, handsPrefix, index, Date.now()); await saveState(runId, state); },
-          complete: async (index, status) => { await active(); completeHandsStep(ledgerOf(state, runId), plan, handsPrefix, index, status, Date.now()); await saveState(runId, state); },
-          step: async label => { await active(); await addStep(id, runId, label); await setProgress(id, `${liveLabel(label)}…`); },
-          progress: async label => { await active(); await setProgress(id, `${label}…`); },
+          begin: index => saveState(runId, state, () => beginHandsStep(ledgerOf(state, runId), plan, handsPrefix, index, Date.now())),
+          complete: (index, status) => saveState(runId, state, () => completeHandsStep(ledgerOf(state, runId), plan, handsPrefix, index, status, Date.now())),
+          step,
+          progress: label => setProgress(id, `${label}…`),
           approve: async (action, permit, label) => { await pauseBrowserAction(id, runId, state, { action, permit, label }); },
           hold: async (held, label) => { await pauseHeld(id, runId, state, held, label); },
         };
@@ -4608,14 +4592,14 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   }
 
   async function screen(ownerId: string, id: string) {
-    await owned(ownerId, id);
+    await assertOwnsBrowserRead(ownerId, id);
     const bytes = await browser.screen(ownerId, id);
     if (!bytes) throw new BrowserError('CHAT_SCREEN_MISSING', 'لا توجد صفحة مفتوحة.', 404);
     return bytes;
   }
 
   async function browserActivity(ownerId: string, id: string) {
-    await owned(ownerId, id);
+    await assertOwnsBrowserRead(ownerId, id);
     const activity = await browser.activity(ownerId, id);
     return activity ? ChatBrowserActivitySchema.parse(activity) : null;
   }
@@ -4630,8 +4614,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
 
   async function shutdown() {
     closing = true;
+    const stoppingRecovery = stopRecoveryTimer();
     for (const {controller} of controllers.values()) controller.abort(new Error('CHAT_SHUTDOWN'));
-    await Promise.allSettled([...workers.values()]);
+    await Promise.allSettled([...workers.values(), stoppingRecovery]);
     const abandoned:{ownerId:string;state:unknown}[]=[];
     await db.transaction().execute(async tx=>{
       const rows=await tx.selectFrom('chat_conversations as c').innerJoin('chat_runs as r','r.id','c.active_run_id').select(['c.id','r.id as run_id','r.owner_id','r.state']).where('r.worker_id','=',instanceId).where('c.status','in',['running',...WAITING_STATUSES]).forUpdate('c').execute();
@@ -4686,7 +4671,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   }
 
   return {
-    create, list, detail, approve, secureSubmit, cancel, remove, screen, browserActivity, shutdown,restoreBrowser,reviewBrowser, uploadImage, image: imageBytes, feedback, once, recoverExpired,
+    create, list, detail, approve, secureSubmit, cancel, remove, screen, browserActivity, shutdown,restoreBrowser,reviewBrowser, uploadImage, image: imageBytes, feedback, once, recoverExpired: () => recoverExpired(),
     ...protectStructuredMemoryIngress({ create, send, once }),
     ...clarificationAnswers({ db, config, hasChatModel, resume, send, respond }),
     imagesAvailable: () => Boolean(config.imageReader?.available),
