@@ -54,7 +54,7 @@ In one invocation, pass three `--arm` arguments for the baseline, candidate in s
 
 Use `--skip-scratch-models` to set `MOHASSAN_SCRATCH_CLASSIFIERS=0` and omit the checked-in artifacts from the disposable checkouts. The shadow classifier then has no artifacts to load. [Scratch classifier artifacts, retrieved 2026-11-27](https://github.com/ahmadalwakai/Mohassan-AI/tree/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/packages/scratch-classifiers/models)
 
-Both candidate receipts capture the production judge's truth decisions. A withhold counts as published when its replacement appears in the observed reply. `summary.json` counts affected turns, including turns with multiple withhold decisions. The benchmark scores the whole turn's reply. An answer-stage failure on the matching shadow turn counts as a save, and an answer with no such failure counts as a false alarm. A turn with a missing or different shadow draft is reported as unmatched. Native development scores keep every benchmark check, including routing and verification.
+Both candidate receipts capture the production judge's truth decisions. A withhold counts as published when its replacement appears in the observed reply. `summary.json` counts affected turns, including turns with multiple withhold decisions. The benchmark scores the whole turn's reply. An answer-stage failure on the matching shadow turn counts as a save, and an answer with no such failure counts as a false alarm. Draft matching ignores the wall-clock read time appended to a source line. A turn without a matching shadow draft is reported as unmatched. Native development scores keep the original replies and every benchmark check.
 
 ## Smart monitor comparison
 

@@ -4,10 +4,12 @@ Source (retrieved 2026-11-27):
 https://github.com/ahmadalwakai/Mohassan-AI/blob/a1e1cb020b7ba093885edbf501149e7b8252c0cb/scripts/agent-capability-bench/score.ts
 """
 
+import re
+
 import pytest
 
 from runner import HOLDOUTS, SCRATCH_MODELS, model_profile
-from truth_audit import summarize_withholds
+from truth_audit import READ_TIME, summarize_withholds
 
 
 def check(candidate, *, decision='withhold', published=False):
@@ -50,3 +52,11 @@ def test_model_free_profile_excludes_scratch_artifacts_and_disables_classifier()
         settings | {'MOHASSAN_SCRATCH_CLASSIFIERS': '0'}, (*HOLDOUTS, SCRATCH_MODELS))
     with pytest.raises(ValueError, match='model files are excluded'):
         model_profile(settings | {'MOHASSAN_SCRATCH_CLASSIFIERS': '1'}, True)
+
+
+@pytest.mark.parametrize(('label', 'timestamp_word'), [('Source', 'read'), ('المصدر', 'قُرئت')])
+def test_draft_fingerprint_removes_only_citation_wall_clock(label, timestamp_word):
+    stamp = f'{timestamp_word} 2026-11-27 10:20 UTC'
+    answer = f'Value {stamp}.\n'
+    citation = f'**{label}:** [Title](https://example.invalid)'
+    assert re.sub(READ_TIME, r'\1', f'{answer}{citation} · {stamp}', flags=re.M) == f'{answer}{citation}'

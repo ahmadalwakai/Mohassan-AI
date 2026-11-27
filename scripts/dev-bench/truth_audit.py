@@ -1,6 +1,9 @@
 """Capture truth-check decisions beside native development scores."""
 
 TRUTH_FLAG = 'MOHASSAN_TRUTH_CHECK'
+# Citation renderer in hands.ts at 29448ae, retrieved 2026-11-27:
+# https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/apps/server/src/assistant/hands.ts#L2032-L2033
+READ_TIME = r'^(\*\*(?:Source|المصدر):\*\* [^\r\n]+) · (?:read|قُرئت) \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC$'
 
 
 def instrument_truth_observer(path, mode, replace):
@@ -12,7 +15,7 @@ def instrument_truth_observer(path, mode, replace):
                      f"judgeShadow: {{ logFile: '', truthMode: '{mode}', observe(input) {{")
     source = replace(source, '        const verdict = judge(input);', f'''        const {{ verdict, truth: check }} = evaluateJudgeReply(input, '{mode}');
         if (check) truth.push({{
-          record: {{ ...check, candidate: createHash('sha256').update(input.reply).digest('hex') }},
+          record: {{ ...check, candidate: createHash('sha256').update(input.reply.replace(/{READ_TIME}/gmu, '$1')).digest('hex') }},
           replacement: verdict.withholdText,
         }});''')
     source = replace(source, '    for (const turn of item.turns) {',
