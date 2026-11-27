@@ -1,0 +1,4 @@
+# Recorded 2026-11-27 from https://www.who.int/robots.txt; selected directives, no wildcard
+User-agent: 360Spider
+Disallow:/
+Sitemap: http://www.who.int/sitemaps/sitemapindex.xml

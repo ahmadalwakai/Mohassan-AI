@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nlmSearchResult>
+  <term>asthma</term>
+  <count>56</count>
+  <retstart>0</retstart>
+  <retmax>1</retmax>
+  <list num="56" start="0" per="1">
+    <document rank="1" url="https://medlineplus.gov/asthma.html">
+      <content name="title">&lt;span class="qt0"&gt;Asthma&lt;/span&gt;</content>
+      <content name="organizationName">National Library of Medicine</content>
+      <content name="altTitle">Bronchial &lt;span class="qt0"&gt;Asthma&lt;/span&gt;</content>
+      <content name="FullSummary">What is &lt;span class="qt0"&gt;asthma&lt;/span&gt;?&lt;p&gt;&lt;span class="qt0"&gt;Asthma&lt;/span&gt; is a chronic (long-term) lung disease. It affects your airways, the tubes that carry air in and out of your lungs. When you have &lt;span class="qt0"&gt;asthma&lt;/span&gt;, your airways can become inflamed and narrowed. This can cause wheezing, coughing, and tightness in your chest. When these symptoms get worse than usual, it is called an &lt;span class="qt0"&gt;asthma&lt;/span&gt; attack or flare-up.&lt;/p&gt;</content>
+      <content name="mesh">&lt;span class="qt0"&gt;Asthma&lt;/span&gt;</content>
+      <content name="groupName">Lungs and Breathing</content>
+      <content name="groupName">Immune System</content>
+      <content name="snippet">What is &lt;span class="qt0"&gt;asthma? Asthma&lt;/span&gt; is a chronic (long-term) lung disease. It affects your airways, the tubes that carry air in and out of your lungs. When you have  ... </content>
+    </document>
+  </list>
+</nlmSearchResult>

@@ -1,0 +1,1 @@
+{"@odata.context":"https://ghoapi.azureedge.net/api/$metadata#Indicator","value":[{"IndicatorCode":"NCD_DIABETES_PREVALENCE_AGESTD","IndicatorName":"Prevalence of diabetes, age-standardized","Language":"EN"},{"IndicatorCode":"NCD_DIABETES_PREVALENCE_CRUDE","IndicatorName":"Prevalence of diabetes, crude","Language":"EN"}]}
