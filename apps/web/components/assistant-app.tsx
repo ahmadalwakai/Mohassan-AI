@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ArrowUp, Check, ChevronDown, Copy, ExternalLink, Globe, ImagePlus, KeyRound, Laptop, LogOut, Menu, MessageSquare, MoreHorizontal, PanelLeftClose, Settings2, ShieldAlert, SquarePen, Square, Trash2, X } from "lucide-react";
 import type { ChatCapabilities, ChatConversation as Conversation, ChatConversationSummary as Summary, ChatSecureRequest } from "@mohassan/contracts";
 
@@ -23,6 +23,7 @@ import { BrowserViewport } from './browser-viewport';
 import { CampaignCard } from "./campaign-card";
 import { TrainingMonitorMenuItem } from "./training-monitor-menu-item";
 import { ConversationActions } from "./conversation-actions";
+import { useAssistantNavigation } from "./assistant-navigation";
 
 const ADS_WORDS = /حمل[ةت]|حملات|إعلان|اعلان|google ads|campaign|\bads?\b|advertis|ppc/i;
 import { ActivityLine, AgentActivity } from "./agent-activity";
@@ -176,6 +177,7 @@ function BrowserPanel({ conversation, reason, onClose, onError, onRestore, onRev
   const page = conversation.browser!;
   const handsOn = conversation.status === "waiting_input" && conversation.secure?.kind === "hands_on";
   const [typed, setTyped] = useState("");
+  const takeoverId = useId();
   const [reviewedToken,setReviewedToken]=useState<string|null>(null);
   const reviewed=Boolean(page.recoveryToken&&reviewedToken===page.recoveryToken);
   const base = `/api/chat/conversations/${conversation.id}/browser`;
@@ -206,7 +208,8 @@ function BrowserPanel({ conversation, reason, onClose, onError, onRestore, onRev
         is busy), and on a narrow panel its card covered the page image: it waits until afterwards. */}
     {page.recovery==='review_required'&&!handsOn?<div className={styles.card}><p>تحتاج الجلسة السابقة إلى مراجعة. تحقق من نتيجتها في الموقع قبل المتابعة.</p><label><input type="checkbox" checked={reviewed} onChange={event=>setReviewedToken(event.target.checked?page.recoveryToken??null:null)}/> راجعت بنفسي أثر الإجراء السابق.</label><button type="button" className={styles.secondary} disabled={!reviewed||busy||WORKING.has(conversation.status)} onClick={onReview}>تسجيل المراجعة دون تكرار الإجراء</button></div>:null}
     {handsOn ? <form className={styles.takeover} onSubmit={typeInPage}>
-      <input dir="auto" autoComplete="off" value={typed} placeholder="انقر على الصورة، واكتب هنا لإدخال نص في الصفحة" onChange={(event) => setTyped(event.target.value)} />
+      <label className={styles.hidden} htmlFor={takeoverId}>إدخال نص في الصفحة</label>
+      <input id={takeoverId} dir="auto" autoComplete="off" value={typed} placeholder="انقر على الصورة، واكتب هنا لإدخال نص في الصفحة" onChange={(event) => setTyped(event.target.value)} />
       <button type="submit" className={styles.primary}>إدخال</button>
     </form> : null}
     <BrowserFilesPanel key={conversation.id} conversationId={conversation.id} disabled={busy || WORKING.has(conversation.status) || !page.live} />
@@ -218,10 +221,15 @@ const WORKING = new Set(["running", "waiting_input", "waiting_approval", "waitin
 
 function DeleteDialog({ target, busy, error, onCancel, onConfirm }: { target: Summary | null; busy: boolean; error: string; onCancel: () => void; onConfirm: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const cancel = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const element = dialog.current;
     if (!element) return;
-    if (target && !element.open) element.showModal();
+    if (target && !element.open) {
+      // The native modal chooses its initial focus when it opens.
+      cancel.current?.setAttribute("autofocus", "");
+      element.showModal();
+    }
     if (!target && element.open) element.close();
   }, [target]);
   return <dialog ref={dialog} className={styles.dialog} aria-labelledby="delete-title" onCancel={(event) => { event.preventDefault(); if (!busy) onCancel(); }} onClick={(event) => { if (event.target === event.currentTarget && !busy) onCancel(); }}>
@@ -232,7 +240,7 @@ function DeleteDialog({ target, busy, error, onCancel, onConfirm }: { target: Su
       {error ? <p className={styles.problem} role="alert">{error}</p> : null}
       <div className={styles.dialogActions}>
         <button type="button" className={styles.danger} disabled={busy} onClick={onConfirm}>{busy ? <AgentActivity variant="spinner" /> : <Trash2 size={15} />}حذف</button>
-        <button type="button" className={styles.secondary} disabled={busy} autoFocus onClick={onCancel}>إلغاء</button>
+        <button ref={cancel} type="button" className={styles.secondary} disabled={busy} onClick={onCancel}>إلغاء</button>
       </div>
     </div> : null}
   </dialog>;
@@ -254,8 +262,6 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
   const [browserAccount,setBrowserAccount]=useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
   // The panel starts closed. A level-3 step opens it once (autoOpened remembers which), the owner can open it from the
   // chip, and «closed» keeps it shut after they close it until the conversation changes.
   const [browserOpen, setBrowserOpen] = useState(false);
@@ -268,6 +274,10 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
   const seen = useRef<Record<string, string> | null>(null);
   const [itemMenu, setItemMenu] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<Summary | null>(null);
+  const { sidebarOpen, setSidebarOpen, sidebarTrigger, sidebarClose, closeSidebar,
+    menuOpen, setMenuOpen, account, profile, closeAccount } = useAssistantNavigation(Boolean(itemMenu || deleting));
+  const sidebarId = useId();
+  const accountMenuId = useId();
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [notice, setNotice] = useState("");
@@ -581,6 +591,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
     setBrowserAccount("");
     setError("");
     setSidebarOpen(false);
+    setMenuOpen(false);
     composer.current?.focus();
   }
   useEffect(() => {
@@ -630,7 +641,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
     if (id !== selectedId) { setConversation(null); setBrowserOpen(false); openedBy.current = null; autoOpened.current = null; }
     setSelectedId(id);
     setError("");
-    setSidebarOpen(false);
+    if (sidebarOpen) closeSidebar();
   }
   function showPanel() { openedBy.current = "user"; setBrowserOpen(true); }
   function hidePanel() { openedBy.current = "closed"; setBrowserOpen(false); }
@@ -647,8 +658,9 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
     {!selectedId?<details className={styles.browserAccount}><summary>حساب المتصفح: {browserAccount||'الافتراضي'}</summary><label htmlFor="browser-account">اسم جلسة الحساب</label><input id="browser-account" dir="ltr" value={browserAccount} maxLength={128} pattern="[a-zA-Z0-9_-]{1,128}" placeholder="work-account" disabled={busy} onChange={event=>setBrowserAccount(event.target.value)}/><small>اتركه فارغًا للحساب الافتراضي، أو استخدم اسمًا بحروف إنجليزية وأرقام لفصل حسابات المواقع.</small></details>:null}
     {attachments.length || uploading ? <div className={styles.attachments}>
       {attachments.map((item) => <span key={item.id} className={styles.attachment}><img src={item.url} alt={item.name} /><button type="button" aria-label="إزالة الصورة" onClick={() => setAttachments((current) => current.filter((other) => other.id !== item.id))}><X size={12} /></button></span>)}
-      {uploading ? <span className={styles.attachmentBusy} aria-label="جارٍ رفع الصورة"><AgentActivity variant="spinner" /></span> : null}
+      {uploading ? <span className={styles.attachmentBusy}><AgentActivity variant="spinner" /></span> : null}
     </div> : null}
+    <span className={styles.hidden} role="status">{uploading ? "جارٍ رفع الصورة" : ""}</span>
     <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" multiple hidden onChange={(event) => { const files = event.currentTarget.files; if (files) void uploadFiles(files); event.currentTarget.value = ""; }} />
     <button type="button" className={styles.attach} aria-label="إرفاق صورة" title="أرفق صورة ليقرأها موحسن" disabled={blocked || running || attachments.length >= MAX_ATTACHMENTS} onClick={() => fileInput.current?.click()}><ImagePlus size={18} /></button>
     <label className={styles.hidden} htmlFor="assistant-message">رسالتك</label>
@@ -665,15 +677,15 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
   </form>;
 
   return <div className={styles.app}>
-    {sidebarOpen ? <button className={styles.scrim} aria-label="إغلاق القائمة" onClick={() => setSidebarOpen(false)} /> : null}
-    <nav className={`${styles.sidebar} ${sidebarOpen ? styles.sidebarOpen : ""}`} aria-label="المحادثات">
+    {sidebarOpen ? <button className={styles.scrim} tabIndex={-1} aria-label="إغلاق القائمة" onClick={menuOpen ? closeAccount : closeSidebar} /> : null}
+    <nav id={sidebarId} className={`${styles.sidebar} ${sidebarOpen ? styles.sidebarOpen : ""}`} aria-label="المحادثات">
       <div className={styles.brandRow}>
         <span className={styles.brand}><span className={styles.brandMark} aria-hidden="true">م</span><strong>موحسن</strong></span>
-        <button className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="إغلاق القائمة" onClick={() => setSidebarOpen(false)}><X size={18} /></button>
+        <button ref={sidebarClose} className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="إغلاق القائمة" onClick={closeSidebar}><X size={18} /></button>
       </div>
       <button className={styles.newChat} onClick={startNew}><SquarePen size={16} />محادثة جديدة</button>
       <div className={styles.history}>
-        {history.length ? <span className={styles.historyLabel}>المحادثات{unread ? <span className={styles.unreadBadge} aria-label={`${unread} غير مقروء`}>{unread}</span> : null}</span> : <p className={styles.historyEmpty}><MessageSquare size={16} />ستظهر محادثاتك هنا.</p>}
+        {history.length ? <span className={styles.historyLabel}>المحادثات{unread ? <span className={styles.unreadBadge}>{unread}<span className={styles.hidden}> غير مقروء</span></span> : null}</span> : <p className={styles.historyEmpty}><MessageSquare size={16} />ستظهر محادثاتك هنا.</p>}
         {history.map((item) => {
           const current = item.id === selectedId;
           const shown = itemMenu === item.id;
@@ -692,8 +704,9 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
           </div>;
         })}
       </div>
-      <div className={styles.account}>
-        {menuOpen ? <div className={styles.menu}>
+      <div ref={account} className={styles.account}>
+        <button ref={profile} className={styles.profile} aria-expanded={menuOpen} aria-controls={menuOpen ? accountMenuId : undefined} onClick={() => setMenuOpen((value) => !value)}><span aria-hidden="true">{firstName.charAt(0)}</span><strong dir="auto">{name}</strong></button>
+        {menuOpen ? <div id={accountMenuId} className={styles.menu}>
           <label className={styles.settingRow}><span>اعرض المتصفح</span>
             <select value={setting} onChange={(event) => chooseSetting(event.target.value as PanelSetting)}>{PANEL_SETTINGS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
           </label>
@@ -703,14 +716,13 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
           <button onClick={() => { setMenuOpen(false); onAdvanced(); }}><Settings2 size={15} />الأدوات المتقدمة</button>
           <button onClick={onSignOut}><LogOut size={15} />تسجيل الخروج</button>
         </div> : null}
-        <button className={styles.profile} aria-expanded={menuOpen} onClick={() => setMenuOpen((value) => !value)}><span>{firstName.charAt(0)}</span><strong dir="auto">{name}</strong></button>
       </div>
     </nav>
 
     <main className={`${styles.main} ${showBrowser ? styles.withBrowser : ""}`}>
       <AssistantNotifications controls={notifications} menuOpen={menuOpen} historyReady={chatConfigured !== null} selectConversation={setSelectedId} />
       <header className={styles.topbar}>
-        <button className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="فتح القائمة" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button>
+        <button ref={sidebarTrigger} className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="فتح القائمة" aria-expanded={sidebarOpen} aria-controls={sidebarId} onClick={() => setSidebarOpen(true)}><Menu size={20} /></button>
         <span dir="auto">{conversation?.title !== "محادثة جديدة" ? conversation?.title : ""}</span>
         <ConversationActions conversationId={conversation?.id} />
         {conversation?.browser && !browserOpen && visibility?.canView !== false ? <button className={`${styles.showBrowser} ${running ? styles.background : ""}`} onClick={showPanel} aria-label="عرض المتصفح" data-testid="browser-chip">
@@ -796,16 +808,23 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
 /** Copies one reply as plain text, so it can be pasted anywhere without ** or > marks. */
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1800);
+    return () => clearTimeout(timer);
+  }, [copied]);
   async function copy() {
     const value = plainText(text);
     let done = false;
     try { await navigator.clipboard.writeText(value); done = true; } catch { done = copyBySelection(value); }
     setCopied(done);
-    if (done) setTimeout(() => setCopied(false), 1800);
   }
-  return <button type="button" className={styles.copyReply} onClick={() => void copy()} aria-label="نسخ الرد" title="نسخ الرد">
-    {copied ? <Check size={14} /> : <Copy size={14} />}<span>{copied ? "تم النسخ" : "نسخ"}</span>
-  </button>;
+  return <>
+    <button type="button" className={styles.copyReply} onClick={() => void copy()} aria-label="نسخ الرد" title="نسخ الرد">
+      {copied ? <Check size={14} /> : <Copy size={14} />}<span>نسخ</span>
+    </button>
+    <span role="status" className={copied ? styles.copyStatus : styles.hidden}>{copied ? "تم النسخ" : ""}</span>
+  </>;
 }
 
 /** «مفيد / خطأ / ناقص» under a reply (plan §7.5): one click records the verdict; «خطأ» and «ناقص» can take a short note. */
@@ -835,6 +854,7 @@ function FeedbackButtons({ conversationId, messageId }: { conversationId: string
 
 /** For pages without the Clipboard API (plain http from a phone) or where it is blocked. */
 function copyBySelection(value: string): boolean {
+  const focused = document.activeElement;
   const area = document.createElement("textarea");
   area.value = value;
   area.setAttribute("readonly", "");
@@ -845,5 +865,6 @@ function copyBySelection(value: string): boolean {
   let done = false;
   try { done = document.execCommand("copy"); } catch { done = false; }
   area.remove();
+  if (focused instanceof HTMLElement) focused.focus({ preventScroll: true });
   return done;
 }

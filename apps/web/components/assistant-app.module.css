@@ -50,6 +50,12 @@
 
 .hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 
+.app :is(button, input, textarea, select, a, summary, [tabindex]):focus-visible:not(:where(.replyTools > [role="group"] *)) {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+.app .historyOpen:focus-visible { outline-offset: -3px; }
+
 .iconButton {
   display: inline-flex; align-items: center; justify-content: center; flex: none;
   width: 34px; height: 34px; border: 0; border-radius: 9px; background: transparent; color: var(--soft);
@@ -78,8 +84,8 @@
 .newChat svg { color: var(--accent); }
 
 .history { flex: 1; min-height: 0; overflow-y: auto; margin: 16px -4px 0; padding: 0 4px; display: flex; flex-direction: column; gap: 1px; scrollbar-width: thin; }
-.historyLabel { padding: 0 10px 6px; color: var(--faint); font-size: 12px; font-weight: 500; }
-.historyEmpty { display: flex; align-items: center; gap: 8px; padding: 8px 10px; color: var(--faint); font-size: 13.5px; }
+.historyLabel { padding: 0 10px 6px; color: var(--soft); font-size: 12px; font-weight: 500; }
+.historyEmpty { display: flex; align-items: center; gap: 8px; padding: 8px 10px; color: var(--soft); font-size: 13.5px; }
 .historyItem { position: relative; display: flex; align-items: center; border-radius: 9px; }
 .historyItem:hover, .historyItem.menuShown { background: var(--hover); }
 .historyItem.current { background: var(--hover); }
@@ -190,6 +196,8 @@
 .copyReply { margin-top: 8px; display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border: 1px solid transparent; border-radius: 8px; background: none; color: var(--faint); font: inherit; font-size: .8rem; cursor: pointer; }
 .copyReply:hover, .copyReply:focus-visible { border-color: var(--line); color: inherit; }
 .replyTools { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; }
+.replyTools > .copyReply:not(:hover, :focus-visible), .copyStatus { color: var(--soft); }
+.copyStatus { margin-top: 8px; font-size: .8rem; }
 .feedback { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px; }
 .feedback .copyReply.chosen { border-color: var(--accent); color: var(--ink); }
 .feedbackNote { display: flex; gap: 6px; flex-basis: 100%; margin-top: 4px; }
@@ -230,7 +238,7 @@
 .field input {
   width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--page); color: var(--ink); font-size: 15px;
 }
-.field input:focus { border-color: var(--accent); outline: 0; box-shadow: 0 0 0 3px var(--accent-soft); }
+.field input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .cardActions { display: flex; gap: 8px; }
 .primary { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border: 0; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-size: 14px; font-weight: 500; }
 .primary:hover:not(:disabled) { background: var(--accent-hover); }
@@ -267,7 +275,7 @@
 /* Composer */
 .dock { flex: none; padding: 0 20px 10px; }
 .dock .composer { width: min(740px, 100%); margin: 0 auto; }
-.dockHint { margin-top: 7px; color: var(--faint); font-size: 12px; text-align: center; }
+.dockHint { margin-top: 7px; color: var(--soft); font-size: 12px; text-align: center; }
 .dockHint kbd { padding: 0 5px; border: 1px solid var(--line); border-radius: 5px; background: var(--raised); font-family: inherit; font-size: 11px; }
 .composer {
   display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; padding: 10px 10px 10px 12px; border: 1px solid var(--line); border-radius: 20px;
@@ -277,8 +285,7 @@
 .composer textarea {
   flex: 1; min-width: 0; max-height: 220px; padding: 5px 6px; border: 0; outline: 0; resize: none; background: transparent; color: var(--ink); font-size: 15px; line-height: 1.6;
 }
-.composer textarea:focus-visible { outline: 0; }
-.composer textarea::placeholder { color: var(--faint); }
+.composer textarea::placeholder { color: var(--soft); }
 
 /* The brain's questions: a small panel in the input's place, one question at a time */
 .ask {
@@ -308,7 +315,7 @@
   display: flex; align-items: center; gap: 10px; width: 100%; min-height: 34px; padding: 4px 8px;
   border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--ink); font-size: 14px; text-align: start; cursor: pointer;
 }
-.askOption:hover:not(:disabled), .askOption:focus-visible { background: var(--hover); outline: 0; }
+.askOption:hover:not(:disabled), .askOption:focus-visible { background: var(--hover); }
 .askOption:focus-visible { border-color: var(--faint); }
 .askOption kbd {
   display: inline-flex; align-items: center; justify-content: center; flex: none; width: 20px; height: 20px;
@@ -341,7 +348,7 @@
   .askKeys { display: none; }
   .askBody { max-height: 40dvh; }
 }
-.browserAccount { flex-basis: 100%; min-width: 0; padding: 0 6px; color: var(--muted); font-size: 12px; }
+.browserAccount { flex-basis: 100%; min-width: 0; padding: 0 6px; color: var(--soft); font-size: 12px; }
 .browserAccount summary { cursor: pointer; padding: 3px 0; overflow-wrap: anywhere; }
 .browserAccount label, .browserAccount small { display: block; margin: 6px 0; }
 .browserAccount input { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 7px; padding: 7px; background: var(--raised); color: var(--ink); }
@@ -372,6 +379,7 @@
 .address span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .takeover { display: flex; gap: 8px; flex: none; padding: 0 10px 10px; }
 .takeover input { flex: 1; min-width: 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--raised); color: var(--ink); font-size: 14px; }
+.takeover input::placeholder { color: var(--soft); }
 
 @media (prefers-reduced-motion: reduce) {
   .app *, .app *::before, .app *::after, .dialog, .dialog::backdrop, .toast { animation: none !important; transition: none !important; }
@@ -389,9 +397,9 @@
   .iconButton.mobileOnly { display: inline-flex; }
   .sidebar {
     position: fixed; inset-block: 0; inset-inline-start: 0; width: min(300px, 86vw); z-index: 30;
-    transform: translateX(100%); transition: transform .24s var(--ease); box-shadow: var(--shadow-lg);
+    visibility: hidden; transform: translateX(100%); transition: transform .24s var(--ease); box-shadow: var(--shadow-lg);
   }
-  .sidebarOpen { transform: none; }
+  .sidebarOpen { visibility: visible; transform: none; }
   .historyOpen { padding-block: 10px; }
   .topbar { padding: 8px 10px; }
   .thread { padding: 6px 16px 14px; }
