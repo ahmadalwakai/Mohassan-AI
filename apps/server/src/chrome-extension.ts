@@ -29,9 +29,7 @@ export async function stopChromeJobsForRun(tx: Kysely<any>, ownerId: string, run
   }).where('owner_id', '=', ownerId).where('source_run_id', '=', runId).where('status', 'in', [...activeStates]).execute();
 }
 
-/** Existing authenticated Mohassan tab relays these routes. No public pairing route or Google credentials. */
-export async function createChromeExtensionControl(db: Kysely<any>, options: { now?: () => number } = {}) {
-  const now = options.now ?? Date.now;
+async function migrateChromeExtensionSchema(db: Kysely<any>) {
   await sql`CREATE TABLE IF NOT EXISTS chrome_extension_bindings (
     owner_id text PRIMARY KEY REFERENCES "user"(id) ON DELETE CASCADE,
     binding jsonb, connected boolean NOT NULL DEFAULT false, preferred_transport text NOT NULL DEFAULT 'api', last_seen_at timestamptz
@@ -46,6 +44,11 @@ export async function createChromeExtensionControl(db: Kysely<any>, options: { n
   await sql`ALTER TABLE chrome_extension_jobs ADD COLUMN IF NOT EXISTS source_run_id text`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS chrome_extension_source_run ON chrome_extension_jobs(owner_id,source_run_id)`.execute(db);
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS chrome_extension_one_active ON chrome_extension_jobs(owner_id) WHERE status IN ('queued','running')`.execute(db);
+}
+/** Existing authenticated Mohassan tab relays these routes. No public pairing route or Google credentials. */
+export async function createChromeExtensionControl(db: Kysely<any>, options: { now?: () => number } = {}) {
+  const now = options.now ?? Date.now;
+  await db.transaction().execute(migrateChromeExtensionSchema);
 
   async function locked<T>(ownerId: string, run: (tx: Tx) => Promise<T>): Promise<T> {
     return db.transaction().execute(async tx => {

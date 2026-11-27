@@ -185,7 +185,7 @@ const runtimeStatements = [
   `CREATE INDEX IF NOT EXISTS approvals_task_idx ON approvals(task_id,expires_at)`,
 ];
 
-/** Fixed SQL, one version per transaction; no user-controlled SQL enters here. */
+/** Apply the core migration group and record its versions in one transaction. */
 export async function migrate(db: Kysely<any>): Promise<void> {
   await sql`CREATE TABLE IF NOT EXISTS schema_migrations (
     version text PRIMARY KEY,

@@ -4,6 +4,10 @@ import { sql, type Kysely } from 'kysely';
 export type Db = Kysely<any>;
 
 export async function googleAdsMigration(db: Db) {
+  await db.transaction().execute(migrateGoogleAdsSchema);
+}
+
+async function migrateGoogleAdsSchema(db: Db) {
   await sql`CREATE TABLE IF NOT EXISTS google_ads_connections(owner_id text PRIMARY KEY,sealed_refresh_token text,status text NOT NULL CHECK(status IN ('disconnected','needs_account','connected','unauthorized')),customer_id text,login_customer_id text,account_name text,currency text,time_zone text,test_account boolean NOT NULL DEFAULT false,booking_rules jsonb NOT NULL DEFAULT '[]'::jsonb,connected_at timestamptz,last_checked_at timestamptz,rate_limited_until timestamptz,updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`.execute(db);
   await sql`CREATE TABLE IF NOT EXISTS google_ads_oauth_states(state_hash text PRIMARY KEY,owner_id text NOT NULL,sealed_verifier text NOT NULL,expires_at timestamptz NOT NULL,consumed_at timestamptz,created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`.execute(db);
   await sql`CREATE TABLE IF NOT EXISTS google_ads_drafts(id text PRIMARY KEY,owner_id text NOT NULL,customer_id text NOT NULL,idempotency_key text NOT NULL,state text NOT NULL,revision integer NOT NULL DEFAULT 1,brief jsonb NOT NULL,bidding text NOT NULL,operations jsonb NOT NULL,draft_hash text NOT NULL,geo_targets jsonb NOT NULL DEFAULT '[]'::jsonb,summary jsonb,strategy jsonb,validation jsonb,verification jsonb,campaign_resource_name text,error text,created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(owner_id,idempotency_key))`.execute(db);
