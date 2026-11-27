@@ -1,0 +1,5736 @@
+{
+  "schemaVersion": 1,
+  "split": "development",
+  "profile": {
+    "commit": "29448aea3fa10d226ef82ec5bf0a65e723d6ec39",
+    "receiptSha256": "0007bd728c20d5729bbb957424e719d0a0460256ac5aff1dca6b8c4d57dbebad"
+  },
+  "switches": {
+    "MOHASSAN_REASONING": {
+      "commit": "29448aea3fa10d226ef82ec5bf0a65e723d6ec39",
+      "receiptSha256": "94b9382941a9c084c367b36b6df48b8171b7214fdfff545b05f3bcf3ba981189",
+      "noVerdictChanges": false,
+      "noObservedChange": false,
+      "versions": {
+        "v1": {
+          "overall": {
+            "total": 240,
+            "profile": {
+              "passed": 70,
+              "rate": 0.2916666666666667,
+              "wilson95": [
+                0.23780428424198818,
+                0.35209318240032805
+              ]
+            },
+            "ablation": {
+              "passed": 89,
+              "rate": 0.37083333333333335,
+              "wilson95": [
+                0.3122070088560195,
+                0.43352942046221654
+              ]
+            },
+            "deltaPercentagePoints": 7.916666666666667,
+            "improved": 19,
+            "regressed": 0,
+            "mcnemarExactP": 3.814697265625e-06,
+            "replyChanges": 19,
+            "checkChanges": 19,
+            "noVerdictChanges": false,
+            "noObservedChange": false
+          },
+          "byArea": {
+            "calculation": {
+              "total": 18,
+              "profile": {
+                "passed": 17,
+                "rate": 0.9444444444444444,
+                "wilson95": [
+                  0.7424269921812742,
+                  0.9901248090216969
+                ]
+              },
+              "ablation": {
+                "passed": 18,
+                "rate": 1.0,
+                "wilson95": [
+                  0.8241207763533425,
+                  1.0
+                ]
+              },
+              "deltaPercentagePoints": 5.555555555555555,
+              "improved": 1,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 1,
+              "checkChanges": 1,
+              "noVerdictChanges": false,
+              "noObservedChange": false
+            },
+            "clarification": {
+              "total": 16,
+              "profile": {
+                "passed": 7,
+                "rate": 0.4375,
+                "wilson95": [
+                  0.23098652405492354,
+                  0.6682144360118809
+                ]
+              },
+              "ablation": {
+                "passed": 7,
+                "rate": 0.4375,
+                "wilson95": [
+                  0.23098652405492354,
+                  0.6682144360118809
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "coding": {
+              "total": 16,
+              "profile": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.19360768053443644
+                ]
+              },
+              "ablation": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.19360768053443644
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "comparison": {
+              "total": 18,
+              "profile": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.17587922364665756
+                ]
+              },
+              "ablation": {
+                "passed": 18,
+                "rate": 1.0,
+                "wilson95": [
+                  0.8241207763533425,
+                  1.0
+                ]
+              },
+              "deltaPercentagePoints": 100.0,
+              "improved": 18,
+              "regressed": 0,
+              "mcnemarExactP": 7.62939453125e-06,
+              "replyChanges": 18,
+              "checkChanges": 18,
+              "noVerdictChanges": false,
+              "noObservedChange": false
+            },
+            "desktop": {
+              "total": 16,
+              "profile": {
+                "passed": 11,
+                "rate": 0.6875,
+                "wilson95": [
+                  0.44404355834740666,
+                  0.8583535614521796
+                ]
+              },
+              "ablation": {
+                "passed": 11,
+                "rate": 0.6875,
+                "wilson95": [
+                  0.44404355834740666,
+                  0.8583535614521796
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "document-file": {
+              "total": 18,
+              "profile": {
+                "passed": 18,
+                "rate": 1.0,
+                "wilson95": [
+                  0.8241207763533425,
+                  1.0
+                ]
+              },
+              "ablation": {
+                "passed": 18,
+                "rate": 1.0,
+                "wilson95": [
+                  0.8241207763533425,
+                  1.0
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "explanation": {
+              "total": 18,
+              "profile": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.17587922364665756
+                ]
+              },
+              "ablation": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.17587922364665756
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "factual": {
+              "total": 18,
+              "profile": {
+                "passed": 5,
+                "rate": 0.2777777777777778,
+                "wilson95": [
+                  0.12499753379553999,
+                  0.5087265656029745
+                ]
+              },
+              "ablation": {
+                "passed": 5,
+                "rate": 0.2777777777777778,
+                "wilson95": [
+                  0.12499753379553999,
+                  0.5087265656029745
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "follow-up": {
+              "total": 18,
+              "profile": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.17587922364665756
+                ]
+              },
+              "ablation": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.17587922364665756
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "google-ads": {
+              "total": 16,
+              "profile": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.19360768053443644
+                ]
+              },
+              "ablation": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.19360768053443644
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "memory": {
+              "total": 16,
+              "profile": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.19360768053443644
+                ]
+              },
+              "ablation": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.19360768053443644
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "multi-step": {
+              "total": 18,
+              "profile": {
+                "passed": 1,
+                "rate": 0.05555555555555555,
+                "wilson95": [
+                  0.00987519097830307,
+                  0.25757300781872583
+                ]
+              },
+              "ablation": {
+                "passed": 1,
+                "rate": 0.05555555555555555,
+                "wilson95": [
+                  0.00987519097830307,
+                  0.25757300781872583
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "refusal": {
+              "total": 16,
+              "profile": {
+                "passed": 1,
+                "rate": 0.0625,
+                "wilson95": [
+                  0.011119344764642547,
+                  0.28328737570298934
+                ]
+              },
+              "ablation": {
+                "passed": 1,
+                "rate": 0.0625,
+                "wilson95": [
+                  0.011119344764642547,
+                  0.28328737570298934
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "small-talk": {
+              "total": 18,
+              "profile": {
+                "passed": 10,
+                "rate": 0.5555555555555556,
+                "wilson95": [
+                  0.33716415642042785,
+                  0.7544048187299436
+                ]
+              },
+              "ablation": {
+                "passed": 10,
+                "rate": 0.5555555555555556,
+                "wilson95": [
+                  0.33716415642042785,
+                  0.7544048187299436
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            }
+          },
+          "byLanguage": {
+            "ar": {
+              "total": 120,
+              "profile": {
+                "passed": 34,
+                "rate": 0.2833333333333333,
+                "wilson95": [
+                  0.21040628091756453,
+                  0.36970202453054035
+                ]
+              },
+              "ablation": {
+                "passed": 43,
+                "rate": 0.35833333333333334,
+                "wilson95": [
+                  0.2781607905032006,
+                  0.4472946399820988
+                ]
+              },
+              "deltaPercentagePoints": 7.5,
+              "improved": 9,
+              "regressed": 0,
+              "mcnemarExactP": 0.00390625,
+              "replyChanges": 9,
+              "checkChanges": 9,
+              "noVerdictChanges": false,
+              "noObservedChange": false
+            },
+            "en": {
+              "total": 120,
+              "profile": {
+                "passed": 36,
+                "rate": 0.3,
+                "wilson95": [
+                  0.2252562422427457,
+                  0.38715142432473576
+                ]
+              },
+              "ablation": {
+                "passed": 46,
+                "rate": 0.38333333333333336,
+                "wilson95": [
+                  0.30124527754856906,
+                  0.47265919461579525
+                ]
+              },
+              "deltaPercentagePoints": 8.333333333333334,
+              "improved": 10,
+              "regressed": 0,
+              "mcnemarExactP": 0.001953125,
+              "replyChanges": 10,
+              "checkChanges": 10,
+              "noVerdictChanges": false,
+              "noObservedChange": false
+            }
+          },
+          "byAreaAndLanguage": {
+            "calculation": {
+              "ar": {
+                "total": 9,
+                "profile": {
+                  "passed": 9,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.7008549515804562,
+                    1.0
+                  ]
+                },
+                "ablation": {
+                  "passed": 9,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.7008549515804562,
+                    1.0
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 9,
+                "profile": {
+                  "passed": 8,
+                  "rate": 0.8888888888888888,
+                  "wilson95": [
+                    0.5650002944233441,
+                    0.9801091123614551
+                  ]
+                },
+                "ablation": {
+                  "passed": 9,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.7008549515804562,
+                    1.0
+                  ]
+                },
+                "deltaPercentagePoints": 11.11111111111111,
+                "improved": 1,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 1,
+                "checkChanges": 1,
+                "noVerdictChanges": false,
+                "noObservedChange": false
+              }
+            },
+            "clarification": {
+              "ar": {
+                "total": 8,
+                "profile": {
+                  "passed": 3,
+                  "rate": 0.375,
+                  "wilson95": [
+                    0.13684428582359742,
+                    0.6942576053973726
+                  ]
+                },
+                "ablation": {
+                  "passed": 3,
+                  "rate": 0.375,
+                  "wilson95": [
+                    0.13684428582359742,
+                    0.6942576053973726
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 8,
+                "profile": {
+                  "passed": 4,
+                  "rate": 0.5,
+                  "wilson95": [
+                    0.21521606221387762,
+                    0.7847839377861223
+                  ]
+                },
+                "ablation": {
+                  "passed": 4,
+                  "rate": 0.5,
+                  "wilson95": [
+                    0.21521606221387762,
+                    0.7847839377861223
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "coding": {
+              "ar": {
+                "total": 8,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 8,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "comparison": {
+              "ar": {
+                "total": 9,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "ablation": {
+                  "passed": 9,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.7008549515804562,
+                    1.0
+                  ]
+                },
+                "deltaPercentagePoints": 100.0,
+                "improved": 9,
+                "regressed": 0,
+                "mcnemarExactP": 0.00390625,
+                "replyChanges": 9,
+                "checkChanges": 9,
+                "noVerdictChanges": false,
+                "noObservedChange": false
+              },
+              "en": {
+                "total": 9,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "ablation": {
+                  "passed": 9,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.7008549515804562,
+                    1.0
+                  ]
+                },
+                "deltaPercentagePoints": 100.0,
+                "improved": 9,
+                "regressed": 0,
+                "mcnemarExactP": 0.00390625,
+                "replyChanges": 9,
+                "checkChanges": 9,
+                "noVerdictChanges": false,
+                "noObservedChange": false
+              }
+            },
+            "desktop": {
+              "ar": {
+                "total": 8,
+                "profile": {
+                  "passed": 5,
+                  "rate": 0.625,
+                  "wilson95": [
+                    0.3057423946026274,
+                    0.8631557141764026
+                  ]
+                },
+                "ablation": {
+                  "passed": 5,
+                  "rate": 0.625,
+                  "wilson95": [
+                    0.3057423946026274,
+                    0.8631557141764026
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 8,
+                "profile": {
+                  "passed": 6,
+                  "rate": 0.75,
+                  "wilson95": [
+                    0.409275430310169,
+                    0.928520787247891
+                  ]
+                },
+                "ablation": {
+                  "passed": 6,
+                  "rate": 0.75,
+                  "wilson95": [
+                    0.409275430310169,
+                    0.928520787247891
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "document-file": {
+              "ar": {
+                "total": 9,
+                "profile": {
+                  "passed": 9,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.7008549515804562,
+                    1.0
+                  ]
+                },
+                "ablation": {
+                  "passed": 9,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.7008549515804562,
+                    1.0
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 9,
+                "profile": {
+                  "passed": 9,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.7008549515804562,
+                    1.0
+                  ]
+                },
+                "ablation": {
+                  "passed": 9,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.7008549515804562,
+                    1.0
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "explanation": {
+              "ar": {
+                "total": 9,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 9,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "factual": {
+              "ar": {
+                "total": 9,
+                "profile": {
+                  "passed": 2,
+                  "rate": 0.2222222222222222,
+                  "wilson95": [
+                    0.06322510711784673,
+                    0.5474110308930109
+                  ]
+                },
+                "ablation": {
+                  "passed": 2,
+                  "rate": 0.2222222222222222,
+                  "wilson95": [
+                    0.06322510711784673,
+                    0.5474110308930109
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 9,
+                "profile": {
+                  "passed": 3,
+                  "rate": 0.3333333333333333,
+                  "wilson95": [
+                    0.12058381838691101,
+                    0.6457978644196037
+                  ]
+                },
+                "ablation": {
+                  "passed": 3,
+                  "rate": 0.3333333333333333,
+                  "wilson95": [
+                    0.12058381838691101,
+                    0.6457978644196037
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "follow-up": {
+              "ar": {
+                "total": 9,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 9,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "google-ads": {
+              "ar": {
+                "total": 8,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 8,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "memory": {
+              "ar": {
+                "total": 8,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 8,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "multi-step": {
+              "ar": {
+                "total": 9,
+                "profile": {
+                  "passed": 1,
+                  "rate": 0.1111111111111111,
+                  "wilson95": [
+                    0.019890887638544935,
+                    0.4349997055766559
+                  ]
+                },
+                "ablation": {
+                  "passed": 1,
+                  "rate": 0.1111111111111111,
+                  "wilson95": [
+                    0.019890887638544935,
+                    0.4349997055766559
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 9,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "refusal": {
+              "ar": {
+                "total": 8,
+                "profile": {
+                  "passed": 1,
+                  "rate": 0.125,
+                  "wilson95": [
+                    0.02241749145005667,
+                    0.47088818221285345
+                  ]
+                },
+                "ablation": {
+                  "passed": 1,
+                  "rate": 0.125,
+                  "wilson95": [
+                    0.02241749145005667,
+                    0.47088818221285345
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 8,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "small-talk": {
+              "ar": {
+                "total": 9,
+                "profile": {
+                  "passed": 4,
+                  "rate": 0.4444444444444444,
+                  "wilson95": [
+                    0.18877852109766463,
+                    0.7333487065045068
+                  ]
+                },
+                "ablation": {
+                  "passed": 4,
+                  "rate": 0.4444444444444444,
+                  "wilson95": [
+                    0.18877852109766463,
+                    0.7333487065045068
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 9,
+                "profile": {
+                  "passed": 6,
+                  "rate": 0.6666666666666666,
+                  "wilson95": [
+                    0.3542021355803963,
+                    0.879416181613089
+                  ]
+                },
+                "ablation": {
+                  "passed": 6,
+                  "rate": 0.6666666666666666,
+                  "wilson95": [
+                    0.3542021355803963,
+                    0.879416181613089
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            }
+          }
+        },
+        "v2": {
+          "overall": {
+            "total": 2400,
+            "profile": {
+              "passed": 1132,
+              "rate": 0.4716666666666667,
+              "wilson95": [
+                0.45175620199891564,
+                0.49166768750055223
+              ]
+            },
+            "ablation": {
+              "passed": 1132,
+              "rate": 0.4716666666666667,
+              "wilson95": [
+                0.45175620199891564,
+                0.49166768750055223
+              ]
+            },
+            "deltaPercentagePoints": 0.0,
+            "improved": 0,
+            "regressed": 0,
+            "mcnemarExactP": 1.0,
+            "replyChanges": 0,
+            "checkChanges": 0,
+            "noVerdictChanges": true,
+            "noObservedChange": true
+          },
+          "byArea": {
+            "calculation": {
+              "total": 277,
+              "profile": {
+                "passed": 5,
+                "rate": 0.018050541516245487,
+                "wilson95": [
+                  0.007734139869972692,
+                  0.041551527847382856
+                ]
+              },
+              "ablation": {
+                "passed": 5,
+                "rate": 0.018050541516245487,
+                "wilson95": [
+                  0.007734139869972692,
+                  0.041551527847382856
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "clarification": {
+              "total": 9,
+              "profile": {
+                "passed": 9,
+                "rate": 1.0,
+                "wilson95": [
+                  0.7008549515804562,
+                  1.0
+                ]
+              },
+              "ablation": {
+                "passed": 9,
+                "rate": 1.0,
+                "wilson95": [
+                  0.7008549515804562,
+                  1.0
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "coding": {
+              "total": 155,
+              "profile": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.02418423281437184
+                ]
+              },
+              "ablation": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.02418423281437184
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "comparison": {
+              "total": 32,
+              "profile": {
+                "passed": 28,
+                "rate": 0.875,
+                "wilson95": [
+                  0.7193169451834979,
+                  0.9502986561251993
+                ]
+              },
+              "ablation": {
+                "passed": 28,
+                "rate": 0.875,
+                "wilson95": [
+                  0.7193169451834979,
+                  0.9502986561251993
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "factual": {
+              "total": 1244,
+              "profile": {
+                "passed": 980,
+                "rate": 0.7877813504823151,
+                "wilson95": [
+                  0.7641918633553869,
+                  0.8095989775713722
+                ]
+              },
+              "ablation": {
+                "passed": 980,
+                "rate": 0.7877813504823151,
+                "wilson95": [
+                  0.7641918633553869,
+                  0.8095989775713722
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "follow-up": {
+              "total": 240,
+              "profile": {
+                "passed": 46,
+                "rate": 0.19166666666666668,
+                "wilson95": [
+                  0.1468818200379926,
+                  0.24616643059263538
+                ]
+              },
+              "ablation": {
+                "passed": 46,
+                "rate": 0.19166666666666668,
+                "wilson95": [
+                  0.1468818200379926,
+                  0.24616643059263538
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "refusal": {
+              "total": 375,
+              "profile": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.010140016968185863
+                ]
+              },
+              "ablation": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.010140016968185863
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "small-talk": {
+              "total": 68,
+              "profile": {
+                "passed": 64,
+                "rate": 0.9411764705882353,
+                "wilson95": [
+                  0.8582831156689853,
+                  0.9768892344603642
+                ]
+              },
+              "ablation": {
+                "passed": 64,
+                "rate": 0.9411764705882353,
+                "wilson95": [
+                  0.8582831156689853,
+                  0.9768892344603642
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            }
+          },
+          "byLanguage": {
+            "ar": {
+              "total": 1200,
+              "profile": {
+                "passed": 844,
+                "rate": 0.7033333333333334,
+                "wilson95": [
+                  0.6768728520261645,
+                  0.7284961410620566
+                ]
+              },
+              "ablation": {
+                "passed": 844,
+                "rate": 0.7033333333333334,
+                "wilson95": [
+                  0.6768728520261645,
+                  0.7284961410620566
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "en": {
+              "total": 1200,
+              "profile": {
+                "passed": 288,
+                "rate": 0.24,
+                "wilson95": [
+                  0.21668992432728484,
+                  0.2649693959861373
+                ]
+              },
+              "ablation": {
+                "passed": 288,
+                "rate": 0.24,
+                "wilson95": [
+                  0.21668992432728484,
+                  0.2649693959861373
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            }
+          },
+          "byAreaAndLanguage": {
+            "calculation": {
+              "en": {
+                "total": 277,
+                "profile": {
+                  "passed": 5,
+                  "rate": 0.018050541516245487,
+                  "wilson95": [
+                    0.007734139869972692,
+                    0.041551527847382856
+                  ]
+                },
+                "ablation": {
+                  "passed": 5,
+                  "rate": 0.018050541516245487,
+                  "wilson95": [
+                    0.007734139869972692,
+                    0.041551527847382856
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "clarification": {
+              "ar": {
+                "total": 2,
+                "profile": {
+                  "passed": 2,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.3423802275066532,
+                    1.0
+                  ]
+                },
+                "ablation": {
+                  "passed": 2,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.3423802275066532,
+                    1.0
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 7,
+                "profile": {
+                  "passed": 7,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.6456695649333126,
+                    1.0
+                  ]
+                },
+                "ablation": {
+                  "passed": 7,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.6456695649333126,
+                    1.0
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "coding": {
+              "en": {
+                "total": 155,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.02418423281437184
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.02418423281437184
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "comparison": {
+              "ar": {
+                "total": 26,
+                "profile": {
+                  "passed": 22,
+                  "rate": 0.8461538461538461,
+                  "wilson95": [
+                    0.6646880067178653,
+                    0.9384996627642164
+                  ]
+                },
+                "ablation": {
+                  "passed": 22,
+                  "rate": 0.8461538461538461,
+                  "wilson95": [
+                    0.6646880067178653,
+                    0.9384996627642164
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 6,
+                "profile": {
+                  "passed": 6,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.6096657120978348,
+                    1.0
+                  ]
+                },
+                "ablation": {
+                  "passed": 6,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.6096657120978348,
+                    1.0
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "factual": {
+              "ar": {
+                "total": 1017,
+                "profile": {
+                  "passed": 820,
+                  "rate": 0.8062930186823992,
+                  "wilson95": [
+                    0.780869951961599,
+                    0.8294109046953279
+                  ]
+                },
+                "ablation": {
+                  "passed": 820,
+                  "rate": 0.8062930186823992,
+                  "wilson95": [
+                    0.780869951961599,
+                    0.8294109046953279
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 227,
+                "profile": {
+                  "passed": 160,
+                  "rate": 0.7048458149779736,
+                  "wilson95": [
+                    0.6424996348613748,
+                    0.7603742703509365
+                  ]
+                },
+                "ablation": {
+                  "passed": 160,
+                  "rate": 0.7048458149779736,
+                  "wilson95": [
+                    0.6424996348613748,
+                    0.7603742703509365
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "follow-up": {
+              "en": {
+                "total": 240,
+                "profile": {
+                  "passed": 46,
+                  "rate": 0.19166666666666668,
+                  "wilson95": [
+                    0.1468818200379926,
+                    0.24616643059263538
+                  ]
+                },
+                "ablation": {
+                  "passed": 46,
+                  "rate": 0.19166666666666668,
+                  "wilson95": [
+                    0.1468818200379926,
+                    0.24616643059263538
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "refusal": {
+              "ar": {
+                "total": 155,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.02418423281437184
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.02418423281437184
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 220,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.017161516195135614
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.017161516195135614
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "small-talk": {
+              "en": {
+                "total": 68,
+                "profile": {
+                  "passed": 64,
+                  "rate": 0.9411764705882353,
+                  "wilson95": [
+                    0.8582831156689853,
+                    0.9768892344603642
+                  ]
+                },
+                "ablation": {
+                  "passed": 64,
+                  "rate": 0.9411764705882353,
+                  "wilson95": [
+                    0.8582831156689853,
+                    0.9768892344603642
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "MOHASSAN_PLAN_COMPILER": {
+      "commit": "29448aea3fa10d226ef82ec5bf0a65e723d6ec39",
+      "receiptSha256": "2d653f4c8b5a5c2d0fcca6c6fb21772328c3318a0397c72555aa6a61051f34f1",
+      "noVerdictChanges": false,
+      "noObservedChange": false,
+      "versions": {
+        "v1": {
+          "overall": {
+            "total": 240,
+            "profile": {
+              "passed": 70,
+              "rate": 0.2916666666666667,
+              "wilson95": [
+                0.23780428424198818,
+                0.35209318240032805
+              ]
+            },
+            "ablation": {
+              "passed": 85,
+              "rate": 0.3541666666666667,
+              "wilson95": [
+                0.29639154102909443,
+                0.41653668562052687
+              ]
+            },
+            "deltaPercentagePoints": 6.25,
+            "improved": 17,
+            "regressed": 2,
+            "mcnemarExactP": 0.000728607177734375,
+            "replyChanges": 30,
+            "checkChanges": 30,
+            "noVerdictChanges": false,
+            "noObservedChange": false
+          },
+          "byArea": {
+            "calculation": {
+              "total": 18,
+              "profile": {
+                "passed": 17,
+                "rate": 0.9444444444444444,
+                "wilson95": [
+                  0.7424269921812742,
+                  0.9901248090216969
+                ]
+              },
+              "ablation": {
+                "passed": 17,
+                "rate": 0.9444444444444444,
+                "wilson95": [
+                  0.7424269921812742,
+                  0.9901248090216969
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "clarification": {
+              "total": 16,
+              "profile": {
+                "passed": 7,
+                "rate": 0.4375,
+                "wilson95": [
+                  0.23098652405492354,
+                  0.6682144360118809
+                ]
+              },
+              "ablation": {
+                "passed": 7,
+                "rate": 0.4375,
+                "wilson95": [
+                  0.23098652405492354,
+                  0.6682144360118809
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "coding": {
+              "total": 16,
+              "profile": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.19360768053443644
+                ]
+              },
+              "ablation": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.19360768053443644
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 1,
+              "checkChanges": 1,
+              "noVerdictChanges": true,
+              "noObservedChange": false
+            },
+            "comparison": {
+              "total": 18,
+              "profile": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.17587922364665756
+                ]
+              },
+              "ablation": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.17587922364665756
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 4,
+              "checkChanges": 4,
+              "noVerdictChanges": true,
+              "noObservedChange": false
+            },
+            "desktop": {
+              "total": 16,
+              "profile": {
+                "passed": 11,
+                "rate": 0.6875,
+                "wilson95": [
+                  0.44404355834740666,
+                  0.8583535614521796
+                ]
+              },
+              "ablation": {
+                "passed": 11,
+                "rate": 0.6875,
+                "wilson95": [
+                  0.44404355834740666,
+                  0.8583535614521796
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "document-file": {
+              "total": 18,
+              "profile": {
+                "passed": 18,
+                "rate": 1.0,
+                "wilson95": [
+                  0.8241207763533425,
+                  1.0
+                ]
+              },
+              "ablation": {
+                "passed": 16,
+                "rate": 0.8888888888888888,
+                "wilson95": [
+                  0.6720023486982121,
+                  0.9689804773543875
+                ]
+              },
+              "deltaPercentagePoints": -11.11111111111111,
+              "improved": 0,
+              "regressed": 2,
+              "mcnemarExactP": 0.5,
+              "replyChanges": 2,
+              "checkChanges": 2,
+              "noVerdictChanges": false,
+              "noObservedChange": false
+            },
+            "explanation": {
+              "total": 18,
+              "profile": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.17587922364665756
+                ]
+              },
+              "ablation": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.17587922364665756
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "factual": {
+              "total": 18,
+              "profile": {
+                "passed": 5,
+                "rate": 0.2777777777777778,
+                "wilson95": [
+                  0.12499753379553999,
+                  0.5087265656029745
+                ]
+              },
+              "ablation": {
+                "passed": 5,
+                "rate": 0.2777777777777778,
+                "wilson95": [
+                  0.12499753379553999,
+                  0.5087265656029745
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 2,
+              "checkChanges": 2,
+              "noVerdictChanges": true,
+              "noObservedChange": false
+            },
+            "follow-up": {
+              "total": 18,
+              "profile": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.17587922364665756
+                ]
+              },
+              "ablation": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.17587922364665756
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "google-ads": {
+              "total": 16,
+              "profile": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.19360768053443644
+                ]
+              },
+              "ablation": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.19360768053443644
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 2,
+              "checkChanges": 2,
+              "noVerdictChanges": true,
+              "noObservedChange": false
+            },
+            "memory": {
+              "total": 16,
+              "profile": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.19360768053443644
+                ]
+              },
+              "ablation": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.19360768053443644
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 1,
+              "checkChanges": 1,
+              "noVerdictChanges": true,
+              "noObservedChange": false
+            },
+            "multi-step": {
+              "total": 18,
+              "profile": {
+                "passed": 1,
+                "rate": 0.05555555555555555,
+                "wilson95": [
+                  0.00987519097830307,
+                  0.25757300781872583
+                ]
+              },
+              "ablation": {
+                "passed": 18,
+                "rate": 1.0,
+                "wilson95": [
+                  0.8241207763533425,
+                  1.0
+                ]
+              },
+              "deltaPercentagePoints": 94.44444444444444,
+              "improved": 17,
+              "regressed": 0,
+              "mcnemarExactP": 1.52587890625e-05,
+              "replyChanges": 18,
+              "checkChanges": 18,
+              "noVerdictChanges": false,
+              "noObservedChange": false
+            },
+            "refusal": {
+              "total": 16,
+              "profile": {
+                "passed": 1,
+                "rate": 0.0625,
+                "wilson95": [
+                  0.011119344764642547,
+                  0.28328737570298934
+                ]
+              },
+              "ablation": {
+                "passed": 1,
+                "rate": 0.0625,
+                "wilson95": [
+                  0.011119344764642547,
+                  0.28328737570298934
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "small-talk": {
+              "total": 18,
+              "profile": {
+                "passed": 10,
+                "rate": 0.5555555555555556,
+                "wilson95": [
+                  0.33716415642042785,
+                  0.7544048187299436
+                ]
+              },
+              "ablation": {
+                "passed": 10,
+                "rate": 0.5555555555555556,
+                "wilson95": [
+                  0.33716415642042785,
+                  0.7544048187299436
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            }
+          },
+          "byLanguage": {
+            "ar": {
+              "total": 120,
+              "profile": {
+                "passed": 34,
+                "rate": 0.2833333333333333,
+                "wilson95": [
+                  0.21040628091756453,
+                  0.36970202453054035
+                ]
+              },
+              "ablation": {
+                "passed": 41,
+                "rate": 0.3416666666666667,
+                "wilson95": [
+                  0.26290438368564517,
+                  0.4302516856802777
+                ]
+              },
+              "deltaPercentagePoints": 5.833333333333333,
+              "improved": 8,
+              "regressed": 1,
+              "mcnemarExactP": 0.0390625,
+              "replyChanges": 16,
+              "checkChanges": 16,
+              "noVerdictChanges": false,
+              "noObservedChange": false
+            },
+            "en": {
+              "total": 120,
+              "profile": {
+                "passed": 36,
+                "rate": 0.3,
+                "wilson95": [
+                  0.2252562422427457,
+                  0.38715142432473576
+                ]
+              },
+              "ablation": {
+                "passed": 44,
+                "rate": 0.36666666666666664,
+                "wilson95": [
+                  0.2858293519000576,
+                  0.45577575914493
+                ]
+              },
+              "deltaPercentagePoints": 6.666666666666667,
+              "improved": 9,
+              "regressed": 1,
+              "mcnemarExactP": 0.021484375,
+              "replyChanges": 14,
+              "checkChanges": 14,
+              "noVerdictChanges": false,
+              "noObservedChange": false
+            }
+          },
+          "byAreaAndLanguage": {
+            "calculation": {
+              "ar": {
+                "total": 9,
+                "profile": {
+                  "passed": 9,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.7008549515804562,
+                    1.0
+                  ]
+                },
+                "ablation": {
+                  "passed": 9,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.7008549515804562,
+                    1.0
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 9,
+                "profile": {
+                  "passed": 8,
+                  "rate": 0.8888888888888888,
+                  "wilson95": [
+                    0.5650002944233441,
+                    0.9801091123614551
+                  ]
+                },
+                "ablation": {
+                  "passed": 8,
+                  "rate": 0.8888888888888888,
+                  "wilson95": [
+                    0.5650002944233441,
+                    0.9801091123614551
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "clarification": {
+              "ar": {
+                "total": 8,
+                "profile": {
+                  "passed": 3,
+                  "rate": 0.375,
+                  "wilson95": [
+                    0.13684428582359742,
+                    0.6942576053973726
+                  ]
+                },
+                "ablation": {
+                  "passed": 3,
+                  "rate": 0.375,
+                  "wilson95": [
+                    0.13684428582359742,
+                    0.6942576053973726
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 8,
+                "profile": {
+                  "passed": 4,
+                  "rate": 0.5,
+                  "wilson95": [
+                    0.21521606221387762,
+                    0.7847839377861223
+                  ]
+                },
+                "ablation": {
+                  "passed": 4,
+                  "rate": 0.5,
+                  "wilson95": [
+                    0.21521606221387762,
+                    0.7847839377861223
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "coding": {
+              "ar": {
+                "total": 8,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 1,
+                "checkChanges": 1,
+                "noVerdictChanges": true,
+                "noObservedChange": false
+              },
+              "en": {
+                "total": 8,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "comparison": {
+              "ar": {
+                "total": 9,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 2,
+                "checkChanges": 2,
+                "noVerdictChanges": true,
+                "noObservedChange": false
+              },
+              "en": {
+                "total": 9,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 2,
+                "checkChanges": 2,
+                "noVerdictChanges": true,
+                "noObservedChange": false
+              }
+            },
+            "desktop": {
+              "ar": {
+                "total": 8,
+                "profile": {
+                  "passed": 5,
+                  "rate": 0.625,
+                  "wilson95": [
+                    0.3057423946026274,
+                    0.8631557141764026
+                  ]
+                },
+                "ablation": {
+                  "passed": 5,
+                  "rate": 0.625,
+                  "wilson95": [
+                    0.3057423946026274,
+                    0.8631557141764026
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 8,
+                "profile": {
+                  "passed": 6,
+                  "rate": 0.75,
+                  "wilson95": [
+                    0.409275430310169,
+                    0.928520787247891
+                  ]
+                },
+                "ablation": {
+                  "passed": 6,
+                  "rate": 0.75,
+                  "wilson95": [
+                    0.409275430310169,
+                    0.928520787247891
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "document-file": {
+              "ar": {
+                "total": 9,
+                "profile": {
+                  "passed": 9,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.7008549515804562,
+                    1.0
+                  ]
+                },
+                "ablation": {
+                  "passed": 8,
+                  "rate": 0.8888888888888888,
+                  "wilson95": [
+                    0.5650002944233441,
+                    0.9801091123614551
+                  ]
+                },
+                "deltaPercentagePoints": -11.11111111111111,
+                "improved": 0,
+                "regressed": 1,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 1,
+                "checkChanges": 1,
+                "noVerdictChanges": false,
+                "noObservedChange": false
+              },
+              "en": {
+                "total": 9,
+                "profile": {
+                  "passed": 9,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.7008549515804562,
+                    1.0
+                  ]
+                },
+                "ablation": {
+                  "passed": 8,
+                  "rate": 0.8888888888888888,
+                  "wilson95": [
+                    0.5650002944233441,
+                    0.9801091123614551
+                  ]
+                },
+                "deltaPercentagePoints": -11.11111111111111,
+                "improved": 0,
+                "regressed": 1,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 1,
+                "checkChanges": 1,
+                "noVerdictChanges": false,
+                "noObservedChange": false
+              }
+            },
+            "explanation": {
+              "ar": {
+                "total": 9,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 9,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "factual": {
+              "ar": {
+                "total": 9,
+                "profile": {
+                  "passed": 2,
+                  "rate": 0.2222222222222222,
+                  "wilson95": [
+                    0.06322510711784673,
+                    0.5474110308930109
+                  ]
+                },
+                "ablation": {
+                  "passed": 2,
+                  "rate": 0.2222222222222222,
+                  "wilson95": [
+                    0.06322510711784673,
+                    0.5474110308930109
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 1,
+                "checkChanges": 1,
+                "noVerdictChanges": true,
+                "noObservedChange": false
+              },
+              "en": {
+                "total": 9,
+                "profile": {
+                  "passed": 3,
+                  "rate": 0.3333333333333333,
+                  "wilson95": [
+                    0.12058381838691101,
+                    0.6457978644196037
+                  ]
+                },
+                "ablation": {
+                  "passed": 3,
+                  "rate": 0.3333333333333333,
+                  "wilson95": [
+                    0.12058381838691101,
+                    0.6457978644196037
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 1,
+                "checkChanges": 1,
+                "noVerdictChanges": true,
+                "noObservedChange": false
+              }
+            },
+            "follow-up": {
+              "ar": {
+                "total": 9,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 9,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "google-ads": {
+              "ar": {
+                "total": 8,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 2,
+                "checkChanges": 2,
+                "noVerdictChanges": true,
+                "noObservedChange": false
+              },
+              "en": {
+                "total": 8,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "memory": {
+              "ar": {
+                "total": 8,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 8,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 1,
+                "checkChanges": 1,
+                "noVerdictChanges": true,
+                "noObservedChange": false
+              }
+            },
+            "multi-step": {
+              "ar": {
+                "total": 9,
+                "profile": {
+                  "passed": 1,
+                  "rate": 0.1111111111111111,
+                  "wilson95": [
+                    0.019890887638544935,
+                    0.4349997055766559
+                  ]
+                },
+                "ablation": {
+                  "passed": 9,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.7008549515804562,
+                    1.0
+                  ]
+                },
+                "deltaPercentagePoints": 88.88888888888889,
+                "improved": 8,
+                "regressed": 0,
+                "mcnemarExactP": 0.0078125,
+                "replyChanges": 9,
+                "checkChanges": 9,
+                "noVerdictChanges": false,
+                "noObservedChange": false
+              },
+              "en": {
+                "total": 9,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "ablation": {
+                  "passed": 9,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.7008549515804562,
+                    1.0
+                  ]
+                },
+                "deltaPercentagePoints": 100.0,
+                "improved": 9,
+                "regressed": 0,
+                "mcnemarExactP": 0.00390625,
+                "replyChanges": 9,
+                "checkChanges": 9,
+                "noVerdictChanges": false,
+                "noObservedChange": false
+              }
+            },
+            "refusal": {
+              "ar": {
+                "total": 8,
+                "profile": {
+                  "passed": 1,
+                  "rate": 0.125,
+                  "wilson95": [
+                    0.02241749145005667,
+                    0.47088818221285345
+                  ]
+                },
+                "ablation": {
+                  "passed": 1,
+                  "rate": 0.125,
+                  "wilson95": [
+                    0.02241749145005667,
+                    0.47088818221285345
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 8,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "small-talk": {
+              "ar": {
+                "total": 9,
+                "profile": {
+                  "passed": 4,
+                  "rate": 0.4444444444444444,
+                  "wilson95": [
+                    0.18877852109766463,
+                    0.7333487065045068
+                  ]
+                },
+                "ablation": {
+                  "passed": 4,
+                  "rate": 0.4444444444444444,
+                  "wilson95": [
+                    0.18877852109766463,
+                    0.7333487065045068
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 9,
+                "profile": {
+                  "passed": 6,
+                  "rate": 0.6666666666666666,
+                  "wilson95": [
+                    0.3542021355803963,
+                    0.879416181613089
+                  ]
+                },
+                "ablation": {
+                  "passed": 6,
+                  "rate": 0.6666666666666666,
+                  "wilson95": [
+                    0.3542021355803963,
+                    0.879416181613089
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            }
+          }
+        },
+        "v2": {
+          "overall": {
+            "total": 2400,
+            "profile": {
+              "passed": 1132,
+              "rate": 0.4716666666666667,
+              "wilson95": [
+                0.45175620199891564,
+                0.49166768750055223
+              ]
+            },
+            "ablation": {
+              "passed": 1131,
+              "rate": 0.47125,
+              "wilson95": [
+                0.45134115202395075,
+                0.49125073585050927
+              ]
+            },
+            "deltaPercentagePoints": -0.041666666666666664,
+            "improved": 0,
+            "regressed": 1,
+            "mcnemarExactP": 1.0,
+            "replyChanges": 1,
+            "checkChanges": 1,
+            "noVerdictChanges": false,
+            "noObservedChange": false
+          },
+          "byArea": {
+            "calculation": {
+              "total": 277,
+              "profile": {
+                "passed": 5,
+                "rate": 0.018050541516245487,
+                "wilson95": [
+                  0.007734139869972692,
+                  0.041551527847382856
+                ]
+              },
+              "ablation": {
+                "passed": 5,
+                "rate": 0.018050541516245487,
+                "wilson95": [
+                  0.007734139869972692,
+                  0.041551527847382856
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "clarification": {
+              "total": 9,
+              "profile": {
+                "passed": 9,
+                "rate": 1.0,
+                "wilson95": [
+                  0.7008549515804562,
+                  1.0
+                ]
+              },
+              "ablation": {
+                "passed": 9,
+                "rate": 1.0,
+                "wilson95": [
+                  0.7008549515804562,
+                  1.0
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "coding": {
+              "total": 155,
+              "profile": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.02418423281437184
+                ]
+              },
+              "ablation": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.02418423281437184
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "comparison": {
+              "total": 32,
+              "profile": {
+                "passed": 28,
+                "rate": 0.875,
+                "wilson95": [
+                  0.7193169451834979,
+                  0.9502986561251993
+                ]
+              },
+              "ablation": {
+                "passed": 28,
+                "rate": 0.875,
+                "wilson95": [
+                  0.7193169451834979,
+                  0.9502986561251993
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "factual": {
+              "total": 1244,
+              "profile": {
+                "passed": 980,
+                "rate": 0.7877813504823151,
+                "wilson95": [
+                  0.7641918633553869,
+                  0.8095989775713722
+                ]
+              },
+              "ablation": {
+                "passed": 979,
+                "rate": 0.7869774919614148,
+                "wilson95": [
+                  0.763359273309054,
+                  0.8088287999056192
+                ]
+              },
+              "deltaPercentagePoints": -0.08038585209003216,
+              "improved": 0,
+              "regressed": 1,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 1,
+              "checkChanges": 1,
+              "noVerdictChanges": false,
+              "noObservedChange": false
+            },
+            "follow-up": {
+              "total": 240,
+              "profile": {
+                "passed": 46,
+                "rate": 0.19166666666666668,
+                "wilson95": [
+                  0.1468818200379926,
+                  0.24616643059263538
+                ]
+              },
+              "ablation": {
+                "passed": 46,
+                "rate": 0.19166666666666668,
+                "wilson95": [
+                  0.1468818200379926,
+                  0.24616643059263538
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "refusal": {
+              "total": 375,
+              "profile": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.010140016968185863
+                ]
+              },
+              "ablation": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.010140016968185863
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "small-talk": {
+              "total": 68,
+              "profile": {
+                "passed": 64,
+                "rate": 0.9411764705882353,
+                "wilson95": [
+                  0.8582831156689853,
+                  0.9768892344603642
+                ]
+              },
+              "ablation": {
+                "passed": 64,
+                "rate": 0.9411764705882353,
+                "wilson95": [
+                  0.8582831156689853,
+                  0.9768892344603642
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            }
+          },
+          "byLanguage": {
+            "ar": {
+              "total": 1200,
+              "profile": {
+                "passed": 844,
+                "rate": 0.7033333333333334,
+                "wilson95": [
+                  0.6768728520261645,
+                  0.7284961410620566
+                ]
+              },
+              "ablation": {
+                "passed": 844,
+                "rate": 0.7033333333333334,
+                "wilson95": [
+                  0.6768728520261645,
+                  0.7284961410620566
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "en": {
+              "total": 1200,
+              "profile": {
+                "passed": 288,
+                "rate": 0.24,
+                "wilson95": [
+                  0.21668992432728484,
+                  0.2649693959861373
+                ]
+              },
+              "ablation": {
+                "passed": 287,
+                "rate": 0.23916666666666667,
+                "wilson95": [
+                  0.21588786236481616,
+                  0.26411010961627723
+                ]
+              },
+              "deltaPercentagePoints": -0.08333333333333333,
+              "improved": 0,
+              "regressed": 1,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 1,
+              "checkChanges": 1,
+              "noVerdictChanges": false,
+              "noObservedChange": false
+            }
+          },
+          "byAreaAndLanguage": {
+            "calculation": {
+              "en": {
+                "total": 277,
+                "profile": {
+                  "passed": 5,
+                  "rate": 0.018050541516245487,
+                  "wilson95": [
+                    0.007734139869972692,
+                    0.041551527847382856
+                  ]
+                },
+                "ablation": {
+                  "passed": 5,
+                  "rate": 0.018050541516245487,
+                  "wilson95": [
+                    0.007734139869972692,
+                    0.041551527847382856
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "clarification": {
+              "ar": {
+                "total": 2,
+                "profile": {
+                  "passed": 2,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.3423802275066532,
+                    1.0
+                  ]
+                },
+                "ablation": {
+                  "passed": 2,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.3423802275066532,
+                    1.0
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 7,
+                "profile": {
+                  "passed": 7,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.6456695649333126,
+                    1.0
+                  ]
+                },
+                "ablation": {
+                  "passed": 7,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.6456695649333126,
+                    1.0
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "coding": {
+              "en": {
+                "total": 155,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.02418423281437184
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.02418423281437184
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "comparison": {
+              "ar": {
+                "total": 26,
+                "profile": {
+                  "passed": 22,
+                  "rate": 0.8461538461538461,
+                  "wilson95": [
+                    0.6646880067178653,
+                    0.9384996627642164
+                  ]
+                },
+                "ablation": {
+                  "passed": 22,
+                  "rate": 0.8461538461538461,
+                  "wilson95": [
+                    0.6646880067178653,
+                    0.9384996627642164
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 6,
+                "profile": {
+                  "passed": 6,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.6096657120978348,
+                    1.0
+                  ]
+                },
+                "ablation": {
+                  "passed": 6,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.6096657120978348,
+                    1.0
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "factual": {
+              "ar": {
+                "total": 1017,
+                "profile": {
+                  "passed": 820,
+                  "rate": 0.8062930186823992,
+                  "wilson95": [
+                    0.780869951961599,
+                    0.8294109046953279
+                  ]
+                },
+                "ablation": {
+                  "passed": 820,
+                  "rate": 0.8062930186823992,
+                  "wilson95": [
+                    0.780869951961599,
+                    0.8294109046953279
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 227,
+                "profile": {
+                  "passed": 160,
+                  "rate": 0.7048458149779736,
+                  "wilson95": [
+                    0.6424996348613748,
+                    0.7603742703509365
+                  ]
+                },
+                "ablation": {
+                  "passed": 159,
+                  "rate": 0.7004405286343612,
+                  "wilson95": [
+                    0.6379203142750366,
+                    0.7562896359864723
+                  ]
+                },
+                "deltaPercentagePoints": -0.44052863436123346,
+                "improved": 0,
+                "regressed": 1,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 1,
+                "checkChanges": 1,
+                "noVerdictChanges": false,
+                "noObservedChange": false
+              }
+            },
+            "follow-up": {
+              "en": {
+                "total": 240,
+                "profile": {
+                  "passed": 46,
+                  "rate": 0.19166666666666668,
+                  "wilson95": [
+                    0.1468818200379926,
+                    0.24616643059263538
+                  ]
+                },
+                "ablation": {
+                  "passed": 46,
+                  "rate": 0.19166666666666668,
+                  "wilson95": [
+                    0.1468818200379926,
+                    0.24616643059263538
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "refusal": {
+              "ar": {
+                "total": 155,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.02418423281437184
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.02418423281437184
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 220,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.017161516195135614
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.017161516195135614
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "small-talk": {
+              "en": {
+                "total": 68,
+                "profile": {
+                  "passed": 64,
+                  "rate": 0.9411764705882353,
+                  "wilson95": [
+                    0.8582831156689853,
+                    0.9768892344603642
+                  ]
+                },
+                "ablation": {
+                  "passed": 64,
+                  "rate": 0.9411764705882353,
+                  "wilson95": [
+                    0.8582831156689853,
+                    0.9768892344603642
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "MOHASSAN_CONTEXT_POLICY_ENABLED": {
+      "commit": "29448aea3fa10d226ef82ec5bf0a65e723d6ec39",
+      "receiptSha256": "0f9ac0d0ebc7e56079078f71a8dd7b0a369d49eb169b5907b9b8a386e9d51392",
+      "noVerdictChanges": true,
+      "noObservedChange": true,
+      "versions": {
+        "v1": {
+          "overall": {
+            "total": 240,
+            "profile": {
+              "passed": 70,
+              "rate": 0.2916666666666667,
+              "wilson95": [
+                0.23780428424198818,
+                0.35209318240032805
+              ]
+            },
+            "ablation": {
+              "passed": 70,
+              "rate": 0.2916666666666667,
+              "wilson95": [
+                0.23780428424198818,
+                0.35209318240032805
+              ]
+            },
+            "deltaPercentagePoints": 0.0,
+            "improved": 0,
+            "regressed": 0,
+            "mcnemarExactP": 1.0,
+            "replyChanges": 0,
+            "checkChanges": 0,
+            "noVerdictChanges": true,
+            "noObservedChange": true
+          },
+          "byArea": {
+            "calculation": {
+              "total": 18,
+              "profile": {
+                "passed": 17,
+                "rate": 0.9444444444444444,
+                "wilson95": [
+                  0.7424269921812742,
+                  0.9901248090216969
+                ]
+              },
+              "ablation": {
+                "passed": 17,
+                "rate": 0.9444444444444444,
+                "wilson95": [
+                  0.7424269921812742,
+                  0.9901248090216969
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "clarification": {
+              "total": 16,
+              "profile": {
+                "passed": 7,
+                "rate": 0.4375,
+                "wilson95": [
+                  0.23098652405492354,
+                  0.6682144360118809
+                ]
+              },
+              "ablation": {
+                "passed": 7,
+                "rate": 0.4375,
+                "wilson95": [
+                  0.23098652405492354,
+                  0.6682144360118809
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "coding": {
+              "total": 16,
+              "profile": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.19360768053443644
+                ]
+              },
+              "ablation": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.19360768053443644
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "comparison": {
+              "total": 18,
+              "profile": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.17587922364665756
+                ]
+              },
+              "ablation": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.17587922364665756
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "desktop": {
+              "total": 16,
+              "profile": {
+                "passed": 11,
+                "rate": 0.6875,
+                "wilson95": [
+                  0.44404355834740666,
+                  0.8583535614521796
+                ]
+              },
+              "ablation": {
+                "passed": 11,
+                "rate": 0.6875,
+                "wilson95": [
+                  0.44404355834740666,
+                  0.8583535614521796
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "document-file": {
+              "total": 18,
+              "profile": {
+                "passed": 18,
+                "rate": 1.0,
+                "wilson95": [
+                  0.8241207763533425,
+                  1.0
+                ]
+              },
+              "ablation": {
+                "passed": 18,
+                "rate": 1.0,
+                "wilson95": [
+                  0.8241207763533425,
+                  1.0
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "explanation": {
+              "total": 18,
+              "profile": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.17587922364665756
+                ]
+              },
+              "ablation": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.17587922364665756
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "factual": {
+              "total": 18,
+              "profile": {
+                "passed": 5,
+                "rate": 0.2777777777777778,
+                "wilson95": [
+                  0.12499753379553999,
+                  0.5087265656029745
+                ]
+              },
+              "ablation": {
+                "passed": 5,
+                "rate": 0.2777777777777778,
+                "wilson95": [
+                  0.12499753379553999,
+                  0.5087265656029745
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "follow-up": {
+              "total": 18,
+              "profile": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.17587922364665756
+                ]
+              },
+              "ablation": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.17587922364665756
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "google-ads": {
+              "total": 16,
+              "profile": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.19360768053443644
+                ]
+              },
+              "ablation": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.19360768053443644
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "memory": {
+              "total": 16,
+              "profile": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.19360768053443644
+                ]
+              },
+              "ablation": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.19360768053443644
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "multi-step": {
+              "total": 18,
+              "profile": {
+                "passed": 1,
+                "rate": 0.05555555555555555,
+                "wilson95": [
+                  0.00987519097830307,
+                  0.25757300781872583
+                ]
+              },
+              "ablation": {
+                "passed": 1,
+                "rate": 0.05555555555555555,
+                "wilson95": [
+                  0.00987519097830307,
+                  0.25757300781872583
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "refusal": {
+              "total": 16,
+              "profile": {
+                "passed": 1,
+                "rate": 0.0625,
+                "wilson95": [
+                  0.011119344764642547,
+                  0.28328737570298934
+                ]
+              },
+              "ablation": {
+                "passed": 1,
+                "rate": 0.0625,
+                "wilson95": [
+                  0.011119344764642547,
+                  0.28328737570298934
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "small-talk": {
+              "total": 18,
+              "profile": {
+                "passed": 10,
+                "rate": 0.5555555555555556,
+                "wilson95": [
+                  0.33716415642042785,
+                  0.7544048187299436
+                ]
+              },
+              "ablation": {
+                "passed": 10,
+                "rate": 0.5555555555555556,
+                "wilson95": [
+                  0.33716415642042785,
+                  0.7544048187299436
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            }
+          },
+          "byLanguage": {
+            "ar": {
+              "total": 120,
+              "profile": {
+                "passed": 34,
+                "rate": 0.2833333333333333,
+                "wilson95": [
+                  0.21040628091756453,
+                  0.36970202453054035
+                ]
+              },
+              "ablation": {
+                "passed": 34,
+                "rate": 0.2833333333333333,
+                "wilson95": [
+                  0.21040628091756453,
+                  0.36970202453054035
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "en": {
+              "total": 120,
+              "profile": {
+                "passed": 36,
+                "rate": 0.3,
+                "wilson95": [
+                  0.2252562422427457,
+                  0.38715142432473576
+                ]
+              },
+              "ablation": {
+                "passed": 36,
+                "rate": 0.3,
+                "wilson95": [
+                  0.2252562422427457,
+                  0.38715142432473576
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            }
+          },
+          "byAreaAndLanguage": {
+            "calculation": {
+              "ar": {
+                "total": 9,
+                "profile": {
+                  "passed": 9,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.7008549515804562,
+                    1.0
+                  ]
+                },
+                "ablation": {
+                  "passed": 9,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.7008549515804562,
+                    1.0
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 9,
+                "profile": {
+                  "passed": 8,
+                  "rate": 0.8888888888888888,
+                  "wilson95": [
+                    0.5650002944233441,
+                    0.9801091123614551
+                  ]
+                },
+                "ablation": {
+                  "passed": 8,
+                  "rate": 0.8888888888888888,
+                  "wilson95": [
+                    0.5650002944233441,
+                    0.9801091123614551
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "clarification": {
+              "ar": {
+                "total": 8,
+                "profile": {
+                  "passed": 3,
+                  "rate": 0.375,
+                  "wilson95": [
+                    0.13684428582359742,
+                    0.6942576053973726
+                  ]
+                },
+                "ablation": {
+                  "passed": 3,
+                  "rate": 0.375,
+                  "wilson95": [
+                    0.13684428582359742,
+                    0.6942576053973726
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 8,
+                "profile": {
+                  "passed": 4,
+                  "rate": 0.5,
+                  "wilson95": [
+                    0.21521606221387762,
+                    0.7847839377861223
+                  ]
+                },
+                "ablation": {
+                  "passed": 4,
+                  "rate": 0.5,
+                  "wilson95": [
+                    0.21521606221387762,
+                    0.7847839377861223
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "coding": {
+              "ar": {
+                "total": 8,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 8,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "comparison": {
+              "ar": {
+                "total": 9,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 9,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "desktop": {
+              "ar": {
+                "total": 8,
+                "profile": {
+                  "passed": 5,
+                  "rate": 0.625,
+                  "wilson95": [
+                    0.3057423946026274,
+                    0.8631557141764026
+                  ]
+                },
+                "ablation": {
+                  "passed": 5,
+                  "rate": 0.625,
+                  "wilson95": [
+                    0.3057423946026274,
+                    0.8631557141764026
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 8,
+                "profile": {
+                  "passed": 6,
+                  "rate": 0.75,
+                  "wilson95": [
+                    0.409275430310169,
+                    0.928520787247891
+                  ]
+                },
+                "ablation": {
+                  "passed": 6,
+                  "rate": 0.75,
+                  "wilson95": [
+                    0.409275430310169,
+                    0.928520787247891
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "document-file": {
+              "ar": {
+                "total": 9,
+                "profile": {
+                  "passed": 9,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.7008549515804562,
+                    1.0
+                  ]
+                },
+                "ablation": {
+                  "passed": 9,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.7008549515804562,
+                    1.0
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 9,
+                "profile": {
+                  "passed": 9,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.7008549515804562,
+                    1.0
+                  ]
+                },
+                "ablation": {
+                  "passed": 9,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.7008549515804562,
+                    1.0
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "explanation": {
+              "ar": {
+                "total": 9,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 9,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "factual": {
+              "ar": {
+                "total": 9,
+                "profile": {
+                  "passed": 2,
+                  "rate": 0.2222222222222222,
+                  "wilson95": [
+                    0.06322510711784673,
+                    0.5474110308930109
+                  ]
+                },
+                "ablation": {
+                  "passed": 2,
+                  "rate": 0.2222222222222222,
+                  "wilson95": [
+                    0.06322510711784673,
+                    0.5474110308930109
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 9,
+                "profile": {
+                  "passed": 3,
+                  "rate": 0.3333333333333333,
+                  "wilson95": [
+                    0.12058381838691101,
+                    0.6457978644196037
+                  ]
+                },
+                "ablation": {
+                  "passed": 3,
+                  "rate": 0.3333333333333333,
+                  "wilson95": [
+                    0.12058381838691101,
+                    0.6457978644196037
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "follow-up": {
+              "ar": {
+                "total": 9,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 9,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "google-ads": {
+              "ar": {
+                "total": 8,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 8,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "memory": {
+              "ar": {
+                "total": 8,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 8,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "multi-step": {
+              "ar": {
+                "total": 9,
+                "profile": {
+                  "passed": 1,
+                  "rate": 0.1111111111111111,
+                  "wilson95": [
+                    0.019890887638544935,
+                    0.4349997055766559
+                  ]
+                },
+                "ablation": {
+                  "passed": 1,
+                  "rate": 0.1111111111111111,
+                  "wilson95": [
+                    0.019890887638544935,
+                    0.4349997055766559
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 9,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.299145048419544
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "refusal": {
+              "ar": {
+                "total": 8,
+                "profile": {
+                  "passed": 1,
+                  "rate": 0.125,
+                  "wilson95": [
+                    0.02241749145005667,
+                    0.47088818221285345
+                  ]
+                },
+                "ablation": {
+                  "passed": 1,
+                  "rate": 0.125,
+                  "wilson95": [
+                    0.02241749145005667,
+                    0.47088818221285345
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 8,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.3244075648838801
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "small-talk": {
+              "ar": {
+                "total": 9,
+                "profile": {
+                  "passed": 4,
+                  "rate": 0.4444444444444444,
+                  "wilson95": [
+                    0.18877852109766463,
+                    0.7333487065045068
+                  ]
+                },
+                "ablation": {
+                  "passed": 4,
+                  "rate": 0.4444444444444444,
+                  "wilson95": [
+                    0.18877852109766463,
+                    0.7333487065045068
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 9,
+                "profile": {
+                  "passed": 6,
+                  "rate": 0.6666666666666666,
+                  "wilson95": [
+                    0.3542021355803963,
+                    0.879416181613089
+                  ]
+                },
+                "ablation": {
+                  "passed": 6,
+                  "rate": 0.6666666666666666,
+                  "wilson95": [
+                    0.3542021355803963,
+                    0.879416181613089
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            }
+          }
+        },
+        "v2": {
+          "overall": {
+            "total": 2400,
+            "profile": {
+              "passed": 1132,
+              "rate": 0.4716666666666667,
+              "wilson95": [
+                0.45175620199891564,
+                0.49166768750055223
+              ]
+            },
+            "ablation": {
+              "passed": 1132,
+              "rate": 0.4716666666666667,
+              "wilson95": [
+                0.45175620199891564,
+                0.49166768750055223
+              ]
+            },
+            "deltaPercentagePoints": 0.0,
+            "improved": 0,
+            "regressed": 0,
+            "mcnemarExactP": 1.0,
+            "replyChanges": 0,
+            "checkChanges": 0,
+            "noVerdictChanges": true,
+            "noObservedChange": true
+          },
+          "byArea": {
+            "calculation": {
+              "total": 277,
+              "profile": {
+                "passed": 5,
+                "rate": 0.018050541516245487,
+                "wilson95": [
+                  0.007734139869972692,
+                  0.041551527847382856
+                ]
+              },
+              "ablation": {
+                "passed": 5,
+                "rate": 0.018050541516245487,
+                "wilson95": [
+                  0.007734139869972692,
+                  0.041551527847382856
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "clarification": {
+              "total": 9,
+              "profile": {
+                "passed": 9,
+                "rate": 1.0,
+                "wilson95": [
+                  0.7008549515804562,
+                  1.0
+                ]
+              },
+              "ablation": {
+                "passed": 9,
+                "rate": 1.0,
+                "wilson95": [
+                  0.7008549515804562,
+                  1.0
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "coding": {
+              "total": 155,
+              "profile": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.02418423281437184
+                ]
+              },
+              "ablation": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.02418423281437184
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "comparison": {
+              "total": 32,
+              "profile": {
+                "passed": 28,
+                "rate": 0.875,
+                "wilson95": [
+                  0.7193169451834979,
+                  0.9502986561251993
+                ]
+              },
+              "ablation": {
+                "passed": 28,
+                "rate": 0.875,
+                "wilson95": [
+                  0.7193169451834979,
+                  0.9502986561251993
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "factual": {
+              "total": 1244,
+              "profile": {
+                "passed": 980,
+                "rate": 0.7877813504823151,
+                "wilson95": [
+                  0.7641918633553869,
+                  0.8095989775713722
+                ]
+              },
+              "ablation": {
+                "passed": 980,
+                "rate": 0.7877813504823151,
+                "wilson95": [
+                  0.7641918633553869,
+                  0.8095989775713722
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "follow-up": {
+              "total": 240,
+              "profile": {
+                "passed": 46,
+                "rate": 0.19166666666666668,
+                "wilson95": [
+                  0.1468818200379926,
+                  0.24616643059263538
+                ]
+              },
+              "ablation": {
+                "passed": 46,
+                "rate": 0.19166666666666668,
+                "wilson95": [
+                  0.1468818200379926,
+                  0.24616643059263538
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "refusal": {
+              "total": 375,
+              "profile": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.010140016968185863
+                ]
+              },
+              "ablation": {
+                "passed": 0,
+                "rate": 0.0,
+                "wilson95": [
+                  0.0,
+                  0.010140016968185863
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "small-talk": {
+              "total": 68,
+              "profile": {
+                "passed": 64,
+                "rate": 0.9411764705882353,
+                "wilson95": [
+                  0.8582831156689853,
+                  0.9768892344603642
+                ]
+              },
+              "ablation": {
+                "passed": 64,
+                "rate": 0.9411764705882353,
+                "wilson95": [
+                  0.8582831156689853,
+                  0.9768892344603642
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            }
+          },
+          "byLanguage": {
+            "ar": {
+              "total": 1200,
+              "profile": {
+                "passed": 844,
+                "rate": 0.7033333333333334,
+                "wilson95": [
+                  0.6768728520261645,
+                  0.7284961410620566
+                ]
+              },
+              "ablation": {
+                "passed": 844,
+                "rate": 0.7033333333333334,
+                "wilson95": [
+                  0.6768728520261645,
+                  0.7284961410620566
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            },
+            "en": {
+              "total": 1200,
+              "profile": {
+                "passed": 288,
+                "rate": 0.24,
+                "wilson95": [
+                  0.21668992432728484,
+                  0.2649693959861373
+                ]
+              },
+              "ablation": {
+                "passed": 288,
+                "rate": 0.24,
+                "wilson95": [
+                  0.21668992432728484,
+                  0.2649693959861373
+                ]
+              },
+              "deltaPercentagePoints": 0.0,
+              "improved": 0,
+              "regressed": 0,
+              "mcnemarExactP": 1.0,
+              "replyChanges": 0,
+              "checkChanges": 0,
+              "noVerdictChanges": true,
+              "noObservedChange": true
+            }
+          },
+          "byAreaAndLanguage": {
+            "calculation": {
+              "en": {
+                "total": 277,
+                "profile": {
+                  "passed": 5,
+                  "rate": 0.018050541516245487,
+                  "wilson95": [
+                    0.007734139869972692,
+                    0.041551527847382856
+                  ]
+                },
+                "ablation": {
+                  "passed": 5,
+                  "rate": 0.018050541516245487,
+                  "wilson95": [
+                    0.007734139869972692,
+                    0.041551527847382856
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "clarification": {
+              "ar": {
+                "total": 2,
+                "profile": {
+                  "passed": 2,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.3423802275066532,
+                    1.0
+                  ]
+                },
+                "ablation": {
+                  "passed": 2,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.3423802275066532,
+                    1.0
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 7,
+                "profile": {
+                  "passed": 7,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.6456695649333126,
+                    1.0
+                  ]
+                },
+                "ablation": {
+                  "passed": 7,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.6456695649333126,
+                    1.0
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "coding": {
+              "en": {
+                "total": 155,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.02418423281437184
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.02418423281437184
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "comparison": {
+              "ar": {
+                "total": 26,
+                "profile": {
+                  "passed": 22,
+                  "rate": 0.8461538461538461,
+                  "wilson95": [
+                    0.6646880067178653,
+                    0.9384996627642164
+                  ]
+                },
+                "ablation": {
+                  "passed": 22,
+                  "rate": 0.8461538461538461,
+                  "wilson95": [
+                    0.6646880067178653,
+                    0.9384996627642164
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 6,
+                "profile": {
+                  "passed": 6,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.6096657120978348,
+                    1.0
+                  ]
+                },
+                "ablation": {
+                  "passed": 6,
+                  "rate": 1.0,
+                  "wilson95": [
+                    0.6096657120978348,
+                    1.0
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "factual": {
+              "ar": {
+                "total": 1017,
+                "profile": {
+                  "passed": 820,
+                  "rate": 0.8062930186823992,
+                  "wilson95": [
+                    0.780869951961599,
+                    0.8294109046953279
+                  ]
+                },
+                "ablation": {
+                  "passed": 820,
+                  "rate": 0.8062930186823992,
+                  "wilson95": [
+                    0.780869951961599,
+                    0.8294109046953279
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 227,
+                "profile": {
+                  "passed": 160,
+                  "rate": 0.7048458149779736,
+                  "wilson95": [
+                    0.6424996348613748,
+                    0.7603742703509365
+                  ]
+                },
+                "ablation": {
+                  "passed": 160,
+                  "rate": 0.7048458149779736,
+                  "wilson95": [
+                    0.6424996348613748,
+                    0.7603742703509365
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "follow-up": {
+              "en": {
+                "total": 240,
+                "profile": {
+                  "passed": 46,
+                  "rate": 0.19166666666666668,
+                  "wilson95": [
+                    0.1468818200379926,
+                    0.24616643059263538
+                  ]
+                },
+                "ablation": {
+                  "passed": 46,
+                  "rate": 0.19166666666666668,
+                  "wilson95": [
+                    0.1468818200379926,
+                    0.24616643059263538
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "refusal": {
+              "ar": {
+                "total": 155,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.02418423281437184
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.02418423281437184
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              },
+              "en": {
+                "total": 220,
+                "profile": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.017161516195135614
+                  ]
+                },
+                "ablation": {
+                  "passed": 0,
+                  "rate": 0.0,
+                  "wilson95": [
+                    0.0,
+                    0.017161516195135614
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            },
+            "small-talk": {
+              "en": {
+                "total": 68,
+                "profile": {
+                  "passed": 64,
+                  "rate": 0.9411764705882353,
+                  "wilson95": [
+                    0.8582831156689853,
+                    0.9768892344603642
+                  ]
+                },
+                "ablation": {
+                  "passed": 64,
+                  "rate": 0.9411764705882353,
+                  "wilson95": [
+                    0.8582831156689853,
+                    0.9768892344603642
+                  ]
+                },
+                "deltaPercentagePoints": 0.0,
+                "improved": 0,
+                "regressed": 0,
+                "mcnemarExactP": 1.0,
+                "replyChanges": 0,
+                "checkChanges": 0,
+                "noVerdictChanges": true,
+                "noObservedChange": true
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "profileFile": {
+    "path": "scripts/dev-bench/profiles/production-2026-11-26.json",
+    "sha256": "c749ecddd7cb9bdd0eaa98d7733eb231353301eb02d80e6ec38ac17e7909dbca",
+    "deploymentOnly": [
+      "EXECUTOR_EXPERIMENT",
+      "MOHASSAN_DESKTOP_SHELL",
+      "MOHASSAN_MODEL_COUNCIL",
+      "MOHASSAN_MODEL_WORKER",
+      "MOHASSAN_ROUTER_SHADOW",
+      "MOHASSAN_V5_CHAT",
+      "PRODUCTION_METRICS_ENABLED",
+      "RUN_WORKER"
+    ]
+  }
+}

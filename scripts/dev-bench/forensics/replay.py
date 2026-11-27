@@ -64,13 +64,6 @@ def arm(receipt_path, target):
                  (f"{runner.FIXTURES}/manifest.json", f"{runner.FIXTURES}/development.json")),
                 ("v2", runner.AUDIT, runner.V2_HARNESS, (runner.V2_DEV,)),
             ):
-                if version == "v2":
-                    runner.git(checkout, "-c", "user.name=Development benchmark",
-                               "-c", "user.email=dev-bench@example.invalid", "merge", "--no-ff", "--no-commit", runner.AUDIT)
-                    runner.git(checkout, "restore", "--source=HEAD", "--staged", "--worktree", "--", ".")
-                    runner.git(checkout, "restore", "--ignore-skip-worktree-bits", "--source=HEAD", "--staged", "--", ".")
-                    assert not runner.git(checkout, "status", "--porcelain", "--untracked-files=no")
-
                 installed = runner.install_inputs(repo, checkout, revision,
                                                   tuple(f"{runner.BENCH}/{file}" for file in harness),
                                                   observed_inputs, version)

@@ -1,6 +1,6 @@
 # Development capability benchmark
 
-Run this launcher from a full clone. It builds a disposable detached Git worktree for each measured commit. The main checkout's source and local changes are independent of the measurement. Use a new output directory outside the clone and retain it to audit the run.
+Run this launcher from a full clone. It builds a disposable detached Git worktree for each arm and reuses one dependency install per measured commit within the run. Each arm receives a fresh copy of those dependencies, including workspace links. Use a new output directory outside the clone and retain it to audit the run.
 
 ## Prerequisites
 
@@ -17,7 +17,50 @@ Make these pinned Git objects available locally:
 | V2 published development bundle, [#62](https://github.com/ahmadalwakai/Mohassan-AI/pull/62) | `12cedfe592aab40cdd47ee00d05ea86a6d2bae89` |
 | V2 runner and audit tree, [#70](https://github.com/ahmadalwakai/Mohassan-AI/pull/70) | `a1e1cb020b7ba093885edbf501149e7b8252c0cb` |
 
-If missing, fetch the specific objects with `git fetch origin <full-sha>`. The launcher checks the V2 development tree against #62 before using the #70 runner. It runs only development fixtures, with V1 first. V1 uses the review and structured-memory adapters. V2 adds the clarification adapter and runs eight isolated lanes, assigned by case index modulo eight. The audit merge is local to the disposable worktree. The pinned scorer receives the same observer results, and the receipts also capture the public reply text per turn.
+If missing, fetch the specific objects with `git fetch origin <full-sha>`. The launcher checks the V2 development tree against #62 before using the #70 runner. It mounts only the reviewed harness sources and development inputs, with V1 first. The worktree and the product digest exclude the holdout, sealed and v2 exclusion fixture directories. V1 uses the review and structured-memory adapters. V2 adds the clarification adapter and runs eight isolated lanes, assigned by case index modulo eight. The receipts capture the native scorer's results and the public reply text per turn.
+
+## Measure the production switches
+
+Prepare the runtime above, including the Chromium pin. Use a non-root Linux service account and a Python executable that meets the verified-coding prerequisites if measuring all switches. The following commands pin the measured source to the documented November 26 production build.
+
+```bash
+git fetch origin 29448aea3fa10d226ef82ec5bf0a65e723d6ec39
+git fetch origin a258b3d47e39b5a2c03c71d4a9eb01107ae3d97f
+git fetch origin 0dfff7c54d3658a02cf878ff11faac7f630a6c10
+git fetch origin 12cedfe592aab40cdd47ee00d05ea86a6d2bae89
+git fetch origin a1e1cb020b7ba093885edbf501149e7b8252c0cb
+npm ci
+export PLAYWRIGHT_BROWSERS_PATH=/absolute/path/to/chromium
+npx --no-install playwright install chromium
+```
+
+Preview the complete plan without creating directories, installing dependencies or looking up Git objects.
+
+```bash
+python3 -B scripts/dev-bench/run.py \
+  --profile scripts/dev-bench/profiles/production-2026-11-26.json \
+  --arm profile=29448aea3fa10d226ef82ec5bf0a65e723d6ec39 \
+  --ablate all --dry-run
+```
+
+Measure the profile and every disabled benchmark switch in one command. Use a fresh private output path. The verified-coding arm uses `/usr/bin/python3` by default. For the Docker runtime below, add `--set profile:TEST_DRIVEN_CODING_PYTHON=/usr/local/bin/python3.12` to apply the same interpreter to every arm.
+
+```bash
+python3 -B scripts/dev-bench/run.py \
+  --profile scripts/dev-bench/profiles/production-2026-11-26.json \
+  --arm profile=29448aea3fa10d226ef82ec5bf0a65e723d6ec39 \
+  --ablate all --output /absolute/path/to/production-2026-11-26-ablation
+```
+
+For a smaller run, use, for example, `--ablate MOHASSAN_REASONING,MOHASSAN_PLAN_COMPILER,MOHASSAN_CONTEXT_POLICY_ENABLED`. Omitting the option runs the profile alone. Switch values and their exact source lines are in the [profile](profiles/production-2026-11-26.json). Owner monitor settings automatically use the monitor audit in every arm, with fixture account roles, case-scoped UUIDs and network reads from recorded pages. The profile records the web-service and model-backed owner settings in `deployment_only` for reconciliation with deployment configuration. The fixture runner uses its isolated chat controller and the measured commit's existing local rule and scratch paths. It guards against model-provider or unrecorded fetch calls and does not supply the owner model store.
+
+`ablation.json` records the profile digest and each combined receipt's SHA-256. V1 and V2 have their own results. Each version has overall, area, language, and area-by-language rows. Read each row as follows.
+
+- `deltaPercentagePoints` is the ablated pass rate minus the profile pass rate. `improved` and `regressed` count the same cases that flipped in each direction.
+- `wilson95` is a 95% interval for each arm's own pass rate, stored as proportions from 0 to 1. `mcnemarExactP` is the two-sided exact paired test of equal flip rates on the discordant cases. With zero discordant cases, it returns 1. The individual p-values are unadjusted across switches and groups.
+- `noVerdictChanges` requires zero flips in both directions. `noObservedChange` additionally requires identical scored checks and replies, omitting turn latency. A zero delta may contain offsetting flips. These fields apply to the measured cases and outcomes. An inactive dependency can make a one-switch arm inert. For example, at the frozen commit the [arbiter promotion list](../../packages/model-relations/src/manager.ts#L19-L20) is empty, and monitor source switches depend on Monitor V2.
+
+To regenerate the report from completed coordinated receipts, use `ablation.py --profile-receipt FILE --arm SWITCH=RECEIPT --output FILE` with one `--arm` per switched receipt. Compare groups within each version using `ablation.json`, and use `summary.json` for settings, input digests and per-arm provenance.
 
 ## Run
 
