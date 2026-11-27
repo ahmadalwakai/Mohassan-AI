@@ -1,4 +1,5 @@
 import type { ModelCouncil } from '@mohassan/contracts';
+import { PIPELINE } from './council-members.js';
 import { factualPassage, type FactualPassage } from './factual-evidence.js';
 import { judge, ownLines, type JudgeEvidence } from './judge.js';
 import { extractQuote, isPageInstruction } from './mind/extract.js';
@@ -16,7 +17,6 @@ export interface CouncilAnswer {
   evidence?: { url: string; quote: string };
 }
 
-const PIPELINE = 'pipeline';
 const UNCERTAIN = 'uncertain';
 const MAX_PROPOSALS = 16;
 const MAX_CHECKS = 64;
@@ -149,6 +149,7 @@ interface DiscussionInput {
   keepPipeline: boolean;
   requireVerifiedPipeline?: boolean;
   allowReplacement?: boolean;
+  v5Fallback?: boolean;
   vote: (member: string) => CouncilVote;
 }
 
@@ -282,6 +283,14 @@ export function decideCouncilDiscussion(input: DiscussionInput): Discussion {
       chosen: best.winner.member,
       reasonAr: 'تحقّق الحكم من الاقتباس، وأيّد الجوابَ عضوان على الأقل، وتجاوز وزن تأييده وزن جواب المحرك وأي جواب منافس مستوفٍ للشروط.',
       reasonEn: 'The judge verified the cited evidence. At least two members agreed, and their combined weight exceeded the pipeline and any other eligible answer.',
+    } };
+  }
+
+  if (!input.requireVerifiedPipeline && input.allowReplacement !== false && !input.pipelineStands && input.keepPipeline && input.v5Fallback) {
+    return { proposals, checks, votes, decision: {
+      chosen: 'chat-v5',
+      reasonAr: 'أُرسل رد v5 التجريبي المعلَّم بصفته ملاذ المالك الأخير، بعد تعذّر جواب المحرك ودون صفحات مقروءة.',
+      reasonEn: 'The owner’s labelled experimental v5 fallback answered after the pipeline was blocked without pages.',
     } };
   }
 

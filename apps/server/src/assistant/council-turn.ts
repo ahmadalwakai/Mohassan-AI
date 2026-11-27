@@ -6,6 +6,7 @@ import {
   councilModelReply, decideCouncilDiscussion, proposeCouncilAnswers, uncertainCouncilReply,
   type CouncilAnswer, type CouncilCheck, type CouncilProposal,
 } from './council-deliberation.js';
+import { councilMemberLabel, PIPELINE, WEB_SEARCH } from './council-members.js';
 import { readerPrompt, selectPassage } from './council-passage.js';
 import { councilWeight, type CouncilDomain, type CouncilLanguage } from './council-receipts.js';
 import { runCouncilMember, type CouncilRunContext } from './council-runners.js';
@@ -15,9 +16,7 @@ import { buildFrame } from './mind/frame.js';
 import type { CouncilOutcome, CouncilTurn, ModelCouncilOptions } from './model-council.js';
 import { questionLanguage } from './reply-check.js';
 
-const PIPELINE = 'pipeline';
 const V5 = 'chat-v5';
-const WEB_SEARCH = 'web-search';
 const WEB_ROUTES = new Set(['web_search', 'news']);
 const ABSTAIN = /غير\s+مذكور|لا\s+يذكر|لم\s+يذكر|لا\s+يوجد\s+في\s+النص|ليس\s+في\s+النص|not\s+(?:mentioned|stated|given|in\s+the\s+(?:text|passage))|unanswerable|no\s+answer|cannot\s+be\s+answered/iu;
 const POPULATION = /\b(?:population|inhabitants|how\s+many\s+people\s+live)\b|(?:^|[^\p{L}])(?:عدد\s+السكان|عدد\s+سكان|تعداد\s+السكان)(?!\p{L})/iu;
@@ -41,7 +40,7 @@ function output(result: ModelRunResult): SignalOutput {
 }
 
 function record<R>(run: CouncilRun<R>, round: ModelCouncilMember['round']): ModelCouncilMember {
-  const base = { model: run.entry.id, label: run.entry.id, round, elapsedMs: roundMs(run.ms) };
+  const base = { model: run.entry.id, label: councilMemberLabel(run.entry.id), round, elapsedMs: roundMs(run.ms) };
   if (run.status === 'ok') return { ...base, outcome: 'ok' };
   const outcome = run.status === 'timeout' ? 'timeout' : run.status === 'skipped' ? 'abstained' : 'failed';
   return { ...base, outcome, note: short(`${run.status}: ${run.reason}`, 240) };
@@ -52,7 +51,7 @@ function modelResult(run: CouncilRun<ModelRunResult>, round: ModelCouncilMember[
   if (run.status !== 'ok') return member;
   if (!run.value.ok) return {
     ...member, outcome: run.value.reason === 'timeout' ? 'timeout' : 'failed',
-    note: short([run.value.reason, run.value.detail].filter(Boolean).join(': '), 240),
+    note: run.value.reason,
   };
   return text ? { ...member, output: short(text, 600) } : { ...member, outcome: 'abstained' };
 }
@@ -105,7 +104,7 @@ async function searchTurn(turn: CouncilTurn, search: NonNullable<CouncilTurn['se
     }
   }
   const member: ModelCouncilMember = {
-    model: WEB_SEARCH, label: 'البحث في الويب', round: 'search',
+    model: WEB_SEARCH, label: councilMemberLabel(WEB_SEARCH), round: 'search',
     outcome: pages.length ? 'ok' : signal.aborted || budgetMs <= 0 ? 'timeout' : 'failed',
     elapsedMs: roundMs(performance.now() - started),
     ...(pages.length && { output: short(pages.map(page => page.title || page.url).join(' · '), 600) }),
@@ -192,7 +191,7 @@ export async function deliberateCouncilTurn(options: ModelCouncilOptions, turn: 
 
   const answers: CouncilAnswer[] = [{ member: PIPELINE, answer: pipelineText, evidence: turn.webDeliberation?.pipelineCitation }];
   members.push({
-    model: PIPELINE, label: 'المحرك (القواعد والصفحات)', round: 'answer', elapsedMs: 0,
+    model: PIPELINE, label: councilMemberLabel(PIPELINE), round: 'answer', elapsedMs: 0,
     outcome: pipelineText ? 'ok' : 'abstained', ...(pipelineText && { output: short(pipelineText, 600) }),
     judge: pipelineJudge.decision,
   });
@@ -280,17 +279,25 @@ export async function deliberateCouncilTurn(options: ModelCouncilOptions, turn: 
 
   const keepPipeline = Boolean(pipelineText && (turn.advisory || !mayPropose || pipelineJudge.kind === 'question'
     || (turn.pipeline.status !== 'completed' && (turn.pipeline.status === 'partial' || !pages.length))));
+  const experimental = !turn.webDeliberation && turn.v5MayAnswer && keepPipeline && !turn.advisory && mayPropose
+    && turn.pipeline.status === 'blocked' && !evidence.some(item => item.kind === 'page')
+    ? answers.find(answer => answer.member === V5)?.answer : undefined;
+  const v5Fallback = experimental && judge({
+    question: turn.question, previous: turn.previous, reply: experimental, status: 'completed',
+  }).decision !== 'withhold' ? experimental : undefined;
   const discussion = decideCouncilDiscussion({
     question: turn.question, previous: turn.previous, evidence: pages, proposals, checks, pipelineStands, keepPipeline,
     requireVerifiedPipeline: Boolean(turn.webDeliberation),
     allowReplacement: !turn.advisory && mayPropose,
+    v5Fallback: Boolean(v5Fallback),
     vote: member => receipt(member, member === PIPELINE ? 'pipeline' : roles.get(member)!, receiptLanguage, domain),
   });
   const chosen = discussion.decision.chosen;
   const winner = proposals.find(proposal => proposal.member === chosen);
   const winnerTitle = turn.webDeliberation && pages.find(page => page.url === winner?.evidenceUrl)?.title;
-  const text = chosen === PIPELINE && !turn.webDeliberation ? turn.pipeline.text : winner
+  const text = chosen === PIPELINE && !turn.webDeliberation ? turn.pipeline.text : chosen === V5 && v5Fallback ? v5Fallback : winner
     ? councilModelReply(winner, language, winnerTitle || undefined) : uncertainCouncilReply(language, pages);
+  const changed = text !== turn.pipeline.text || (chosen === V5 && Boolean(v5Fallback));
   for (const member of members) {
     if (member.round !== 'answer') continue;
     if (member.model === chosen) member.chosen = true;
@@ -301,11 +308,11 @@ export async function deliberateCouncilTurn(options: ModelCouncilOptions, turn: 
       : judgeCheck.verdict === 'supports' ? 'send' : undefined;
   }
   return {
-    text, chosen, changed: text !== turn.pipeline.text,
+    text, chosen, changed,
     status: chosen === PIPELINE ? turn.pipeline.status : winner ? 'completed' : 'partial',
     ...(turn.webDeliberation && performance.now() >= deadline - 1 && { timeLimited: true as const }),
     council: {
-      version: 1, chosen, changed: text !== turn.pipeline.text, reason: discussion.decision.reasonAr,
+      version: 1, chosen, changed, reason: discussion.decision.reasonAr,
       elapsedMs: roundMs(performance.now() - started), members: members.slice(0, 48), discussion,
     },
   };

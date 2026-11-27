@@ -1,6 +1,6 @@
 import type { Kysely } from 'kysely';
 import { describe, expect, it, vi } from 'vitest';
-import { deliberateAdvisory, fenceAdvisoryRecord } from '../apps/server/src/assistant/council-advisory.js';
+import { ADVISORY_BUDGET_MS, deliberateAdvisory, fenceAdvisoryRecord, withAdvisoryBudget } from '../apps/server/src/assistant/council-advisory.js';
 import type { CouncilOutcome, CouncilTurn } from '../apps/server/src/assistant/model-council.js';
 
 const pipeline = 'pipeline';
@@ -51,7 +51,7 @@ describe('owner publications with council advice', () => {
     const previous = 'The shop opens next week.';
     const result = await deliberateAdvisory(config, { ...input, route: 'ads', previous });
     expect(deliberate).toHaveBeenCalledWith(expect.objectContaining({
-      question: input.question, previous, advisory: true, signal: input.signal,
+      question: input.question, previous, advisory: true, signal: expect.any(AbortSignal),
       baseline: { ...input.baseline, route: 'ads' }, pipeline: { text: brief, status: 'partial' },
     }));
 
@@ -69,5 +69,42 @@ describe('owner publications with council advice', () => {
     expect(await deliberateAdvisory(config, turn)).toBeUndefined();
     deliberate.mockResolvedValueOnce({ text: 'fixture replacement', status: 'completed', chosen: 'fake-model', changed: true, council: record });
     expect(await deliberateAdvisory(config, turn)).toBeUndefined();
+  });
+
+  it('ends the wait exactly at the shared deadline when owner lookup and stalled advice consume the budget', async () => {
+    vi.useFakeTimers();
+    try {
+      const { config, deliberate, input } = fixture();
+      let allow!: (allowed: boolean) => void;
+      config.fullAccess.mockImplementationOnce(() => new Promise(resolve => { allow = resolve; }));
+      deliberate.mockImplementationOnce(() => new Promise(() => {}));
+      const publish = vi.fn();
+      const publication = deliberateAdvisory(config, { ...input, route: 'ads' }).then(publish);
+      const firstHalf = Math.floor(ADVISORY_BUDGET_MS / 2);
+      await vi.advanceTimersByTimeAsync(firstHalf);
+      expect(deliberate).not.toHaveBeenCalled();
+      allow(true);
+      await vi.advanceTimersByTimeAsync(ADVISORY_BUDGET_MS - firstHalf - 1);
+      const signal = deliberate.mock.calls[0]?.[0].signal;
+      expect(signal?.aborted).toBe(false);
+      expect(publish).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      await publication;
+      expect(publish).toHaveBeenCalledWith(undefined);
+      expect(signal?.aborted).toBe(true);
+      expect(input.signal.aborted).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('drops stalled advice immediately when the caller cancels', async () => {
+    const controller = new AbortController();
+    const work = vi.fn((_signal: AbortSignal) => new Promise<never>(() => {}));
+    const result = withAdvisoryBudget(controller.signal, work);
+    controller.abort();
+    await expect(result).resolves.toBeUndefined();
+    expect(work.mock.calls[0]?.[0].aborted).toBe(true);
   });
 });

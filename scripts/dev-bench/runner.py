@@ -313,8 +313,10 @@ def run_arm(
                                 str(checkout / adapter_path), str(observe), version],
                                cwd=checkout, env=environment, check=True)
                 instrument_runner(runner, version)
-                if settings.get("MOHASSAN_MODEL_COUNCIL") == "owner":
-                    instrument_council_observer(observe, apply_once)
+                if "MOHASSAN_MODEL_COUNCIL" in settings:
+                    council_enabled = settings["MOHASSAN_MODEL_COUNCIL"] == "owner"
+                    use_adapter = council_enabled and (checkout / "apps/server/src/assistant/council-runners.ts").is_file()
+                    instrument_council_observer(observe, apply_once, enabled=council_enabled, use_adapter=use_adapter)
                     instrument_council_scoring(runner, apply_once)
                 if monitor_audit:
                     mounted.append(instrument_observer(observe))

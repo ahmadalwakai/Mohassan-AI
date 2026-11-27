@@ -6,6 +6,7 @@ import type { CouncilScheduleOptions } from './council-scheduler.js';
 import type { councilWeight } from './council-receipts.js';
 import type { JudgeEvidence } from './judge.js';
 
+export { PIPELINE, WEB_SEARCH } from './council-members.js';
 export { rankHits, readerPrompt, selectPassage } from './council-passage.js';
 
 export type CouncilStatus = 'completed' | 'partial' | 'blocked';
@@ -23,6 +24,8 @@ export interface CouncilTurn {
   evidence: readonly JudgeEvidence[];
   /** The conversation for v5, oldest first, ending with the user's turn. */
   history: CouncilHistory;
+  /** The chat host's existing owner-only eligibility for the labelled v5 fallback. */
+  v5MayAnswer?: boolean;
   /** The rules' own reading of the request, as the shadow organizer observes it. */
   baseline: TurnObservation['baseline'];
   /** Attachments already authorized and integrity-checked by the image turn. */

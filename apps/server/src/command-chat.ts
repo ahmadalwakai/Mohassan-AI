@@ -41,7 +41,7 @@ import type { JudgeShadow } from './assistant/judge-shadow.js';
 import { judge as judgeAnswer } from './assistant/judge.js';
 import { observeImageRelations, observeModelRelations, ruleBaseline } from './assistant/model-relations-shadow.js';
 import { rankHits, type CouncilOutcome, type CouncilSearchResult, type ModelCouncilService } from './assistant/model-council.js';
-import { deliberateAdvisory, fenceAdvisoryRecord } from './assistant/council-advisory.js';
+import { deliberateAdvisory, fenceAdvisoryRecord, withAdvisoryBudget } from './assistant/council-advisory.js';
 import { answerCouncilWebChat, councilWebAccessEnded, councilWebEnabled, type CouncilWebChatAnswer } from './assistant/council-web-chat.js';
 import { withArbiterExecution } from './assistant/model-relations-arbiter.js';
 import { ensureChatConversationsTable, reviewJudgedReply } from './assistant/review/publication.js';
@@ -1528,13 +1528,14 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const baseline = ruleBaseline(state, request);
       if (councilAdvisory) baseline.route = state.codingVerification?.reason === 'passed' ? 'coding' : 'ads';
       try {
-        council = await config.modelCouncil.deliberate({
+        const deliberate = async (signal: AbortSignal) => config.modelCouncil!.deliberate({
           question: baseline.question?.trim() || request, previous: source.previousRequest ?? null,
-          pipeline: { text, status }, evidence: judgeEvidence(source), baseline, advisory: councilAdvisory,
-          history: config.v5Chat ? await v5Turns(id, runId, source) ?? [] : [],
+          pipeline: { text, status }, evidence: judgeEvidence(source), baseline, advisory: councilAdvisory, v5MayAnswer,
+          history: !councilAdvisory && config.v5Chat ? await v5Turns(id, runId, source) ?? [] : [],
           search: (question, signal) => councilSearch(source.ownerId, request, state, question, signal),
-          signal: source.controller.signal,
+          signal,
         });
+        council = councilAdvisory ? await withAdvisoryBudget(source.controller.signal, deliberate) : await deliberate(source.controller.signal);
       } catch {
         // A council failure never costs the owner the pipeline's reply.
         council = undefined;
