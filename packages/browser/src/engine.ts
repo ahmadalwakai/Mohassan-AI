@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 import { BrowserError, SafeNetwork, type NetworkPolicy } from './network.js';
+import { browserEngineError } from './reply-errors.js';
 
 export interface BrowserField {id:string;index:number;name:string;type:string;label:string;options:string[]}
 export interface BrowserForm {id:string;index:number;action:string;method:string;fingerprint:string;fields:BrowserField[];sensitive?:boolean}
@@ -43,12 +44,12 @@ export class BrowserEngine {
       await new Promise<void>(resolve=>proxy.listen(0,'127.0.0.1',resolve));this.denialProxy=proxy;
       const address=proxy.address();if(!address||typeof address==='string')throw new Error('proxy');
       return chromium.launch({headless:true,proxy:{server:`http://127.0.0.1:${address.port}`,bypass:'<-loopback>'},args:['--disable-background-networking','--disable-quic','--disable-sync','--no-first-run','--force-webrtc-ip-handling-policy=disable_non_proxied_udp','--host-resolver-rules=MAP * ~NOTFOUND'],timeout:15000});
-    })().catch(()=>{this.browser=undefined;throw new BrowserError('BROWSER_UNAVAILABLE','تعذر تشغيل Chromium المستقل. تأكد من تثبيت متصفح Playwright.',503);});
+    })().catch(()=>{this.browser=undefined;throw browserEngineError('BROWSER_UNAVAILABLE','browserUnavailable',503);});
     return this.browser;
   }
   async open(id:string,allowedOrigins:string[],expiresAt=Date.now()+30*60000):Promise<void>{
     if(this.sessions.has(id))return;
-    if(this.sessions.size>=6)throw new BrowserError('BROWSER_RESOURCE_LIMIT','أغلق جلسة متصفح قبل إنشاء جلسة إضافية.',409);
+    if(this.sessions.size>=6)throw browserEngineError('BROWSER_RESOURCE_LIMIT','browserResourceLimit',409);
     const browser=await this.launch(),context=await browser.newContext({acceptDownloads:false,serviceWorkers:'block',viewport:{width:1100,height:760},locale:'ar',permissions:[]});
     const live:LiveSession={context,page:undefined as any,allowedOrigins,requests:0,denials:[],abort:new AbortController(),expiresAt,formEvidence:new Map(),controlEvidence:new Map()};
     await context.routeWebSocket('**/*',route=>route.close());
@@ -57,21 +58,21 @@ export class BrowserEngine {
       let topDocument=false,documentResponse:LiveSession['documentResponse'];
       try{
         topDocument=request.isNavigationRequest()&&request.frame()===live.page.mainFrame();
-        if(live.abort.signal.aborted||Date.now()>=live.expiresAt)throw new BrowserError('BROWSER_SESSION_CLOSED','انتهى تفويض الجلسة.');
-        if(++live.requests>200)throw new BrowserError('BROWSER_REQUEST_LIMIT','تجاوزت الصفحة عدد طلبات الجلسة المسموح.');
+        if(live.abort.signal.aborted||Date.now()>=live.expiresAt)throw browserEngineError('BROWSER_SESSION_CLOSED','browserSessionClosed');
+        if(++live.requests>200)throw browserEngineError('BROWSER_REQUEST_LIMIT','browserRequestLimit');
         const url=this.network.validate(request.url(),live.allowedOrigins).href,method=request.method(),body=request.postData()??'';
         if(topDocument){
           const authorized=live.navigationUrl===url||live.permit&&!live.permit.used&&live.permit.url===url&&live.permit.method===method;
-          if(!authorized)throw new BrowserError('BROWSER_SUBMIT_DENIED','تنقل الصفحة أو الإرسال التلقائي يحتاج فعلًا محددًا من جلسة المتصفح.');
+          if(!authorized)throw browserEngineError('BROWSER_SUBMIT_DENIED','browserAutomaticNavigationDenied');
           live.documentResponse=undefined;
           if(live.navigationUrl===url)live.navigationUrl=undefined;
         }
         if(!['GET','HEAD'].includes(method)){
           const permit=live.permit;
-          if(!permit||permit.used||permit.url!==url||permit.method!==method||permit.bodyHash!==formBodyHash(body))throw new BrowserError('BROWSER_SUBMIT_DENIED','طلب إرسال بلا موافقة مطابقة للوجهة والقيم.');
+          if(!permit||permit.used||permit.url!==url||permit.method!==method||permit.bodyHash!==formBodyHash(body))throw browserEngineError('BROWSER_SUBMIT_DENIED','browserSubmissionWithoutApproval');
           permit.used=true;
         }else if(live.permit?.method==='GET'&&live.permit.url===url&&!live.permit.used)live.permit.used=true;
-        if(['media','websocket','manifest'].includes(request.resourceType()))throw new BrowserError('BROWSER_RESOURCE_DENIED','هذا المورد خارج نطاق جلسة القراءة.');
+        if(['media','websocket','manifest'].includes(request.resourceType()))throw browserEngineError('BROWSER_RESOURCE_DENIED','browserResourceDenied');
         let target=url,headers=request.headers();
         for(let redirects=0;redirects<=5;redirects++){
           const response=await this.network.request(target,{allowedOrigins:live.allowedOrigins,method,headers,signal:live.abort.signal,...(body?{body}:{})});
@@ -79,7 +80,7 @@ export class BrowserEngine {
           if([301,302,303,307,308].includes(response.status)&&response.headers.location){
             if(topDocument)live.lastRedirectOrigin=new URL(response.headers.location,target).origin;
             const next=this.network.validate(new URL(response.headers.location,target).href,live.allowedOrigins).href;
-            if(!['GET','HEAD'].includes(method)&&[307,308].includes(response.status))throw new BrowserError('BROWSER_SUBMIT_DENIED','لم يُعد إرسال النموذج إلى وجهة تحويل جديدة؛ يلزم إذن مستقل.');
+            if(!['GET','HEAD'].includes(method)&&[307,308].includes(response.status))throw browserEngineError('BROWSER_SUBMIT_DENIED','browserSubmissionRedirectDenied');
             if(topDocument){
               // Chromium does not re-enter a Playwright route for HTTP redirect
               // hops. Keep its direct-network denial proxy in place and initiate
@@ -88,11 +89,11 @@ export class BrowserEngine {
               await route.fulfill({status:200,headers:{'content-type':'text/html; charset=utf-8','content-security-policy':"default-src 'none'; base-uri 'none'; form-action 'none'; sandbox",...(response.headers['set-cookie']?{'set-cookie':response.headers['set-cookie']}:{})},body:'<!doctype html><title>Loading</title>'});
               return;
             }
-            if(!['GET','HEAD'].includes(method))throw new BrowserError('BROWSER_SUBMIT_DENIED','لم يُكرر طلب إرسال أثناء تحويل مورد الصفحة.');
-            if(redirects===5)throw new BrowserError('BROWSER_REDIRECT_LIMIT','تجاوز المورد حد إعادة التوجيه.');
+            if(!['GET','HEAD'].includes(method))throw browserEngineError('BROWSER_SUBMIT_DENIED','browserResourceSubmissionRedirectDenied');
+            if(redirects===5)throw browserEngineError('BROWSER_REDIRECT_LIMIT','browserResourceRedirectLimit');
             if(new URL(next).origin!==new URL(target).origin){headers={...headers};delete headers.cookie;}
             target=next;
-            if(++live.requests>200)throw new BrowserError('BROWSER_REQUEST_LIMIT','تجاوزت الصفحة عدد طلبات الجلسة المسموح.');
+            if(++live.requests>200)throw browserEngineError('BROWSER_REQUEST_LIMIT','browserRequestLimit');
             continue;
           }
           // A redirected resource is fulfilled at its original browser URL;
@@ -117,23 +118,23 @@ export class BrowserEngine {
     this.sessions.set(id,live);
     live.timer=setTimeout(()=>void this.closeSession(id),Math.max(1,expiresAt-Date.now()));live.timer.unref();
   }
-  private live(id:string):LiveSession {const live=this.sessions.get(id);if(!live)throw new BrowserError('BROWSER_SESSION_STALE','انتهت جلسة التشغيل. افتح العنوان مجددًا لاستئناف القراءة بجلسة مستقلة.',409);return live;}
-  private async bounded<T>(id:string,work:Promise<T>,timeoutMs=8000):Promise<T>{let timer:ReturnType<typeof setTimeout>|undefined;try{return await Promise.race([work,new Promise<never>((_resolve,reject)=>{timer=setTimeout(()=>{void this.closeSession(id);reject(new BrowserError('BROWSER_PAGE_TIMEOUT','لم تستجب الصفحة ضمن المهلة. أُغلقت جلسة التشغيل وبقيت الأدلة السابقة محفوظة.',502));},timeoutMs);})]);}finally{if(timer)clearTimeout(timer);}}
+  private live(id:string):LiveSession {const live=this.sessions.get(id);if(!live)throw browserEngineError('BROWSER_SESSION_STALE','browserSessionStale',409);return live;}
+  private async bounded<T>(id:string,work:Promise<T>,timeoutMs=8000):Promise<T>{let timer:ReturnType<typeof setTimeout>|undefined;try{return await Promise.race([work,new Promise<never>((_resolve,reject)=>{timer=setTimeout(()=>{void this.closeSession(id);reject(browserEngineError('BROWSER_PAGE_TIMEOUT','browserPageTimeout',502));},timeoutMs);})]);}finally{if(timer)clearTimeout(timer);}}
   private async followNavigation(live:LiveSession,url:string,deadline=Date.now()+30000):Promise<void>{
     let target=this.network.validate(url,live.allowedOrigins).href;
     for(let redirects=0;redirects<=5;redirects++){
       this.network.validate(target,live.allowedOrigins);live.redirectTarget=undefined;
-      const remaining=deadline-Date.now();if(remaining<=0)throw new BrowserError('BROWSER_NAVIGATION_FAILED','تجاوز فتح الصفحة والتحويلات المهلة المسموحة.',502);
+      const remaining=deadline-Date.now();if(remaining<=0)throw browserEngineError('BROWSER_NAVIGATION_FAILED','browserNavigationTimeout',502);
       live.navigationUrl=target;
       try{await live.page.goto(target,{waitUntil:'domcontentloaded',timeout:Math.min(12000,remaining)});}finally{live.navigationUrl=undefined;}
       if(!live.redirectTarget){await live.page.waitForLoadState('load',{timeout:Math.min(4000,Math.max(1,deadline-Date.now()))}).catch(()=>live.denials.push('لم يكتمل تحميل بعض موارد الصفحة قبل التقاط المشاهدة.'));return;}
       target=live.redirectTarget;
     }
-    throw new BrowserError('BROWSER_REDIRECT_LIMIT','تجاوزت الصفحة حد إعادة التوجيه.');
+    throw browserEngineError('BROWSER_REDIRECT_LIMIT','browserPageRedirectLimit');
   }
   async navigate(id:string,url:string):Promise<BrowserObservation>{
     const live=this.live(id);this.network.validate(url,live.allowedOrigins);live.denials=[];
-    try{await this.followNavigation(live,url);}catch(error){if(error instanceof BrowserError)throw error;throw new BrowserError('BROWSER_NAVIGATION_FAILED',live.denials[0]??'تعذر فتح الصفحة ضمن الوقت والنطاق المسموح.',502);}
+    try{await this.followNavigation(live,url);}catch(error){if(error instanceof BrowserError)throw error;throw browserEngineError('BROWSER_NAVIGATION_FAILED','browserNavigationFailed',502,live.denials[0]);}
     this.network.validate(live.page.url(),live.allowedOrigins);return this.observe(id);
   }
   async inspect<T>(id:string,url:string,read:(page:Page,documentStatus:number|undefined)=>Promise<T>):Promise<T>{
@@ -164,9 +165,9 @@ export class BrowserEngine {
   }
   async fill(id:string,observation:BrowserObservation,controlId:string,value:string):Promise<BrowserObservation>{
     const live=this.live(id),current=await this.observe(id),control=current.controls?.find(item=>item.id===controlId),expected=observation.controls?.find(item=>item.id===controlId);
-    if(current.url!==observation.url||!control||!expected||control.fingerprint!==expected.fingerprint)throw new BrowserError('BROWSER_OBSERVATION_CHANGED','تغير الحقل أو ارتباطه بالصفحة؛ اقرأ الصفحة مجددًا قبل التعبئة.',409);
-    if(value.length>2000||control.kind!=='input'||control.disabled||control.readOnly||control.sensitive||current.forms.find(form=>form.id===control.formId)?.sensitive||!['text','email','search','url','tel','number','textarea','select'].includes(control.type))throw new BrowserError('BROWSER_SENSITIVE_FORM','الحقل غير قابل للتعبئة أو يحتوي بيانات دخول أو دفع أو بيانات حساسة.');
-    if(control.type==='select'&&!control.options.includes(value))throw new BrowserError('BROWSER_FORM_INVALID','قيمة القائمة غير موجودة في الحقل.');
+    if(current.url!==observation.url||!control||!expected||control.fingerprint!==expected.fingerprint)throw browserEngineError('BROWSER_OBSERVATION_CHANGED','browserFieldObservationChanged',409);
+    if(value.length>2000||control.kind!=='input'||control.disabled||control.readOnly||control.sensitive||current.forms.find(form=>form.id===control.formId)?.sensitive||!['text','email','search','url','tel','number','textarea','select'].includes(control.type))throw browserEngineError('BROWSER_SENSITIVE_FORM','browserSensitiveField');
+    if(control.type==='select'&&!control.options.includes(value))throw browserEngineError('BROWSER_FORM_INVALID','browserFieldOptionInvalid');
     const input={index:control.index,evidence:live.controlEvidence.get(control.id),formEvidence:control.formId?live.formEvidence.get(control.formId):null,value};
     const filled=await this.bounded(id,live.page.evaluate<boolean>(String.raw`(()=>{${domHelpers}
       const input=${JSON.stringify(input)},node=controls[input.index];
@@ -177,7 +178,7 @@ export class BrowserEngine {
       try{node.dispatchEvent(new Event('input',{bubbles:true}));node.dispatchEvent(new Event('change',{bubbles:true}));}finally{document.removeEventListener('submit',preventSubmission,true);}
       return true;
     })()`));
-    if(!filled)throw new BrowserError('BROWSER_FORM_CHANGED','تغير الحقل أثناء التعبئة؛ لم يُرسل نموذج.',409);
+    if(!filled)throw browserEngineError('BROWSER_FORM_CHANGED','browserFieldChanged',409);
     return this.observe(id);
   }
   private async payload(id:string,form:BrowserForm,values:Record<string,string>,submitter?:BrowserSubmitter,apply=false):Promise<{payload:string;action:string;method:string}>{
@@ -198,22 +199,22 @@ export class BrowserEngine {
         const entries=Array.from(new FormData(form,button||undefined).entries()).map(([key,value])=>{if(typeof value!=='string')throw new Error('Files disabled');return [key,value];});
         return {payload:new URLSearchParams(entries).toString(),action,method};
       }finally{if(!input.apply)for(const [node,value]of original)setValue(node,value);}
-    })()`)).catch(()=>{throw new BrowserError('BROWSER_FORM_CHANGED','تغير النموذج أو زر الإرسال أو ترميزه؛ اقرأ الصفحة وراجع الوجهة من جديد.',409);});
-    if(Buffer.byteLength(prepared.payload)>16000)throw new BrowserError('BROWSER_FORM_ENCODING','تجاوز جسم النموذج حد الإرسال المسموح.');
+    })()`)).catch(()=>{throw browserEngineError('BROWSER_FORM_CHANGED','browserFormChanged',409);});
+    if(Buffer.byteLength(prepared.payload)>16000)throw browserEngineError('BROWSER_FORM_ENCODING','browserFormEncoding');
     this.network.validate(prepared.action,live.allowedOrigins);
     return prepared;
   }
   private async prepareSubmission(id:string,observation:BrowserObservation,formId:string,values:Record<string,string>,controlId?:string):Promise<BrowserPreparedSubmission>{
     const current=await this.observe(id),form=current.forms.find(item=>item.id===formId),expected=observation.forms.find(item=>item.id===formId);
-    if(current.url!==observation.url||!form||!expected||form.fingerprint!==expected.fingerprint)throw new BrowserError('BROWSER_OBSERVATION_CHANGED','تغيرت الصفحة أو النموذج؛ اقرأ الصفحة مجددًا قبل طلب الموافقة.',409);
-    if(Object.keys(values).length>20||Object.entries(values).some(([key,value])=>!form.fields.some(field=>field.id===key)||value.length>2000))throw new BrowserError('BROWSER_FORM_INVALID','قيم النموذج خارج الحقول المرصودة أو تتجاوز الحد.');
-    if(form.sensitive||form.fields.some(field=>field.type==='password'||/password|passcode|credit.?card|card.?number|cvv/i.test(field.name)))throw new BrowserError('BROWSER_SENSITIVE_FORM','النموذج يحتوي حقول دخول أو دفع تتطلب نطاق صلاحية مستقلًا.');
-    for(const [key,value]of Object.entries(values)){const field=form.fields.find(item=>item.id===key)!;if(!['text','email','search','url','tel','number','textarea','select'].includes(field.type)||/password|passcode|credit.?card|card.?number|cvv|secret|token/i.test(field.name))throw new BrowserError('BROWSER_SENSITIVE_FORM','لا تقبل هذه الجلسة كلمات المرور أو بيانات الدفع أو الحقول الحساسة.');if(field.type==='select'&&!field.options.includes(value))throw new BrowserError('BROWSER_FORM_INVALID','قيمة القائمة غير موجودة في النموذج.');}
+    if(current.url!==observation.url||!form||!expected||form.fingerprint!==expected.fingerprint)throw browserEngineError('BROWSER_OBSERVATION_CHANGED','browserFormObservationChanged',409);
+    if(Object.keys(values).length>20||Object.entries(values).some(([key,value])=>!form.fields.some(field=>field.id===key)||value.length>2000))throw browserEngineError('BROWSER_FORM_INVALID','browserFormValuesInvalid');
+    if(form.sensitive||form.fields.some(field=>field.type==='password'||/password|passcode|credit.?card|card.?number|cvv/i.test(field.name)))throw browserEngineError('BROWSER_SENSITIVE_FORM','browserSensitiveForm');
+    for(const [key,value]of Object.entries(values)){const field=form.fields.find(item=>item.id===key)!;if(!['text','email','search','url','tel','number','textarea','select'].includes(field.type)||/password|passcode|credit.?card|card.?number|cvv|secret|token/i.test(field.name))throw browserEngineError('BROWSER_SENSITIVE_FORM','browserSensitiveFormFields');if(field.type==='select'&&!field.options.includes(value))throw browserEngineError('BROWSER_FORM_INVALID','browserFormOptionInvalid');}
     let submitter:BrowserSubmitter|undefined;
     if(controlId){
       const control=current.controls?.find(item=>item.id===controlId),expectedControl=observation.controls?.find(item=>item.id===controlId);
-      if(!control||!expectedControl||control.fingerprint!==expectedControl.fingerprint||control.formId!==formId)throw new BrowserError('BROWSER_OBSERVATION_CHANGED','تغير زر الإرسال أو ارتباطه بالنموذج.',409);
-      if(control.kind!=='button'||!control.submit||control.disabled||control.sensitive)throw new BrowserError('BROWSER_BUTTON_DENIED','هذا الزر لا يملك إرسال نموذج معروفًا يمكن مراجعته والموافقة عليه.');
+      if(!control||!expectedControl||control.fingerprint!==expectedControl.fingerprint||control.formId!==formId)throw browserEngineError('BROWSER_OBSERVATION_CHANGED','browserSubmitterObservationChanged',409);
+      if(control.kind!=='button'||!control.submit||control.disabled||control.sensitive)throw browserEngineError('BROWSER_BUTTON_DENIED','browserSubmitterDenied');
       submitter={controlId,label:control.label,fingerprint:control.fingerprint,formId};
     }
     const payload=await this.payload(id,form,values,submitter);
@@ -222,15 +223,15 @@ export class BrowserEngine {
   async prepare(id:string,observation:BrowserObservation,formId:string,values:Record<string,string>):Promise<BrowserPreparedSubmission>{return this.prepareSubmission(id,observation,formId,values);}
   async prepareButton(id:string,observation:BrowserObservation,controlId:string):Promise<BrowserPreparedSubmission>{
     const control=observation.controls?.find(item=>item.id===controlId);
-    if(!control?.formId||control.kind!=='button'||!control.submit)throw new BrowserError('BROWSER_BUTTON_DENIED','الزر لا يرتبط بنموذج إرسال معروف؛ لم يُنقر الزر.');
+    if(!control?.formId||control.kind!=='button'||!control.submit)throw browserEngineError('BROWSER_BUTTON_DENIED','browserButtonNotSubmitted');
     return this.prepareSubmission(id,observation,control.formId,{},controlId);
   }
   async submit(id:string,observation:BrowserObservation,formId:string,values:Record<string,string>,approved?:{payloadHash:string;submitter?:BrowserSubmitter}):Promise<{observation:BrowserObservation;requestSent:boolean;status:number|null;method:string;url:string}>{
     const live=this.live(id),prepared=await this.prepareSubmission(id,observation,formId,values,approved?.submitter?.controlId),form=prepared.form;
     const sameSubmitter=!approved?.submitter&&!prepared.submitter||approved?.submitter&&prepared.submitter&&(['controlId','label','fingerprint','formId'] as const).every(key=>approved.submitter![key]===prepared.submitter![key]);
-    if(approved&&(approved.payloadHash!==prepared.payloadHash||!sameSubmitter))throw new BrowserError('BROWSER_FORM_CHANGED','تغيرت القيم أو زر الإرسال بعد الموافقة؛ لم يُرسل الطلب.',409);
+    if(approved&&(approved.payloadHash!==prepared.payloadHash||!sameSubmitter))throw browserEngineError('BROWSER_FORM_CHANGED','browserApprovedFormChanged',409);
     const payload=await this.payload(id,form,values,prepared.submitter,true);
-    if(formBodyHash(payload.payload)!==prepared.payloadHash)throw new BrowserError('BROWSER_FORM_CHANGED','تغير جسم النموذج بعد مراجعته؛ لم يُرسل الطلب.',409);
+    if(formBodyHash(payload.payload)!==prepared.payloadHash)throw browserEngineError('BROWSER_FORM_CHANGED','browserApprovedFormBodyChanged',409);
     const target=new URL(payload.action);if(payload.method==='GET')target.search=payload.payload;
     this.network.validate(target.href,live.allowedOrigins);live.permit={url:target.href,method:payload.method,bodyHash:formBodyHash(payload.method==='POST'?payload.payload:''),used:false};live.lastNavigationFailure=undefined;live.lastRedirectOrigin=undefined;live.denials=[];
     const control=prepared.submitter?JSON.parse(live.controlEvidence.get(prepared.submitter.controlId)??'null'):null;
@@ -244,7 +245,7 @@ export class BrowserEngine {
       })()`))]);
       if(live.redirectTarget)await this.followNavigation(live,live.redirectTarget);
       const next=await this.observe(id);return {observation:next,requestSent:live.permit.used,status:live.permit.responseStatus??null,method:payload.method,url:target.href};
-    }catch(error){const diagnostics:BrowserSubmitDiagnostics={requestAttempted:Boolean(live.permit?.used),responseStatus:live.permit?.responseStatus??null,failureCode:live.lastNavigationFailure??(error instanceof BrowserError?error.code:'BROWSER_NAVIGATION_FAILED'),redirectOrigin:live.lastRedirectOrigin??null,pageProtocol:new URL(live.page.url()).protocol,warnings:[...new Set(live.denials)].slice(0,12)};throw Object.assign(new BrowserError(live.permit?.used?'BROWSER_SUBMIT_UNKNOWN':'BROWSER_SUBMIT_FAILED',live.permit?.used?'بدأت محاولة الطلب ولم تثبت نتيجتها. راجع الصفحة قبل أي إرسال جديد؛ لن يكرر النظام الطلب.':'لم يثبت إرسال النموذج؛ اقرأ الصفحة واطلب موافقة جديدة.',live.permit?.used?409:502),{diagnostics});}
+    }catch(error){const diagnostics:BrowserSubmitDiagnostics={requestAttempted:Boolean(live.permit?.used),responseStatus:live.permit?.responseStatus??null,failureCode:live.lastNavigationFailure??(error instanceof BrowserError?error.code:'BROWSER_NAVIGATION_FAILED'),redirectOrigin:live.lastRedirectOrigin??null,pageProtocol:new URL(live.page.url()).protocol,warnings:[...new Set(live.denials)].slice(0,12)};throw Object.assign(browserEngineError(live.permit?.used?'BROWSER_SUBMIT_UNKNOWN':'BROWSER_SUBMIT_FAILED',live.permit?.used?'browserSubmitUnknown':'browserSubmitFailed',live.permit?.used?409:502),{diagnostics});}
     finally{live.permit=undefined;}
   }
   async closeSession(id:string){const live=this.sessions.get(id);this.sessions.delete(id);if(live){live.abort.abort();if(live.timer)clearTimeout(live.timer);await live.context.close().catch(()=>{});}}

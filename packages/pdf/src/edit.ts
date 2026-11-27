@@ -1,4 +1,5 @@
 import { Worker } from 'node:worker_threads';
+import { pdfEditMessages, withReplyMessage } from '@mohassan/contracts/reply-messages';
 import { PdfError } from './errors.ts';
 import { PDF_LIMITS } from './limits.ts';
 
@@ -16,29 +17,34 @@ export interface PdfInfo {
 }
 export interface EditOptions { signal?: AbortSignal; timeoutMs?: number }
 
-const MESSAGES: Record<string, [string, number]> = {
-  PDF_INVALID: ['ملف PDF غير صالح أو تعذرت قراءته.', 400],
-  PDF_ENCRYPTED: ['ملفات PDF المشفرة أو المحمية بكلمة مرور غير مدعومة.', 400],
-  PDF_PAGE_LIMIT: [`عدد الصفحات يتجاوز ${PDF_LIMITS.pages} صفحة.`, 400],
-  PDF_PAGE_RANGE: ['أرقام الصفحات خارج نطاق الملف.', 400],
-  PDF_OUTPUT_LIMIT: ['الملف الناتج أكبر من المسموح.', 400],
-  PDF_PARAMS: ['معاملات التعديل غير صالحة.', 400],
-  PDF_EDIT_FAILED: ['تعذر تعديل ملف PDF.', 500],
+const messages = pdfEditMessages(PDF_LIMITS);
+const statusByWorkerCode: Record<keyof typeof messages.worker, number> = {
+  PDF_INVALID: 400,
+  PDF_ENCRYPTED: 400,
+  PDF_PAGE_LIMIT: 400,
+  PDF_PAGE_RANGE: 400,
+  PDF_OUTPUT_LIMIT: 400,
+  PDF_PARAMS: 400,
+  PDF_EDIT_FAILED: 500,
 };
 let running = 0;
 
+function editError(code: string, message: { ar: string; en: string }, status?: number): PdfError {
+  return withReplyMessage(new PdfError(code, message.ar, status), message);
+}
+
 function assertPdf(bytes: Uint8Array, position: number): Uint8Array {
-  if (!(bytes instanceof Uint8Array)) throw new PdfError('PDF_INVALID', MESSAGES.PDF_INVALID![0]);
-  if (bytes.byteLength > PDF_LIMITS.inputBytes) throw new PdfError('PDF_SIZE_LIMIT', `حجم الملف ${position} يتجاوز ${Math.round(PDF_LIMITS.inputBytes / 1_000_000)} ميغابايت.`);
-  if (bytes.byteLength < 16 || !Buffer.from(bytes.subarray(0, 1024)).toString('latin1').includes('%PDF-')) throw new PdfError('PDF_INVALID', `الملف ${position} ليس ملف PDF.`);
+  if (!(bytes instanceof Uint8Array)) throw editError('PDF_INVALID', messages.worker.PDF_INVALID);
+  if (bytes.byteLength > PDF_LIMITS.inputBytes) throw editError('PDF_SIZE_LIMIT', messages.oversizedInput(position));
+  if (bytes.byteLength < 16 || !Buffer.from(bytes.subarray(0, 1024)).toString('latin1').includes('%PDF-')) throw editError('PDF_INVALID', messages.invalidInput(position));
   return bytes;
 }
 
 async function runWorker(op: string, inputs: readonly Uint8Array[], params: Record<string, unknown>, options: EditOptions): Promise<{ bytes?: Uint8Array; info?: PdfInfo }> {
-  if (!inputs.length || inputs.length > PDF_LIMITS.inputFiles) throw new PdfError('PDF_INPUT_COUNT', `يمكن معالجة من ملف واحد إلى ${PDF_LIMITS.inputFiles} ملفًا في العملية الواحدة.`);
+  if (!inputs.length || inputs.length > PDF_LIMITS.inputFiles) throw editError('PDF_INPUT_COUNT', messages.inputCount);
   const copies = inputs.map((bytes, index) => Uint8Array.from(assertPdf(bytes, index + 1)));
-  if (options.signal?.aborted) throw new PdfError('PDF_EDIT_ABORTED', 'أُلغي تعديل PDF.', 409);
-  if (running >= PDF_LIMITS.workers) throw new PdfError('PDF_EDIT_BUSY', 'معالجة الملفات مشغولة؛ أعد المحاولة بعد قليل.', 429);
+  if (options.signal?.aborted) throw editError('PDF_EDIT_ABORTED', messages.aborted, 409);
+  if (running >= PDF_LIMITS.workers) throw editError('PDF_EDIT_BUSY', messages.busy, 429);
   const timeoutMs = Math.max(1, Math.min(PDF_LIMITS.editTimeoutMs, Math.floor(options.timeoutMs ?? PDF_LIMITS.editTimeoutMs)));
   running++;
   let worker: Worker | undefined;
@@ -59,21 +65,21 @@ async function runWorker(op: string, inputs: readonly Uint8Array[], params: Reco
         options.signal?.removeEventListener('abort', abort);
         error ? reject(error) : resolve(result!);
       };
-      const abort = () => finish(new PdfError('PDF_EDIT_ABORTED', 'أُلغي تعديل PDF.', 409));
-      const timer = setTimeout(() => finish(new PdfError('PDF_EDIT_TIMEOUT', 'تجاوز تعديل PDF المهلة المسموحة.', 504)), timeoutMs);
+      const abort = () => finish(editError('PDF_EDIT_ABORTED', messages.aborted, 409));
+      const timer = setTimeout(() => finish(editError('PDF_EDIT_TIMEOUT', messages.timeout, 504)), timeoutMs);
       options.signal?.addEventListener('abort', abort, { once: true });
       worker!.once('message', (message: unknown) => {
         const result = (message ?? {}) as { bytes?: unknown; info?: unknown; error?: unknown };
         if (typeof result.error === 'string') {
-          const [text, status] = MESSAGES[result.error] ?? MESSAGES.PDF_EDIT_FAILED!;
-          return finish(new PdfError(result.error in MESSAGES ? result.error : 'PDF_EDIT_FAILED', text, status));
+          const code = Object.hasOwn(statusByWorkerCode, result.error) ? result.error as keyof typeof statusByWorkerCode : 'PDF_EDIT_FAILED';
+          return finish(editError(code, messages.worker[code], statusByWorkerCode[code]));
         }
         if (result.bytes instanceof Uint8Array && result.bytes.byteLength > 0 && result.bytes.byteLength <= PDF_LIMITS.outputBytes) return finish(undefined, { bytes: result.bytes });
         if (result.info && typeof result.info === 'object') return finish(undefined, { info: result.info as PdfInfo });
-        finish(new PdfError('PDF_EDIT_FAILED', MESSAGES.PDF_EDIT_FAILED![0], 500));
+        finish(editError('PDF_EDIT_FAILED', messages.worker.PDF_EDIT_FAILED, 500));
       });
-      worker!.once('error', () => finish(new PdfError('PDF_EDIT_FAILED', 'تعذر تعديل PDF ضمن حدود الموارد.', 500)));
-      worker!.once('exit', () => finish(new PdfError('PDF_EDIT_FAILED', 'توقفت معالجة PDF قبل اكتمالها.', 500)));
+      worker!.once('error', () => finish(editError('PDF_EDIT_FAILED', messages.resources, 500)));
+      worker!.once('exit', () => finish(editError('PDF_EDIT_FAILED', messages.earlyExit, 500)));
     });
   } finally {
     // Await termination even on timeout or cancellation: nothing keeps parsing after return.
@@ -88,7 +94,7 @@ export async function pdfInfo(bytes: Uint8Array, options: EditOptions = {}): Pro
   return (await runWorker('info', [bytes], {}, options)).info!;
 }
 export function mergePdfs(files: readonly Uint8Array[], options: EditOptions = {}): Promise<Buffer> {
-  if (files.length < 2) throw new PdfError('PDF_INPUT_COUNT', 'الدمج يحتاج ملفين على الأقل.');
+  if (files.length < 2) throw editError('PDF_INPUT_COUNT', messages.mergeCount);
   return output(runWorker('merge', files, {}, options));
 }
 export function extractPages(bytes: Uint8Array, pages: readonly number[], options: EditOptions = {}): Promise<Buffer> {
@@ -119,7 +125,7 @@ export function numberPages(bytes: Uint8Array, options: EditOptions & { size?: n
 const ARABIC_DIGITS = /[٠-٩۰-۹]/gu;
 /** «1-3, 5» or «من ٢ إلى ٤» or «الأخيرة» into 1-based page numbers, sorted and unique. */
 export function parsePageSelection(text: string, total: number): number[] {
-  if (!Number.isInteger(total) || total < 1) throw new PdfError('PDF_PAGE_RANGE', MESSAGES.PDF_PAGE_RANGE![0]);
+  if (!Number.isInteger(total) || total < 1) throw editError('PDF_PAGE_RANGE', messages.worker.PDF_PAGE_RANGE);
   let value = text.replace(ARABIC_DIGITS, digit => String(digit.charCodeAt(0) % 16)).toLowerCase();
   value = value.replace(/(?:^|[^\p{L}])(?:الاخيره|الأخيرة|الاخيرة|اخر صفحه|آخر صفحة|last)(?![\p{L}])/giu, ` ${total} `);
   value = value.replace(/(?:من|from)\s+(\d+)\s+(?:الى|إلى|حتى|to|through|until)\s+(\d+)/giu, '$1-$2').replace(/(\d+)\s*(?:الى|إلى|to|through)\s*(\d+)/giu, '$1-$2');
@@ -128,14 +134,14 @@ export function parsePageSelection(text: string, total: number): number[] {
     const range = /^(\d+)\s*[-–]\s*(\d+)$/u.exec(part);
     if (range) {
       const from = Number(range[1]), to = Number(range[2]);
-      if (from < 1 || to > total || from > to || to - from > PDF_LIMITS.pages) throw new PdfError('PDF_PAGE_RANGE', MESSAGES.PDF_PAGE_RANGE![0]);
+      if (from < 1 || to > total || from > to || to - from > PDF_LIMITS.pages) throw editError('PDF_PAGE_RANGE', messages.worker.PDF_PAGE_RANGE);
       for (let page = from; page <= to; page++) pages.add(page);
     } else {
       const page = Number(part);
-      if (page < 1 || page > total) throw new PdfError('PDF_PAGE_RANGE', MESSAGES.PDF_PAGE_RANGE![0]);
+      if (page < 1 || page > total) throw editError('PDF_PAGE_RANGE', messages.worker.PDF_PAGE_RANGE);
       pages.add(page);
     }
   }
-  if (!pages.size) throw new PdfError('PDF_PAGE_RANGE', 'لم أجد أرقام صفحات في الطلب.');
+  if (!pages.size) throw editError('PDF_PAGE_RANGE', messages.noPages);
   return [...pages].sort((a, b) => a - b);
 }

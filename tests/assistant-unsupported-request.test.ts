@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { imageSpecification, searchRefusedReply, unsupportedReply, unsupportedRequest } from '../apps/server/src/assistant/unsupported-request.js';
 import { notWebReason, tidy, webQuestion } from '../apps/server/src/assistant/hands.js';
+import { replyLanguage } from '../apps/server/src/assistant/reply-check.js';
 
 describe('unsupportedRequest', () => {
   it('names drawing and image generation', () => {
@@ -103,15 +104,30 @@ describe('imageSpecification', () => {
 
 describe('searchRefusedReply', () => {
   it('explains a source refusal in the request language without repeating the guard message', () => {
-    const ar = searchRefusedReply('افعل شيئًا مفيدًا', 'افعل شيئا مفيدا', 'ASSISTANT_SEARCH_SOURCE', 'guard');
+    const ar = searchRefusedReply('افعل شيئًا مفيدًا', 'افعل شيئا مفيدا', 'ASSISTANT_SEARCH_SOURCE');
     expect(ar).toContain('لم أبحث في الويب عن «افعل شيئا مفيدا»');
     expect(ar).toContain('ما هو');
-    const en = searchRefusedReply('do something useful', 'do something useful', 'ASSISTANT_SEARCH_SOURCE', 'guard');
+    expect(replyLanguage(ar).replyLang).toBe('ar');
+    const en = searchRefusedReply('do something useful', 'do something useful', 'ASSISTANT_SEARCH_SOURCE');
     expect(en).toContain('I did not search the web for “do something useful”');
+    expect(replyLanguage(en).replyLang).toBe('en');
   });
 
-  it('passes the guard message through for provenance and query errors', () => {
-    expect(searchRefusedReply('x', 'x', 'RESEARCH_QUERY_SECRET', 'أزل بيانات الاعتماد')).toBe('أزل بيانات الاعتماد');
-    expect(searchRefusedReply('x', 'x', 'ASSISTANT_SEARCH_PROVENANCE', 'provenance')).toBe('provenance');
+  // The guard cases come from the chat catch site, retrieved 2026-11-27.
+  // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/apps/server/src/command-chat.ts#L3260
+  it.each([
+    ['ASSISTANT_SEARCH_PROVENANCE', 'بعض كلمات البحث', 'some search terms'],
+    ['RESEARCH_QUERY_INVALID', 'موضوعًا محددًا', 'a specific search topic'],
+    ['RESEARCH_QUERY_SECRET', 'بيانات الاعتماد', 'credentials'],
+  ])('localizes the %s refusal without echoing its guard code', (code, arabicDetail, englishDetail) => {
+    const en = searchRefusedReply('search for a subject', 'a subject', code);
+    expect(replyLanguage(en).replyLang).toBe('en');
+    expect(en).toContain(englishDetail);
+    expect(en).not.toMatch(/\p{Script=Arabic}/u);
+    expect(en).not.toContain(code);
+    const ar = searchRefusedReply('ابحث عن موضوع', 'موضوع', code);
+    expect(replyLanguage(ar).replyLang).toBe('ar');
+    expect(ar).toContain(arabicDetail);
+    expect(ar).not.toContain(code);
   });
 });

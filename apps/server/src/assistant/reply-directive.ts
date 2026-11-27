@@ -15,7 +15,8 @@
  * length or fields. Callers use the body only when it is complete on its own (a calculation that computes, a full
  * question), so a wrong split never changes what is done.
  */
-export type ReplyLanguage = 'ar' | 'en';
+import type { ReplyLanguage } from '@mohassan/contracts/reply-messages';
+export { requestLanguage, type ReplyLanguage } from '@mohassan/contracts/reply-messages';
 export type ReplyField = 'title' | 'link' | 'heading' | 'first_sentence';
 export interface ReplyDirective {
   /** The language the reply is asked in, when the request names one. */
@@ -189,6 +190,3 @@ export function splitReplyDirective(text: string): ReplyFraming {
   if (!body || body.length < 2) return none;
   return { body, label: labelled?.label ?? null, directive };
 }
-
-/** «ar»/«en» for a request by its letters, as the rest of the assistant decides. */
-export const requestLanguage = (text: string): ReplyLanguage => /\p{Script=Arabic}/u.test(text) ? 'ar' : 'en';

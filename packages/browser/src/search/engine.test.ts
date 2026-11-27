@@ -1,12 +1,37 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
+import { replyLanguage } from '../../../../apps/server/src/assistant/reply-check.js';
 import { SafeNetwork } from '../network.js';
 import { SearchEngine } from './engine.js';
+import type { SearchLocalIndex } from './local-index.js';
 import { canonicalUrl, compileQuery, localSearchSnippet, matchesSearchPhrases, rankResults } from './ranking.js';
 import { documentedProviders, SearchProviderFailure, type DocumentedProvider } from './providers.js';
 
 const hit = (title:string,url='https://nodejs.org/docs',snippet='Node API documentation') => ({title,url,snippet});
 const provider=(name:string,search:DocumentedProvider['search']):DocumentedProvider=>({name,search,coverage:'programming',accessBasis:'documented_api',supports:()=>true});
 describe('documented deterministic search',()=>{
+  it.each([
+    ['Solar energy', 'A guide to solar energy storage', 'indexed copy from', 'en'],
+    ['الطاقة الشمسية', 'دليل تخزين الطاقة الشمسية', 'نسخة مفهرسة بتاريخ', 'ar'],
+  ])('labels a local result in the original query language for %s', async (question, snippet, label, language) => {
+    const fetchedAt = new Date(0).toISOString();
+    const url = 'https://example.org/energy';
+    const localIndex: SearchLocalIndex = {
+      name: 'fixture local index',
+      search: async () => [{
+        title: question, url, snippet, fetchedAt, expiresAt: new Date(3600000).toISOString(),
+        contentHash: createHash('sha256').update(snippet).digest('hex'),
+        sourceHash: createHash('sha256').update(url).digest('hex'),
+        coverage: 'local_only', freshness: 'indexed_snapshot', trust: 'untrusted',
+      }],
+    };
+    const engine = new SearchEngine(new SafeNetwork(), { providers: [], publicWeb: false, localIndex });
+
+    const [result] = await engine.search(question, 5);
+
+    expect(result.snippet).toBe(`${label} ${fetchedAt}. ${snippet}`);
+    expect(replyLanguage(result.snippet).replyLang).toBe(language);
+  });
   it('treats PostgreSQL as a technical subject, including mixed Arabic instructions',()=>{
     expect(compileQuery('PostgreSQL index performance')).toMatchObject({intent:'technical',tokens:['postgresql','index','performance']});
     expect(compileQuery('شرح PostgreSQL')).toMatchObject({intent:'technical',retrievalQuestion:'PostgreSQL',tokens:['postgresql']});

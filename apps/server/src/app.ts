@@ -24,6 +24,7 @@ import { createCapabilities } from '@mohassan/runtime';
 import { createStudioControl } from './studio.js';
 import { StudioError } from '@mohassan/studio';
 import { registerBrowserRoutes } from './browser.js';
+import { browserApiErrorMessage } from './browser-error-reply.js';
 import { AgentBrowser, BrowserError, SafeNetwork, SearchEngine, SqlSearchStore, LocalPublicIndex, RobotsPolicy, migrateSearch, readableSource, type BrowserConfig } from '@mohassan/browser';
 import { registerSearchRoutes } from './search.js';
 import { registerBrowserFileRoutes } from './browser-files.js';
@@ -261,7 +262,7 @@ export async function createApplication(config: AppConfig) {
   app.setErrorHandler((error: any, _request, reply) => {
     if (error instanceof z.ZodError) return reply.code(400).send({error: {code: 'VALIDATION_ERROR', message: 'تحقق من الحقول المطلوبة وطول المدخلات.'}});
     if (error instanceof StudioError) return reply.code(error.statusCode).send({error:{code:error.code,message:error.message}});
-    if (error instanceof BrowserError || error instanceof MonitorError) return reply.code(error.statusCode).send({error:{code:error.code,message:error.message}});
+    if (error instanceof BrowserError || error instanceof MonitorError) return reply.code(error.statusCode).send({error:{code:error.code,message:browserApiErrorMessage(error,_request)}});
     if (error instanceof LearningContentError) return reply.code(error.statusCode).send({error:{code:error.code,message:error.message}});
     if (error instanceof PdfError) return reply.code(error.statusCode).send({error:{code:error.code,message:error.message}});
     if (error instanceof GoogleAdsError) { if (error.options.retryAfterSeconds) reply.header('Retry-After', String(error.options.retryAfterSeconds)); return reply.code(error.statusCode).send({error:{code:error.code,message:error.message}}); }

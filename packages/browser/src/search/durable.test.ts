@@ -117,7 +117,7 @@ describe('explicit public index lifecycle',()=>{
     const first=await make().execute('warranty ZX491',5,undefined,{ownerId:owner});
     expect(first).toMatchObject({coverage:'local_only',freshness:'indexed_snapshot'});expect(first.hits[0].snippet).toContain('ZX491');expect(first.hits[0].sourceHash).toBe(added.document.sourceHash);
     now+=2000;expect((await make().execute('warranty ZX491',5,undefined,{ownerId:owner})).freshness).toBe('cached');
-    expect((await make().search('warranty ZX491',5,undefined,{ownerId:owner}))[0].snippet).toMatch(/^نسخة مفهرسة بتاريخ 2026-11-08T12:00:00.000Z/);
+    expect((await make().search('warranty ZX491',5,undefined,{ownerId:owner}))[0].snippet).toContain(`indexed copy from ${added.document.fetchedAt}. `);
     await index.remove(owner,added.document.id);expect((await make().execute('warranty ZX491',5,undefined,{ownerId:owner})).hits).toEqual([]);
   });
   it('refuses private or credential URLs before fetching, robots denial, noindex, secret and non-text documents',async()=>{
