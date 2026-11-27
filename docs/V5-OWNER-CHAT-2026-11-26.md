@@ -19,13 +19,19 @@ The owner-only `/api/ops/metrics` and `/api/ops/metrics.csv` include v5 worker a
 
 ## Server setup
 
-1. Use the existing Wave 6 cutover procedure to install the reviewed API release at `/opt/mohassan/app`. Keep the service stopped during preparation. Deploy the matching web release for the badge. [Wave 6 cutover](DEPLOY-WAVE-6-2026-11-25.md#deploy-and-verify)
-2. On the Ubuntu aarch64 server, install the Python 3.12 venv package and run the opt-in setup script. It installs the hash-pinned CPU dependencies into `/opt/mohassan/venv-execution` and checks imports as `mohassan`.
+1. On an existing Ubuntu aarch64 host with `python3.12-venv` installed, stage the reviewed release in a separate root-controlled directory readable by `mohassan`. From that snapshot, verify or build the hash-pinned CPU environment while the API is running. Wait for staging to succeed before scheduling the stop. [Linux update procedure](../scripts/cloud-linux/README.md#updates-with-the-model-worker-enabled)
 
    ```bash
-   sudo apt-get install python3.12-venv
-   sudo bash /opt/mohassan/app/scripts/cloud-linux/setup-model-worker.sh
+   sudo bash /opt/mohassan/release-staged/scripts/cloud-linux/setup-model-worker.sh --stage /opt/mohassan/release-staged
    ```
+
+2. Follow the Wave 6 cutover to drain and stop the API, install that same release at `/opt/mohassan/app`, and run `prepare.sh`. Before starting the API, activate the verified worker environment. The activation command performs no pip installation. Deploy the matching web release for the badge. [Wave 6 cutover](DEPLOY-WAVE-6-2026-11-25.md#deploy-and-verify)
+
+   ```bash
+   sudo bash /opt/mohassan/app/scripts/cloud-linux/setup-model-worker.sh --activate
+   ```
+
+   For first setup on a new host, install `python3.12-venv` if needed, then run `sudo bash /opt/mohassan/app/scripts/cloud-linux/setup-model-worker.sh` without arguments after `prepare.sh` and before starting the API.
 
 3. Copy the two operator-held files to the root-owned model directory. Replace `/path/to` with the local transfer directory. Keep the release-independent config beside the files, with service-account read access. The worker configuration requires the training checkpoint, CPU, quantization disabled, and EOS token ID `258`, which follows the training tokenizer’s `<eos>` special-token mapping and is checked at load. Leave `own-model-provider.json` absent in this directory so the existing routing, follow-up and phrasing gates stay inactive.
 
@@ -53,11 +59,11 @@ The owner-only `/api/ops/metrics` and `/api/ops/metrics.csv` include v5 worker a
    PRODUCTION_METRICS_ENABLED=true
    ```
 
-5. Verify the installed runtime, config and file pins, then restart.
+5. Verify the installed runtime, config and file pins, then start the API.
 
    ```bash
    sudo /usr/local/bin/node /opt/mohassan/app/scripts/cloud-linux/preflight-wave-6.mjs --owner-v5
-   sudo systemctl restart mohassan.service
+   sudo systemctl start mohassan.service
    sudo systemctl is-active mohassan.service
    curl --fail --silent --show-error http://127.0.0.1:4000/health
    ```

@@ -48,9 +48,24 @@ Use the [production recovery runbook](../../docs/BACKUP-RESTORE-2026-11-25.md) f
 2. Install a current **Node 24.x Linux ARM64** release from the [official downloads](https://nodejs.org/en/download) and verify its signed checksums. This template expects `/usr/local/bin/node` and `/usr/local/bin/npm`. The repository requires Node 24, not the latest major release.
 3. Install Git, CA certificates, OpenSSH server and the [official Caddy Ubuntu package](https://caddyserver.com/docs/install#debian-ubuntu-raspbian). Keep Caddy's `/var/lib/caddy` state persistent. Its package may start the default Caddy service during installation.
 4. Generate a fresh snapshot with `node scripts/package-cloud.mjs`. Transfer its `source` directory to `/opt/mohassan/app`, without Windows `node_modules`, `.data`, `.env`, or browser profiles. Verify the snapshot manifest after transfer. Directory ancestors must permit the service user to read the source.
-5. On the VM, run `sudo bash /opt/mohassan/app/scripts/cloud-linux/prepare.sh`. It installs locked dependencies with `npm ci --include=dev` because the runtime uses `tsx`, installs Chromium and its Ubuntu libraries, runs a browser smoke check as `mohassan`, and installs the systemd unit. It does not start or enable the API. It requires network access to the package and browser registries.
+5. On the VM, run `sudo bash /opt/mohassan/app/scripts/cloud-linux/prepare.sh`. It installs locked dependencies with `npm ci --include=dev` because the runtime uses `tsx`, installs Chromium, runs a browser smoke check as `mohassan`, and installs the systemd unit. The locked Playwright CLI simulates installing the Ubuntu libraries and skips the apt update and install when the simulation succeeds. It does not start or enable the API. It requires network access to the package and browser registries.
 
 The preparation script is for an initial installation or a deliberately stopped service. It refuses to run while `mohassan.service` is active. Stop the service before replacing source or rerunning `npm ci`; do not mutate a running release. Existing environment values are preserved, and differing service units require review. Source becomes owned by `root:mohassan`, readable and executable but not writable by the service group. The browser smoke check runs after those permissions are applied. Persistent state is owned by `mohassan` with mode 0700. Run `bash prepare.sh` explicitly because a Windows source transfer may not preserve executable bits.
+
+## Updates with the model worker enabled
+
+1. While the API is still running, put the verified new source snapshot in a separate root-controlled directory readable by `mohassan`, for example `/opt/mohassan/release-staged`. On a host with Python 3.12 and `python3.12-venv` already installed, run:
+
+   ```bash
+   sudo bash /opt/mohassan/release-staged/scripts/cloud-linux/setup-model-worker.sh --stage /opt/mohassan/release-staged
+   ```
+
+   The script verifies the requirements and Python stamp, runs `pip check`, and probes imports as `mohassan`. A matching environment skips pip installation. If a new environment is needed, wait for its hash-pinned build and checks to pass before stopping the API.
+2. Follow the release cutover procedure to drain and stop the API, install that same snapshot at `/opt/mohassan/app`, and run `prepare.sh` against it. Source replacement and `npm ci` still require the service to be stopped.
+3. Run `sudo bash /opt/mohassan/app/scripts/cloud-linux/setup-model-worker.sh --activate`. It checks the installed release against the active or staged environment and publishes the staged environment atomically when needed. `--activate` requires a stopped API and performs no pip installation. The previous environment stays at `/opt/mohassan/venv-execution.staged` after a swap and can be reused if it passes the checks for a rollback release. The next rebuild can reclaim that slot.
+4. Run the model-worker preflight for the configured features and complete the normal API startup and health checks. [V5 owner setup](../../docs/V5-OWNER-CHAT-2026-11-26.md#server-setup)
+
+On first setup, install `python3.12-venv` if needed. Once `prepare.sh` has created the service account and prepared the live snapshot, run `sudo bash /opt/mohassan/app/scripts/cloud-linux/setup-model-worker.sh` with the service stopped to build and activate the worker environment in one step.
 
 ## Configuration and staging
 
