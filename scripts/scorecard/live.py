@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from importlib import import_module
+from inspect import signature
 import json
 import os
 from pathlib import Path
@@ -38,14 +39,12 @@ def development_modules(root):
 def _profiles(bench):
     # Wave 4 profile and Wave 5 rollout defaults. The owner can supply other switches on named arms.
     # https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/INTEGRATION-WAVE-5-2026-11-25.md#rollout-flags-and-environment (retrieved 2026-11-27)
-    special_off = {
-        "MOHASSAN_PLAN_COMPILER": "off",
-        "TEST_DRIVEN_CODING_ENABLED": "false",
-        "MOHASSAN_MODEL_RELATIONS": "off",
-    }
-    baseline = {name: special_off.get(name, "0") for name in bench.OVERRIDES} | {
-        "MOHASSAN_JUDGE_SHADOW": "0", "MOHASSAN_JUDGE_FIX": "0", "MOHASSAN_JUDGE_WITHHOLD": "0", "MOHASSAN_MIND": "0",
-    }
+    baseline = dict.fromkeys(FIXTURE_SWITCHES, "0")
+    for name, allowed in bench.OVERRIDES.items():
+        off = next((value for value in ("0", "off", "false") if value in allowed), None)
+        if off is None:
+            raise ValueError(f"Development benchmark switch {name} has no supported off value")
+        baseline[name] = off
     production = {
         **bench.BASE_FLAGS,
         "MOHASSAN_ARITHMETIC_SEARCH": "1",
@@ -187,11 +186,12 @@ def _instrument_runner(path, version, bench, switches, model=None):
     path.with_name(model_probe.name).write_bytes(model_probe.read_bytes())
     _instrument_observer(path.with_name("observe.ts"), bench, switches, model)
     bench.instrument_runner(path, version)
-    source = bench.apply_once(path.read_text(), "replies: observation.turns.map(turn => turn.answer)", """replies: observation.turns.map(turn => turn.answer),
-            // Node reports maximum harness-process RSS in kilobytes.
+    # Keep the replies property at the end for subsequent dev-bench scoring hooks.
+    source = bench.apply_once(path.read_text(), "replies: observation.turns.map(turn => turn.answer)", """// Node reports maximum harness-process RSS in kilobytes.
             // https://nodejs.org/api/process.html#processresourceusage (retrieved 2026-11-27)
             scorecard: { turns: observation.turns.map(turn => turn.scorecard ?? null), expectedTurns: item.turns.length,
-              peakRssBytes: process.resourceUsage().maxRSS * 1024, ...observation.scorecardModels }""")
+              peakRssBytes: process.resourceUsage().maxRSS * 1024, ...observation.scorecardModels },
+            replies: observation.turns.map(turn => turn.answer)""")
     path.write_text(source)
 
 
@@ -201,6 +201,7 @@ def _run_one(root, output, arm, coordinator, bench, workers, offline, model_sett
     original_log = bench.run_logged
     original_git = bench.git
     original_archive = bench.hash_product
+    accepts_exclusions = "excluded_paths" in signature(original_archive).parameters
     switches = dict(arm.get("switches", {}))
     model = arm.get("model_version")
     baseline, production = _profiles(bench)
@@ -249,13 +250,17 @@ def _run_one(root, output, arm, coordinator, bench, workers, offline, model_sett
             args = (*args[:-1], "-s", "ours", args[-1])
         return original_git(directory, *args, input_bytes=input_bytes)
 
-    def archive(repository, commit):
-        exclusions = bench.HOLDOUTS
-        bench.HOLDOUTS = (*exclusions, *PROTECTED)
+    def archive(repository, commit, excluded_paths=None):
+        exclusions = (*(excluded_paths or bench.HOLDOUTS), *PROTECTED)
+        if accepts_exclusions:
+            return original_archive(repository, commit, exclusions)
+        # Older runners read the module constant and accept only two arguments.
+        original_holdouts = bench.HOLDOUTS
+        bench.HOLDOUTS = exclusions
         try:
             return original_archive(repository, commit)
         finally:
-            bench.HOLDOUTS = exclusions
+            bench.HOLDOUTS = original_holdouts
 
     bench.instrument_runner = instrument
     bench.collect_environment = environment

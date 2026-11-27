@@ -49,30 +49,80 @@ def test_arm_profiles_and_private_command_redaction():
     ]
 
 
-def test_worktree_hides_protected_paths_and_uses_content_free_audit_merge(tmp_path):
+@pytest.mark.parametrize(("allowed", "expected"), [
+    ({"off", "on"}, "off"),
+    ({"0", "off", "false"}, "0"),
+    ({"off", "false"}, "off"),
+    ({"false", "true"}, "false"),
+])
+def test_baseline_uses_the_first_supported_off_value(allowed, expected):
+    bench = SimpleNamespace(OVERRIDES={"SYNTHETIC_SWITCH": allowed}, BASE_FLAGS={})
+    baseline, _ = live._profiles(bench)
+    assert baseline["SYNTHETIC_SWITCH"] == expected
+
+
+def test_baseline_refuses_a_switch_without_a_supported_off_value():
+    bench = SimpleNamespace(OVERRIDES={"SYNTHETIC_SWITCH": {"on", "shadow"}}, BASE_FLAGS={})
+    with pytest.raises(ValueError, match="SYNTHETIC_SWITCH has no supported off value"):
+        live._profiles(bench)
+
+
+def test_scorecard_preserves_the_replies_tail_for_later_scoring_hooks(tmp_path, monkeypatch):
+    root = Path(__file__).resolve().parents[2]
+    runner = tmp_path / "run.ts"
+    runner.write_text(
+        "for (const item of cases) scores.push(scoreCapabilityCase(item, await observe(item)));\n"
+        "summary, splits: results,\n"
+    )
+    monkeypatch.setattr(live, "_instrument_observer", lambda *_: None)
+    with live.development_modules(root) as (_, bench):
+        live._instrument_runner(runner, "v1", bench, {})
+    source = runner.read_text()
+    assert "scorecard: { turns:" in source
+    assert source.count("replies: observation.turns.map(turn => turn.answer) });") == 1
+
+
+@pytest.mark.parametrize("explicit_archive", [False, True], ids=["legacy-archive", "explicit-archive"])
+def test_worktree_hides_protected_paths_and_uses_content_free_audit_merge(tmp_path, explicit_archive):
     commands = []
     archives = []
     audit = 'b' * 40
+    holdouts = ('native-sealed',)
+    extra_exclusions = (*holdouts, 'additional-sealed')
 
     def git(directory, *args, input_bytes=None):
         commands.append((args, input_bytes))
 
+    def legacy_hash_product(repository, commit):
+        archives.append(bench.HOLDOUTS)
+
+    def explicit_hash_product(repository, commit, excluded_paths=holdouts):
+        assert bench.HOLDOUTS is holdouts
+        archives.append(excluded_paths)
+
     def run_arm(repository, output, commit, overrides, *, workers, offline):
         bench.hash_product(repository, commit)
+        if explicit_archive:
+            bench.hash_product(repository, commit, extra_exclusions)
         bench.git(repository, 'sparse-checkout', 'set', '--no-cone', '--stdin', input_bytes=b'/*\n')
         bench.git(repository, '-c', 'user.name=fixture', 'merge', '--no-ff', '--no-commit', audit)
-        assert bench.HOLDOUTS == ('native-sealed',)
+        assert bench.HOLDOUTS is holdouts
         return {}
 
-    bench = SimpleNamespace(instrument_runner=None, collect_environment=None, run_logged=None, HOLDOUTS=('native-sealed',),
-                            AUDIT=audit, git=git, hash_product=lambda *_: archives.append(bench.HOLDOUTS),
+    hash_product = explicit_hash_product if explicit_archive else legacy_hash_product
+    bench = SimpleNamespace(instrument_runner=None, collect_environment=None, run_logged=None, HOLDOUTS=holdouts,
+                            AUDIT=audit, git=git, hash_product=hash_product,
                             run_arm=run_arm, OVERRIDES={}, BASE_FLAGS={})
     coordinator = SimpleNamespace(combine=lambda *_: {}, write_json=lambda *_: None, tool_hashes=lambda: {}, digest=lambda _: '')
     live._run_one(tmp_path, tmp_path, {'id': 'baseline', 'commit': 'a' * 40}, coordinator, bench, 1, False, {})
-    assert archives == [('native-sealed', *live.PROTECTED)]
+    expected_archives = [(*holdouts, *live.PROTECTED)]
+    if explicit_archive:
+        expected_archives.append((*extra_exclusions, *live.PROTECTED))
+    assert archives == expected_archives
     assert commands[0][1].decode().splitlines() == ['/*', *(f'!/{path}/' for path in live.PROTECTED)]
     assert commands[1][0][-6:] == ('merge', '--no-ff', '--no-commit', '-s', 'ours', audit)
     assert bench.git is git
+    assert bench.hash_product is hash_product
 
 
 def test_no_model_baseline_rejects_live_switch(tmp_path):
