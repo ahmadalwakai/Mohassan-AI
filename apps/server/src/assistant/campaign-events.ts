@@ -46,11 +46,13 @@ export async function appendCampaignEvent(tx: Db, target: CampaignEventTarget, i
 
 /** The latest campaign task of a conversation, from `after` onward. `after: 0` replays everything. */
 export async function readCampaignEvents(db: Db, conversationId: string, after = 0): Promise<CampaignEventStream | null> {
-  const latest = await db.selectFrom('chat_campaign_events').select('task_id').where('conversation_id', '=', conversationId).orderBy('created_at', 'desc').orderBy('seq', 'desc').limit(1).executeTakeFirst();
-  if (!latest) return null;
-  const rows = await db.selectFrom('chat_campaign_events').selectAll().where('task_id', '=', latest.task_id).where('conversation_id', '=', conversationId).orderBy('seq', 'asc').limit(MAX_EVENTS_PER_TASK).execute();
+  const rows = await db.selectFrom('chat_campaign_events').selectAll()
+    .where(eb => eb('task_id', '=', eb.selectFrom('chat_campaign_events').select('task_id')
+      .where('conversation_id', '=', conversationId).orderBy('created_at', 'desc').orderBy('seq', 'desc').limit(1)))
+    .where('conversation_id', '=', conversationId).orderBy('seq', 'asc').limit(MAX_EVENTS_PER_TASK).execute();
+  if (!rows.length) return null;
   const events = rows.map(toEvent);
-  return { taskId: latest.task_id, lastSeq: events.at(-1)?.seq ?? 0, events: events.filter(item => item.seq > after) };
+  return { taskId: rows[0].task_id, lastSeq: events.at(-1)?.seq ?? 0, events: events.filter(item => item.seq > after) };
 }
 
 /**

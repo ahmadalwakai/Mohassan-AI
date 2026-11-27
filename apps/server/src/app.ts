@@ -527,7 +527,7 @@ export async function createApplication(config: AppConfig) {
   await registerReminderRuntime(app, { db: database.db, owner });
   await registerMonitorRuntime(app, database.db, owner, (tx, userId, id) => reserveMemberRun(tx, userId, id, memberDailyRuns));
   await registerWindowsScopedChatRoutes(app, { control: chat, owner }, windows, sessionUser);
-  registerNotificationRoutes(app, { db: database.db, owner, isActive: async id => Boolean(await roleOf(database.db, id)), recoverChatRuns: chat.recoverExpired });
+  registerNotificationRoutes(app, { db: database.db, owner, isActive: async id => Boolean(await roleOf(database.db, id)) });
   registerConversationShareRoutes(app,{db:database.db,owner,role,webOrigin:config.webOrigin,internalSecret:config.internalSecret,fontsDir:config.documentsFontsDir});
   await registerBrowserFileRoutes(app,{db:database.db,browser:agentBrowser,owner});
   await registerDocumentRoutes(app,{control:documents,owner,link:documentLink});

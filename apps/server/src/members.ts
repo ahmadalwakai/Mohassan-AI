@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { sql, type Kysely } from 'kysely';
 import { z } from 'zod';
 import type { createAuth } from './auth.js';
+import { memoizeChatDetailRole } from './chat-detail-role.js';
 import { memberRunsToday as countMemberRuns } from './member-run-quota.js';
 import { NOTIFICATION_MEMBER_ROUTES } from './notifications-routes.js';
 import { REMINDER_MEMBER_ROUTES } from './reminders/route-keys.js';
@@ -97,7 +98,9 @@ export async function migrateMembers(database: Kysely<any>) {
 }
 
 /** Null means no access at all: an account that is neither the owner nor an active member. */
-export async function roleOf(db: Kysely<any>, userId: string): Promise<WorkspaceRole | null> {
+export const roleOf = memoizeChatDetailRole(readRole);
+
+async function readRole(db: Kysely<any>, userId: string): Promise<WorkspaceRole | null> {
   const row = await sql<{ owner: boolean; role: string | null; disabled: boolean }>`
     SELECT EXISTS (SELECT 1 FROM workspace_owner WHERE id = 1 AND owner_id = ${userId}) AS owner,
            m.role, (m.disabled_at IS NOT NULL) AS disabled

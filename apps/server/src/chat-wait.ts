@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { sql, type Kysely } from 'kysely';
+import { sql, type ExpressionBuilder, type Kysely } from 'kysely';
 import { z } from 'zod';
 
 /**
@@ -32,21 +32,27 @@ export const ChatWaitQuerySchema = z.object({
  * has no index.
  */
 export async function conversationVersion(db: Kysely<any>, ownerId: string, id: string): Promise<string | null> {
-  const row = await db.selectFrom('chat_conversations as c')
-    .select(eb => [
-      'c.status',
-      'c.updated_at',
-      eb.selectFrom('chat_messages as m').select('m.id').whereRef('m.conversation_id', '=', 'c.id')
-        .orderBy('m.created_at', 'desc').orderBy('m.id', 'desc').limit(1).as('last_message'),
-      eb.selectFrom('chat_events as e').select('e.id').whereRef('e.conversation_id', '=', 'c.id').where('e.kind', '=', 'step')
-        .where('e.run_id', '=', eb.selectFrom('chat_runs as r').select('r.id').whereRef('r.conversation_id', '=', 'c.id').orderBy('r.created_at', 'desc').limit(1))
-        .orderBy('e.created_at', 'desc').orderBy('e.id', 'desc').limit(1).as('last_step'),
-      eb.selectFrom('chat_campaign_events as k').select(sql<string>`k.task_id || ':' || k.seq`.as('mark')).whereRef('k.conversation_id', '=', 'c.id')
-        .orderBy('k.created_at', 'desc').orderBy('k.seq', 'desc').limit(1).as('last_campaign'),
-    ])
-    .where('c.id', '=', id).where('c.owner_id', '=', ownerId)
-    .executeTakeFirst() as { status: string; updated_at: Date | string; last_message: string | null; last_step: string | null; last_campaign: string | null } | undefined;
-  if (!row) return null;
+  const row = await db.selectFrom('chat_conversations as c').select(['c.status', 'c.updated_at'])
+    .select(selectConversationVersionMarks).where('c.id', '=', id).where('c.owner_id', '=', ownerId).executeTakeFirst();
+  return row ? versionFromConversationRow(row) : null;
+}
+
+export function selectConversationVersionMarks(eb: ExpressionBuilder<any, 'c'>) {
+  return [
+    eb.selectFrom('chat_messages as m').select('m.id').whereRef('m.conversation_id', '=', 'c.id')
+      .orderBy('m.created_at', 'desc').orderBy('m.id', 'desc').limit(1).as('last_message'),
+    eb.selectFrom('chat_events as e').select('e.id').whereRef('e.conversation_id', '=', 'c.id').where('e.kind', '=', 'step')
+      .where('e.run_id', '=', eb.selectFrom('chat_runs as r').select('r.id').whereRef('r.conversation_id', '=', 'c.id').orderBy('r.created_at', 'desc').limit(1))
+      .orderBy('e.created_at', 'desc').orderBy('e.id', 'desc').limit(1).as('last_step'),
+    eb.selectFrom('chat_campaign_events as k').select(sql<string>`k.task_id || ':' || k.seq`.as('mark')).whereRef('k.conversation_id', '=', 'c.id')
+      .orderBy('k.created_at', 'desc').orderBy('k.seq', 'desc').limit(1).as('last_campaign'),
+  ];
+}
+
+export type ConversationVersionRow = { status: string; updated_at: Date | string;
+  last_message?: string | null; last_step?: string | null; last_campaign?: string | null };
+
+export function versionFromConversationRow(row: ConversationVersionRow) {
   const updated = row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at);
   return createHash('sha256').update([row.status, updated, row.last_message ?? '', row.last_step ?? '', row.last_campaign ?? ''].join('\u0000')).digest('hex').slice(0, 24);
 }

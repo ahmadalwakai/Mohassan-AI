@@ -123,6 +123,18 @@ describe('the conversation mark and the held request, through the real chat cont
     expect(detail.olderMessages).toBe(22);
   });
 
+  it('counts successful receipts for an older run saved without a ledger', async () => {
+    const id = await ask('احسب 3 + 5');
+    const run = await database.db.selectFrom('chat_runs').select('id').where('conversation_id', '=', id).executeTakeFirstOrThrow();
+    await database.db.updateTable('chat_runs').set({ state: JSON.stringify({}) }).where('id', '=', run.id).execute();
+    const receipts = ['succeeded', 'unknown', 'succeeded'].map((status, step) => ({ id: randomUUID(), run_id: run.id, step,
+      model: 'fixture', status }));
+    await database.db.insertInto('chat_model_receipts').values(receipts).execute();
+
+    const { run: view } = await control.detail(OWNER, id);
+    expect(view?.engine).toEqual({ kind: 'model', modelCalls: receipts.filter(receipt => receipt.status === 'succeeded').length });
+  });
+
   it('the GET route holds with ?since&wait and answers at once without them', async () => {
     const app = Fastify();
     await registerCommandChatRoutes(app, { control, owner: async () => ({ id: OWNER }) });

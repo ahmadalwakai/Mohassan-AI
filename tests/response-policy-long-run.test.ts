@@ -146,6 +146,9 @@ describe('durable long-running response policy work', () => {
     const execute = vi.fn<LongRunPorts['execute']>(async input => input.operation.kind === 'search' ? { kind: 'searched', urls: [url] }
       : { ...found, observation: { ...found.observation, quote } });
     const run = await open({ ...research, background: { replyLength: 'long' } }, execute);
+    const runningDetail = await chat.detail(run.ownerId, run.conversationId);
+    expect(runningDetail.backgroundRun).toMatchObject({ id: run.id, language: research.language });
+    expect(runningDetail.run?.engine).toEqual({ kind: 'rules', modelCalls: 0 });
     expect((await chat.detail(run.ownerId, run.conversationId)).messages.map(item => item.role)).toEqual(['user', 'assistant']);
     await run.runner.runOnce();
     await run.runner.shutdown();
