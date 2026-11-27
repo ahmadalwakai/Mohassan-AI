@@ -28,7 +28,9 @@ systemctl list-timers mohassan-backup.timer mohassan-restore-drill.timer
 sudo journalctl -u mohassan-backup.service -u mohassan-restore-drill.service -n 40
 ```
 
-Verify `GET /api/ops/backup-status` with an owner session. It shows the newest dump's age from its snapshot time, the latest drill's age and verdict, and the last verified off-server download if the owner has imported the PC's receipt. `check-cloud.mjs` warns when the snapshot is over 26 hours old, or when the latest drill failed or is over 8 days old. For the authenticated check, keep `INTERNAL_API_SECRET` in the verifier's process environment and pass an owner session cookie privately. In the Bash example below, replace the example hostname with the trusted direct API origin.
+Verify `GET /api/ops/backup-status` with an owner session. It shows the newest dump's age from its snapshot time, the latest drill's age and verdict, and the last verified off-server download if the owner has imported the PC's receipt. `check-cloud.mjs` warns when the snapshot is over 26 hours old, or when the latest drill failed or is over 8 days old. `BACKUP_OFF_SERVER_COPY_MISSING` means there is no verified download receipt, and `BACKUP_OFF_SERVER_COPY_STALE` means the last recorded download is over 26 hours old. Check the copy on the owner's PC and [import its verified receipt](../backup-pull/README.md#report-the-off-server-copy-time-optional).
+
+For the authenticated check, keep `INTERNAL_API_SECRET` in the verifier's process environment and pass an owner session cookie privately. In the Bash example below, replace the example hostname with the trusted direct API origin.
 
 ```bash
 read -rs owner_cookie
@@ -47,10 +49,33 @@ Use the [production recovery runbook](../../docs/BACKUP-RESTORE-2026-11-25.md) f
 1. Use an Always Free eligible VM in the account's home region, with persistent disk and a public IP. Allow TCP 80/443 in both OCI networking and the host firewall; restrict SSH appropriately. Do not expose port 4000.
 2. Install a current **Node 24.x Linux ARM64** release from the [official downloads](https://nodejs.org/en/download) and verify its signed checksums. This template expects `/usr/local/bin/node` and `/usr/local/bin/npm`. The repository requires Node 24, not the latest major release.
 3. Install Git, CA certificates, OpenSSH server and the [official Caddy Ubuntu package](https://caddyserver.com/docs/install#debian-ubuntu-raspbian). Keep Caddy's `/var/lib/caddy` state persistent. Its package may start the default Caddy service during installation.
-4. Generate a fresh snapshot with `node scripts/package-cloud.mjs`. Transfer its `source` directory to `/opt/mohassan/app`, without Windows `node_modules`, `.data`, `.env`, or browser profiles. Verify the snapshot manifest after transfer. Directory ancestors must permit the service user to read the source.
+4. Package, compare and verify the source using the [release provenance procedure](#release-provenance). Put the verified source at `/opt/mohassan/app` after stopping the old service. Directory ancestors must permit the service user to read the source.
 5. On the VM, run `sudo bash /opt/mohassan/app/scripts/cloud-linux/prepare.sh`. It installs locked dependencies with `npm ci --include=dev` because the runtime uses `tsx`, installs Chromium and its Ubuntu libraries, runs a browser smoke check as `mohassan`, and installs the systemd unit. It does not start or enable the API. It requires network access to the package and browser registries.
 
 The preparation script is for an initial installation or a deliberately stopped service. It refuses to run while `mohassan.service` is active. Stop the service before replacing source or rerunning `npm ci`; do not mutate a running release. Existing environment values are preserved, and differing service units require review. Source becomes owned by `root:mohassan`, readable and executable but not writable by the service group. The browser smoke check runs after those permissions are applied. Persistent state is owned by `mohassan` with mode 0700. Run `bash prepare.sh` explicitly because a Windows source transfer may not preserve executable bits.
+
+## Release provenance
+
+1. In a clean checkout of the reviewed API commit with deployment history available, run `node scripts/package-cloud.mjs`. The command prints the snapshot source and manifest paths. The manifest records the full `sourceCommit`, its Git `sourceTree`, the `dirty` flag and the file hashes. `--allow-dirty` is for local testing. Production snapshots require `dirty: false`.
+2. Obtain the current production VM's `/opt/mohassan/release-manifest.json` through the existing private maintenance channel. Set `deployed_manifest` to the local copy and `candidate_manifest` to the new snapshot's manifest. Run the comparison in the Git checkout before transfer. If it exits nonzero, stop and inspect the reported deployed commits, paths and line ranges. Review any advisory differences in documentation and tests. If an existing deployment predates manifests, use `--deployed "$verified_deployed_commit"` in place of `--deployed-manifest "$deployed_manifest"` for the first comparison. Establish that full commit from the existing deployment record and verify it against the installed source when the record is uncertain.
+
+   ```bash
+   node scripts/release-compare.mjs --deployed-manifest "$deployed_manifest" \
+     --candidate-manifest "$candidate_manifest"
+   ```
+
+3. Transfer the snapshot's `source/` and `manifest.json` to a private staging directory on the VM. Keep the manifest beside the source. Compare the staged manifest's SHA-256 digest with the digest of the manifest used in step 2. Run a trusted copy of `verify-snapshot.mjs` from the reviewed checkout, placed outside the transferred source. Set `staged_source`, `staged_manifest` and `trusted_verifier` to those VM paths. Run this before dependency installation. Stop on any missing, altered or extra files. Preserve the previous source and manifest for rollback, then install the verified source through the [cutover procedure](#cutover-and-verification). If the running release changed while staging, repeat the comparison with its current manifest.
+
+   ```bash
+   /usr/local/bin/node "$trusted_verifier" "$staged_source" "$staged_manifest"
+   ```
+
+4. After the installed API passes the post-deploy checks and before reopening traffic, promote the verified manifest from staging. Keep the promoted manifest alongside the installed app so the next release can compare against the exact running commit.
+
+   ```bash
+   sudo install -m 0644 -o root -g root "$staged_manifest" /opt/mohassan/release-manifest.json.next &&
+     sudo mv -T /opt/mohassan/release-manifest.json.next /opt/mohassan/release-manifest.json
+   ```
 
 ## Configuration and staging
 
@@ -62,7 +87,7 @@ Point `api.mohassansy.com` to the VM. Review `Caddyfile`, then install it as `/e
 
 Only after confirming `DATABASE_URL` points to an isolated staging database, start the staging API with `sudo systemctl start mohassan`. To use the existing production database, first complete the drain and shutdown steps below. Preparation and the standalone Chromium smoke check do not start the API or connect to Neon and can run while the old API remains online. Inspect status and the journal without printing the environment file. The service restarts automatically after unexpected exit; enabling it at cutover makes it start after reboot. A single API process hosts live browser state. Do not add replicas or a separate worker without addressing that process affinity.
 
-Run `scripts/check-cloud.mjs` against loopback and the HTTPS origin with `INTERNAL_API_SECRET` supplied privately in the verifier's environment. The verifier tests public health, service authentication, setup closure, and absence of an anonymous owner session. Its setup assertion requires an already configured owner, including in isolated test data; an empty staging database will not satisfy that assertion. It must pass against the final production API before changing the frontend. `smoke-browser.mjs` can be rerun as `mohassan` with `PLAYWRIGHT_BROWSERS_PATH=/var/lib/mohassan/ms-playwright`; it renders an isolated page and screenshot without contacting a website or opening owner profiles.
+Run `scripts/check-cloud.mjs` against loopback and the HTTPS origin with `INTERNAL_API_SECRET` supplied privately in the verifier's environment. The verifier tests public health, service authentication, setup closure, and absence of an anonymous owner session. Its setup assertion requires an already configured owner, including in isolated test data; an empty staging database will not satisfy that assertion. It must pass against the final production API before changing the frontend. When the release enables `MOHASSAN_MODEL_WORKER=1`, add `--expect-model-worker` after startup. The verifier waits up to 60 seconds for `/health` to report `modelWorker.state: ready` and exits nonzero on worker failure or timeout. Run the owner-session check and review backup warnings before reopening traffic. `smoke-browser.mjs` can be rerun as `mohassan` with `PLAYWRIGHT_BROWSERS_PATH=/var/lib/mohassan/ms-playwright`; it renders an isolated page and screenshot without contacting a website or opening owner profiles.
 
 ## State and capability boundaries
 
@@ -76,7 +101,7 @@ Run `scripts/check-cloud.mjs` against loopback and the HTTPS origin with `INTERN
 1. Complete source preparation, the Chromium smoke check, persistent-directory checks and any API testing against an isolated database. Keep `RUN_WORKER=false` until the production handoff is ready.
 2. Stop new work from entering the old API. Let active work finish or explicitly cancel it; close active previews. Use read-only database counts to verify that queued/running tasks, active chat and skill work, benchmarks and active previews have drained. Resolve nonzero counts before proceeding. Then stop the entire old API and every standalone worker, and verify their automatic supervisors cannot restart them. A disabled queue worker alone is insufficient.
 3. Stop any VM staging API. Privately switch its environment to the existing production Neon connection and existing secrets. Only now start the VM API for the first time against production, initially with `RUN_WORKER=false`, and run the loopback and HTTPS verifier. Keep the old API stopped throughout. If an isolated staging database was unavailable, this is also the first API validation on the VM.
-4. Once those checks pass, set `RUN_WORKER=true`, restart the VM service, and run `sudo systemctl enable mohassan`. The service allows up to 240 seconds for shutdown before terminating remaining descendants. Set Vercel's `MOHASSAN_SERVER_URL` to the verified HTTPS API origin and its `INTERNAL_API_SECRET` to the matching existing value, then deploy the frontend environment change.
+4. Once those checks pass, set `RUN_WORKER=true`, restart the VM service, and run `sudo systemctl enable mohassan`. Run the verifier again, review the backup warnings and promote the verified release manifest before reopening traffic. The service allows up to 240 seconds for shutdown before terminating remaining descendants. Set Vercel's `MOHASSAN_SERVER_URL` to the verified HTTPS API origin and its `INTERNAL_API_SECRET` to the matching existing value, then deploy the frontend environment change.
 5. Verify owner sign-in, a read-only chat response, opening a public page and retrieving its screenshot, and preserved history after a controlled restart. Verify reboot startup separately. Do not claim the Windows-only features migrated successfully.
 
-For rollback, drain work and stop the entire VM API and any VM workers before restoring the previous backend and its frontend configuration. Prevent the VM supervisor from restarting during rollback. Never run both APIs against production during the handoff. Keep the database and existing secrets intact. Back up persistent state and protect browser profiles like credentials.
+For rollback, compare the rollback candidate with the current production release. Drain work and stop the entire VM API and any VM workers before restoring the verified rollback source and its frontend configuration. Prevent the VM supervisor from restarting during rollback. Run the verifier and promote the rollback manifest before reopening traffic. Never run both APIs against production during the handoff. Keep the database and existing secrets intact. Back up persistent state and protect browser profiles like credentials.

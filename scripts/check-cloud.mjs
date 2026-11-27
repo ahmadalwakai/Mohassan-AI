@@ -1,18 +1,29 @@
+import { setTimeout as delay } from 'node:timers/promises';
+
 const timeoutMs = 10000;
 const maxResponseBytes = 65536;
 const maxCookieBytes = 8192;
-const dumpLimitHours = 26;
+// Both the dump and the off-server pull are scheduled daily (retrieved 2026-11-27).
+// https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/scripts/backup-pull/README.md#schedule-the-pull
+const dailyBackupLimitHours = 26;
 const drillLimitHours = 8 * 24;
+// Match the permanent worker's startup timeout (retrieved 2026-11-27).
+// https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/packages/execution-integration/src/permanent-worker.ts#L79
+const modelWorkerTimeoutMs = 60_000;
+const modelWorkerPollMs = 1_000;
+const modelWorkerStates = ['starting', 'ready', 'degraded', 'failed', 'stopping', 'stopped'];
 
 async function configuration() {
-  let origin, readOwnerSession = false;
+  let origin, readOwnerSession = false, expectModelWorker = false;
   for (const argument of process.argv.slice(2)) {
     if (argument === '--owner-session-stdin' && !readOwnerSession) {
       readOwnerSession = true;
+    } else if (argument === '--expect-model-worker' && !expectModelWorker) {
+      expectModelWorker = true;
     } else if (!origin && !argument.startsWith('-')) {
       origin = argument;
     } else {
-      throw new Error('Provide an optional backend origin and optionally --owner-session-stdin.');
+      throw new Error('Usage: check-cloud.mjs [backend-origin] [--owner-session-stdin] [--expect-model-worker].');
     }
   }
   const input = origin || process.env.MOHASSAN_SERVER_URL;
@@ -29,7 +40,7 @@ async function configuration() {
   if (!secret || secret.length < 32 || /[\r\n]/.test(secret)) {
     throw new Error('Set INTERNAL_API_SECRET in the process environment to a valid service secret.');
   }
-  return { target, secret, ownerSession: readOwnerSession ? await readOwnerCookie() : null };
+  return { target, secret, expectModelWorker, ownerSession: readOwnerSession ? await readOwnerCookie() : null };
 }
 
 async function readOwnerCookie() {
@@ -83,11 +94,36 @@ async function check(target, name, pathname, expectedStatus, verifyBody, secret)
   }
 }
 
-function get(target, pathname, headers) {
+function get(target, pathname, headers, signal = AbortSignal.timeout(timeoutMs)) {
   return fetch(new URL(pathname, target), {
-    method: 'GET', redirect: 'error', signal: AbortSignal.timeout(timeoutMs),
+    method: 'GET', redirect: 'error', signal,
     headers: { accept: 'application/json', ...headers },
   });
+}
+
+async function checkModelWorker(target) {
+  const name = 'model-worker-ready';
+  const deadline = AbortSignal.timeout(modelWorkerTimeoutMs);
+  let state;
+  while (!deadline.aborted) {
+    try {
+      const signal = AbortSignal.any([deadline, AbortSignal.timeout(timeoutMs)]);
+      const response = await get(target, '/health', {}, signal);
+      const body = await readJson(response);
+      if (response.status === 200 && body?.status === 'ok') {
+        const reportedState = body.modelWorker?.state;
+        state = modelWorkerStates.includes(reportedState) ? reportedState : undefined;
+        if (state === 'ready') return { name, ok: true, state };
+        if (state === 'failed' || state === 'degraded') {
+          return { name, ok: false, state, error: 'MODEL_WORKER_FAILED' };
+        }
+      }
+    } catch {
+      // Retry transient health errors within the same deadline without logging response details.
+    }
+    await delay(modelWorkerPollMs, undefined, { signal: deadline }).catch(() => {});
+  }
+  return { name, ok: false, state, error: 'MODEL_WORKER_TIMEOUT' };
 }
 
 function hasAge(value) {
@@ -113,7 +149,7 @@ async function backupWarnings(target, secret, ownerSession) {
     const warnings = [];
     if (!dump) {
       warnings.push({ code: 'BACKUP_DUMP_MISSING', message: 'No completed backup is recorded.' });
-    } else if (dump.ageHours > dumpLimitHours) {
+    } else if (dump.ageHours > dailyBackupLimitHours) {
       warnings.push({ code: 'BACKUP_DUMP_STALE', message: 'The newest dump is older than 26 hours.', ageHours: dump.ageHours });
     }
     if (!drill) {
@@ -124,6 +160,14 @@ async function backupWarnings(target, secret, ownerSession) {
         warnings.push({ code: 'BACKUP_DRILL_STALE', message: 'The last restore drill is older than 8 days.', ageHours: drill.ageHours });
       }
     }
+    const copy = body?.offServerCopy;
+    const downloadedAt = typeof copy?.downloadedAt === 'string' ? Date.parse(copy.downloadedAt) : NaN;
+    const ageHours = (Date.now() - downloadedAt) / 3_600_000;
+    if (!Number.isFinite(ageHours) || ageHours < 0) {
+      warnings.push({ code: 'BACKUP_OFF_SERVER_COPY_MISSING', message: 'No verified off-server backup receipt is recorded.' });
+    } else if (ageHours > dailyBackupLimitHours) {
+      warnings.push({ code: 'BACKUP_OFF_SERVER_COPY_STALE', message: 'The last verified off-server download is older than 26 hours.', ageHours });
+    }
     return warnings;
   } catch {
     return unavailable;
@@ -131,7 +175,7 @@ async function backupWarnings(target, secret, ownerSession) {
 }
 
 try {
-  const { target, secret, ownerSession } = await configuration();
+  const { target, secret, ownerSession, expectModelWorker } = await configuration();
   let warnings = [];
   const checks = await Promise.all([
     check(target, 'public-health', '/health', 200, (body) => body?.status === 'ok'),
@@ -140,6 +184,7 @@ try {
   ]);
   // Verify the expected service boundary before transmitting its internal credential.
   if (checks.every((result) => result.ok)) {
+    const modelWorkerCheck = expectModelWorker ? checkModelWorker(target) : null;
     checks.push(...await Promise.all([
       check(target, 'production-owner-ready', '/api/setup', 200,
         (body) => body?.needsSetup === false && body?.setupAvailable === false, secret),
@@ -148,8 +193,11 @@ try {
         (body) => body?.error?.code === 'UNAUTHORIZED', secret),
     ]));
     warnings = await backupWarnings(target, secret, ownerSession);
+    if (modelWorkerCheck) checks.push(await modelWorkerCheck);
   } else {
-    for (const name of ['production-owner-ready', 'anonymous-session', 'workspace-session-required']) {
+    const skippedChecks = ['production-owner-ready', 'anonymous-session', 'workspace-session-required'];
+    if (expectModelWorker) skippedChecks.push('model-worker-ready');
+    for (const name of skippedChecks) {
       checks.push({ name, ok: false, skipped: true, reason: 'SERVICE_BOUNDARY_NOT_VERIFIED' });
     }
   }
