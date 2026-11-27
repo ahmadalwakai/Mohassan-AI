@@ -4,8 +4,11 @@ import { SafeNetwork, type SafeResponse } from '../../network.js';
 import type { SearchHit } from '../../research.js';
 import { SearchEngine } from '../engine.js';
 import { compileQuery } from '../ranking.js';
+import { matchStatisticsIndicator } from './statistics-indicators.js';
 import { statisticsProviders } from './statistics.js';
+import arabicAliases from './fixtures/statistics/arabic-indicator-aliases.json';
 import imf from './fixtures/statistics/imf.json';
+import arabicWdi from './fixtures/statistics/world-bank-arabic-indicators.json';
 import antarctica from './fixtures/statistics/world-bank-ata-population.json';
 
 interface Recording { url: string; body: unknown }
@@ -61,6 +64,26 @@ const search = (provider: ReturnType<typeof statisticsProviders>[number], text: 
   provider.search(compileQuery(text), 5, new AbortController().signal);
 
 describe('official statistics providers', () => {
+  it.each(Object.entries(arabicWdi.responses))('recognizes the published Arabic indicator name for %s', (code, { body }) => {
+    const [record] = Array.isArray(body[1]) ? body[1] : [];
+    expect(record?.id).toBe(code);
+    expect(matchStatisticsIndicator(record.name)?.worldBank?.code).toBe(code);
+  });
+
+  const { abuDhabiHumanDevelopment, moroccoOlderPersons, oicstat, saudiPressAgencyComoros, worldBankEgypt, worldBankWestBankAndGaza } =
+    arabicAliases.recordings;
+  it.each([
+    [saudiPressAgencyComoros.excerpts[0], 'NY.GDP.PCAP.CD'],
+    [worldBankEgypt.excerpts[0], 'NY.GDP.MKTP.KD.ZG'],
+    [oicstat.excerpts[0], 'SP.POP.GROW'],
+    [abuDhabiHumanDevelopment.excerpts[0], 'SP.POP.GROW'],
+    [worldBankWestBankAndGaza.excerpts[1], 'SL.UEM.TOTL.ZS'],
+    [oicstat.excerpts[1], 'SP.DYN.LE00.IN'],
+    [moroccoOlderPersons.excerpts[0], 'SP.DYN.LE00.IN'],
+  ])('matches the recorded alternate Arabic term %s', (term, code) => {
+    expect(matchStatisticsIndicator(term)?.worldBank?.code).toBe(code);
+  });
+
   it.each([
     ['كم عدد سكان أستراليا؟', 'aus-population', 'AUS', 'SP.POP.TOTL', /سكان/u, /نسمة|شخص/u],
     ['population of Canada', 'can-population', 'CAN', 'SP.POP.TOTL', /population/i, /people/i],
