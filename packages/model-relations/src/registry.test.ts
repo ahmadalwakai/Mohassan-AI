@@ -40,6 +40,21 @@ describe('model registry', () => {
     }
   });
 
+  it('matches the median and nearest-rank p95 definitions for 1 to 100 shuffled samples', () => {
+    for (let n = 1; n <= 100; n++) {
+      const samples = Array.from({ length: n }, (_, index) => ({
+        value: index % 5 === 1 ? index : index + 1,
+        order: sha(`${n}:${index}`),
+      })).sort((left, right) => left.order.localeCompare(right.order)).map(({ value }) => value);
+      const ascending = [...samples].sort((a, b) => a - b);
+      const lower = ascending[Math.floor((n - 1) / 2)]!;
+      const upper = ascending[Math.floor(n / 2)]!;
+      const p95 = Math.min(...samples.filter(value => 100 * samples.filter(sample => sample <= value).length >= 95 * n));
+
+      expect(summarizeBudgetTimings(samples), `sample count ${n}`).toMatchObject({ p50: (lower + upper) / 2, p95 });
+    }
+  });
+
   it('labels defaults and applies only complete, matching measured budgets with provenance', async () => {
     expect(unmeasuredModelRegistry.every(entry => entry.resources.provenance === 'unmeasured')).toBe(true);
     const refusal = unmeasuredModelRegistry.find(entry => entry.id === 'refusal')!;
@@ -49,8 +64,6 @@ describe('model registry', () => {
     const artifacts = [{ role: 'weights', sha256: refusal.artifacts[0]!.sha256! }];
     const ascendingMs = Array.from({ length: defaultSamplesPerLanguage }, (_, index) => index + 1);
     const coldStartMs = summarizeBudgetTimings(ascendingMs);
-    expect(coldStartMs.p50).toBe((ascendingMs[9]! + ascendingMs[10]!) / 2);
-    expect(coldStartMs.p95).toBe(ascendingMs[18]);
     const fixture = 'tests/fixtures/refusal-development.ts';
     const sourceSha256 = createHash('sha256').update(await readFile(join(checkout, fixture))).digest('hex');
     const measurement: LanguageMeasurement = {

@@ -1,0 +1,3445 @@
+{
+  "schemaVersion": 1,
+  "split": "development",
+  "nativeCoordinatorSha256": "7c227ac89499aeb3fd91e87295c2a7dc779c774ff867f1bec1d96b79e0f2237f",
+  "tool": {
+    "sha256": "9bbb9b97685cc7689605b0aa339c7a6c2202bb033b45452124edb63ef32c5abe",
+    "files": {
+      "compare.py": "cb7866b4b3698a9c5acf1c7a2f78d7def76f7f25d53df3da3edbee93eb92d72d",
+      "monitor-audit.mjs": "e854ff35069a379bb60b8d7fa47e9ed350d88e89fb293abb59c5adc929cdaca0",
+      "monitor_audit.py": "e6cc780d8d2f4c54686956771d52b299cd2db17950b5586a9f50a393f483ab5a",
+      "run.py": "ee97b1ccd416b1e6946477fe6e37b2ef47fcbf0cf31b3832de6fdd42d46982c7",
+      "runner.py": "f3db7b9cb5380555afc20e0cad917e8288149692ff7c833a6a3907d1478f18e2"
+    }
+  },
+  "timingDefinitions": {
+    "endToEndTurnTiming": "Native scored turn latency in milliseconds, covering non-null observations.",
+    "publicationTiming": "Synchronous scheduling from shadow journal schedulingMs.",
+    "backgroundTiming": "Per-turn shadow work from shadow journal elapsedMs.",
+    "p50Ms": "Median of sorted samples, averaging the two middle values for an even count.",
+    "p95Ms": "Nearest rank, selecting the smallest value at or above 95% cumulative count."
+  },
+  "historicalReference": {
+    "source": "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/MODEL-RELATIONS-VERIFICATION.md#L115-L135",
+    "refusal": {
+      "considered": 2679,
+      "compared": 489,
+      "disagreements": 227,
+      "busy": 2130,
+      "byVersion": {
+        "v1": {
+          "busy": 250,
+          "considered": 279
+        },
+        "v2": {
+          "busy": 1880,
+          "considered": 2400
+        }
+      }
+    }
+  },
+  "arms": {
+    "base": {
+      "commit": "29448aea3fa10d226ef82ec5bf0a65e723d6ec39",
+      "armReceiptSha256": "652ce13e2436ae49df1caf5544635a5f8fc2905b0708549429a62c583499cd1b",
+      "settings": {
+        "MOHASSAN_SMALL_TALK_MANNERS": "1",
+        "MOHASSAN_CONVERSATION_REVIEW_APPLY": "1",
+        "MOHASSAN_CONVERSATION_SHADOW": "decide",
+        "MOHASSAN_STRUCTURED_MEMORY": "1",
+        "MOHASSAN_EXTRACTIVE_WRITING": "1",
+        "MOHASSAN_PLAN_COMPILER": "on",
+        "MOHASSAN_REASONING": "1",
+        "MOHASSAN_CLARIFY_CHOICES": "1",
+        "MOHASSAN_SCRATCH_CLASSIFIERS": "1",
+        "MOHASSAN_REFUSAL_POLICY": "1",
+        "TEST_DRIVEN_CODING_ENABLED": "true",
+        "MOHASSAN_QUESTION_REWRITER": "1",
+        "MOHASSAN_MODEL_RELATIONS": "shadow",
+        "TEST_DRIVEN_CODING_PYTHON": "/usr/local/bin/python3.12"
+      },
+      "pins": {
+        "v1": "a258b3d47e39b5a2c03c71d4a9eb01107ae3d97f",
+        "v2": "12cedfe592aab40cdd47ee00d05ea86a6d2bae89",
+        "audit": "a1e1cb020b7ba093885edbf501149e7b8252c0cb",
+        "adapters": "0dfff7c54d3658a02cf878ff11faac7f630a6c10"
+      },
+      "inputSha256": {
+        "product/git-archive.tar": "847e119a4cc92313ba2501f65c69ee7453d9783afe1b58062792f8d75147926a",
+        "product/package-lock.json": "fe2989772964d7cbc188f017985ccaca7805553755510a0314ec4e6e018606f6",
+        "executable/node": "a7ec1b37e6ff9d187e4198c5b6df9a4eb1c74dd31804fb3bac55cc4ceca1ac01",
+        "executable/npm": "8e5f6f3429f8cdbe693cdc29904e9d5a7b127a494bd15c804bd54c7403bfcbe7",
+        "executable/python3": "4dbf3143240288fb2170257ffaa7bd030cdda5d2703d1f5f30b627042267e2e3",
+        "executable//usr/local/bin/python3.12": "4dbf3143240288fb2170257ffaa7bd030cdda5d2703d1f5f30b627042267e2e3",
+        "executable/chromium": "377a9fc07b495c3b8d0ab8ec1fdfd153641759f9756fea34d8dfce4de82f5025",
+        "executable/chromium-headless-shell": "4fa61f0ba0b4f89b7bec242c32ca16d3bccf69dbfef0651924a9ba8fede5f9d6",
+        "library/libseccomp.so.2": "df79d556924ecb71a946482802a0a0d584c30a7a25e564eccf19b7b72996bbbe",
+        "v1/scripts/agent-capability-bench/corpus.ts": "182ec623553b30169955bbd4442cfb2be0ad9649a30102c9a9a2127e7cadc47b",
+        "v1/scripts/agent-capability-bench/observe.ts": "20c6156263ee3a44b4619fd7d718656b9731d3186f0e6f1b60e57f8d22c10420",
+        "v1/scripts/agent-capability-bench/run.ts": "4b8c29e2065a6ab62fb9c73d87928c6b7911443f187d6d9843754b349c4791fd",
+        "v1/scripts/agent-capability-bench/score.ts": "f4bfa46fd5eda8e8c8cf08f19382652567439c49512caffd6caf0a5d32b5abdf",
+        "v1/tests/fixtures/agent-capability-bench/development.json": "712a170d3d60c6aec41f9fe44e7d5cc222bbafbe28d9ca763b5f396db2d2410b",
+        "v1/tests/fixtures/agent-capability-bench/manifest.json": "5191661e97f5f4d5ea3823de8c73957c3728aa1fd9323b96f56c53a536c4eadf",
+        "v1/scripts/agent-capability-bench/by-branch.mjs": "85164ace031d8bd7ef5b457db49d453da533ccebda1d041a3ad660093c79fcd7",
+        "v1/effective/observe.ts": "cb2b0d98c958dd82681d718ff25c81461f9bb0a99bd16543d9ff84ecc5bd64dc",
+        "v1/effective/run.ts": "1cfd6601f7fae01fea89f2eddba37c2bc9385afd07d997a0c0454ce14e993b66",
+        "v2/scripts/agent-capability-bench/corpus.ts": "1cd9738ad502305c48b00ffc32c9e92afb82e47b424b50887a93b702a365f42a",
+        "v2/scripts/agent-capability-bench/observe.ts": "d7fc412372917c89f0fdcd100133dc4fa5b667f3969244badcefaae980e9bdff",
+        "v2/scripts/agent-capability-bench/run.ts": "b55aa786e7ce845245d5d9ed37a1b138ac839dd2a54882ef25083ace70da612a",
+        "v2/scripts/agent-capability-bench/score.ts": "f4bfa46fd5eda8e8c8cf08f19382652567439c49512caffd6caf0a5d32b5abdf",
+        "v2/scripts/agent-capability-bench/v2/dev.ts": "57c936b2ed2b56b63f70a43d54c79389dfb40717aa279786d27992f3bdd7d22f",
+        "v2/scripts/agent-capability-bench/v2/mapping.ts": "5e78c21948fbc1d3072053ef44fce6b57930757428e9747578918421bd2af883",
+        "v2/scripts/agent-capability-bench/v2/sealed.ts": "172fbdad0e4efce6e0e6553b0ada30209043bbd17c8153ac85cf6ea47b77277a",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/accounting.json": "c12009bd8225d603ec06e5b207bc060fe9f2bbdf2ec372107654fef5b0102cef",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/ATTRIBUTION.md": "b1edba63e30e3c5938d42aa1a25cf0c2d423bbec51873442a1830a913335c418",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/CANARD-RELEASE-NOTICE.txt": "938936c5c5ba5adf58296249dd9b44c311e3870a1ffeee263f38b1b675c9f51b",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/CC-BY-SA-3.0-LICENSE.txt": "3f941b3b89cf7b8370ceb83cc76d2120d471b58735d8ca60238a751a48d7f72f",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/CC-BY-SA-4.0-LICENSE.txt": "28a9529c7d0bb4dc51f4bf5c116a3d16ef247a052f7591466768ddf563fd1cf5",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/CLINC150-LICENSE.txt": "e6bc9e9c474700b708f568bac9e5a8a9bcb2b1dad53442f5ba449fcb848b8e76",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/GSM8K-LICENSE.txt": "86bbb73e855821d7c401912fd4bf82e34313e6e3b6fd6f909f2b6cc9e209a53b",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/MASSIVE-LICENSE.txt": "c2e6ea015269147de02117ebdd91f30ef09831251f5345fa8365273b1db1d435",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/MASSIVE-NOTICE.md": "b90534ccd20c6f0e1e5239567af0d150496339542b75a15bfbc3e1e737593ddb",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/MBPP-APACHE-LICENSE.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/MBPP-DATASET-CARD.md": "6377d5c76ba46b9e650daa6d5eb592e671c9b15586e39f23f50ed9bf2ac54cf6",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/MINTAKA-LICENSE.md": "67e2204631e48323a0ca003d5788a36b18c0691133baa87e7d37978106f5a1f7",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/MINTAKA-RELEASE-NOTICE.md": "0b1695c01a6916780a51e47f6c8eebcd4aad033f7ea441814fdefd04de3a44d8",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/TYDIQA-APACHE-LICENSE.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/wikipedia-articles.json": "1e89c8a763c9a5deb33942f38cb206af79a228b6d803e6c1ff8ec6dd6914c195",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/manifest.json": "2c3d75ffbd7e567aa321d166e7ea0d0bba029cd6f9607488375d472ebc276416",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/payload.json": "6eda0e7052611d10fc87da4e3e8f3f30cfb64452c198eab20041b5da577508d1",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/sampling-v2-dev.seed": "18b48e2d54c4cec8b96b1f345a0fc66dc1c07a391ccbfae589792f692182ede4",
+        "v2/scripts/agent-capability-bench/by-branch.mjs": "85164ace031d8bd7ef5b457db49d453da533ccebda1d041a3ad660093c79fcd7",
+        "v2/effective/observe.ts": "cd548522bc20e8f86afd399e5fd4e0a849c67bdb9c8cd2a502dcce53a0397dc6",
+        "v2/effective/run.ts": "b656bb95b398bfe5b5d66a8111ae41ec7e571eb24e3d925ac7c0d181c0caee32"
+      },
+      "toolchain": {
+        "nodeOptions": [
+          "--no-wasm-tier-up",
+          "--no-wasm-dynamic-tiering",
+          "--import",
+          "tsx"
+        ],
+        "timeZone": "UTC",
+        "node": "v24.22.3",
+        "npm": "11.19.1",
+        "python3": "Python 3.12.14",
+        "/usr/local/bin/python3.12": "Python 3.12.14",
+        "chromium": "Google Chrome for Testing 156.0.8078.4",
+        "chromium-headless-shell": "Google Chrome for Testing 156.0.8078.4",
+        "chromiumBuild": "chromium-1248",
+        "v2ConcurrentWorkers": 8,
+        "npmInstall": [
+          "npm",
+          "ci",
+          "--no-audit",
+          "--no-fund",
+          "--offline"
+        ]
+      },
+      "versions": {
+        "v1": {
+          "passed": 176,
+          "cases": 240,
+          "scorePassByLanguage": {
+            "ar": {
+              "passed": 85,
+              "total": 120
+            },
+            "en": {
+              "passed": 91,
+              "total": 120
+            }
+          },
+          "endToEndTurnTiming": {
+            "count": 279,
+            "p50Ms": 45.31698799999867,
+            "p95Ms": 330.13964000000124,
+            "scoredTurns": 279
+          },
+          "shadow": {
+            "journalSha256": "7bd00e4a46ec5e476f60d8c8ec276234417f31320d3f05536115361d0a2067bb",
+            "cliSummarySha256": "9432181a0407efff2c022c2ab4a221d1aa36c87f011768dbbf9a41dad523d601",
+            "turns": 279,
+            "turnsByLanguage": {
+              "ar": 0,
+              "en": 0,
+              "mixed": 0,
+              "unknown": 279
+            },
+            "publicationTiming": {
+              "count": 279,
+              "p50Ms": 0.026068999999552034,
+              "p95Ms": 0.17708800000036717
+            },
+            "backgroundTiming": {
+              "count": 279,
+              "p50Ms": 0.38102599999911035,
+              "p95Ms": 6.155851999999868
+            },
+            "models": {
+              "arithmetic": {
+                "considered": 39,
+                "attempted": 39,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 39,
+                "busy": 38,
+                "timeout": 0,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 1,
+                    "denominator": 39
+                  },
+                  "busy": {
+                    "numerator": 38,
+                    "denominator": 39
+                  }
+                }
+              },
+              "head-answer-sentence": {
+                "considered": 50,
+                "attempted": 50,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 50,
+                "busy": 49,
+                "timeout": 0,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 1,
+                    "denominator": 50
+                  },
+                  "busy": {
+                    "numerator": 49,
+                    "denominator": 50
+                  }
+                }
+              },
+              "head-sufficiency": {
+                "considered": 58,
+                "attempted": 58,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 58,
+                "busy": 56,
+                "timeout": 0,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 2,
+                    "denominator": 58
+                  },
+                  "busy": {
+                    "numerator": 56,
+                    "denominator": 58
+                  }
+                }
+              },
+              "question-edit": {
+                "considered": 2,
+                "attempted": 2,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 2,
+                "busy": 2,
+                "timeout": 0,
+                "outcomes": {
+                  "busy": {
+                    "numerator": 2,
+                    "denominator": 2
+                  }
+                }
+              },
+              "refusal": {
+                "considered": 279,
+                "attempted": 279,
+                "compared": 19,
+                "disagreements": 4,
+                "fallbacks": 260,
+                "busy": 250,
+                "timeout": 0,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 10,
+                    "denominator": 279
+                  },
+                  "busy": {
+                    "numerator": 250,
+                    "denominator": 279
+                  },
+                  "ok": {
+                    "numerator": 19,
+                    "denominator": 279
+                  }
+                }
+              },
+              "router-b0": {
+                "considered": 279,
+                "attempted": 279,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 279,
+                "busy": 250,
+                "timeout": 0,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 29,
+                    "denominator": 279
+                  },
+                  "busy": {
+                    "numerator": 250,
+                    "denominator": 279
+                  }
+                }
+              },
+              "router-b2": {
+                "considered": 279,
+                "attempted": 279,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 279,
+                "busy": 250,
+                "timeout": 0,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 29,
+                    "denominator": 279
+                  },
+                  "busy": {
+                    "numerator": 250,
+                    "denominator": 279
+                  }
+                }
+              },
+              "scratch-follow-up": {
+                "considered": 23,
+                "attempted": 23,
+                "compared": 1,
+                "disagreements": 0,
+                "fallbacks": 22,
+                "busy": 21,
+                "timeout": 0,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 1,
+                    "denominator": 23
+                  },
+                  "busy": {
+                    "numerator": 21,
+                    "denominator": 23
+                  },
+                  "ok": {
+                    "numerator": 1,
+                    "denominator": 23
+                  }
+                }
+              },
+              "scratch-refusal": {
+                "considered": 279,
+                "attempted": 279,
+                "compared": 6,
+                "disagreements": 3,
+                "fallbacks": 273,
+                "busy": 250,
+                "timeout": 0,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 23,
+                    "denominator": 279
+                  },
+                  "busy": {
+                    "numerator": 250,
+                    "denominator": 279
+                  },
+                  "ok": {
+                    "numerator": 6,
+                    "denominator": 279
+                  }
+                }
+              },
+              "scratch-route": {
+                "considered": 279,
+                "attempted": 279,
+                "compared": 17,
+                "disagreements": 15,
+                "fallbacks": 262,
+                "busy": 250,
+                "timeout": 0,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 12,
+                    "denominator": 279
+                  },
+                  "busy": {
+                    "numerator": 250,
+                    "denominator": 279
+                  },
+                  "ok": {
+                    "numerator": 17,
+                    "denominator": 279
+                  }
+                }
+              },
+              "scratch-speech-act": {
+                "considered": 279,
+                "attempted": 279,
+                "compared": 29,
+                "disagreements": 2,
+                "fallbacks": 250,
+                "busy": 250,
+                "timeout": 0,
+                "outcomes": {
+                  "busy": {
+                    "numerator": 250,
+                    "denominator": 279
+                  },
+                  "ok": {
+                    "numerator": 29,
+                    "denominator": 279
+                  }
+                }
+              }
+            }
+          }
+        },
+        "v2": {
+          "passed": 1586,
+          "cases": 2400,
+          "scorePassByLanguage": {
+            "ar": {
+              "passed": 982,
+              "total": 1200
+            },
+            "en": {
+              "passed": 604,
+              "total": 1200
+            }
+          },
+          "endToEndTurnTiming": {
+            "count": 2400,
+            "p50Ms": 106.74595200000476,
+            "p95Ms": 1197.071517000004,
+            "scoredTurns": 2400
+          },
+          "shadow": {
+            "journalSha256": "acf9c113760b2066f8a71dfa36ceda1a24f8acbe973c248ff0adac0f288b29c0",
+            "cliSummarySha256": "c3a1171839df1aa9ec31c523b26a330e4a0a75bd4000583dca5a3840c72c17c4",
+            "turns": 2400,
+            "turnsByLanguage": {
+              "ar": 0,
+              "en": 0,
+              "mixed": 0,
+              "unknown": 2400
+            },
+            "publicationTiming": {
+              "count": 2400,
+              "p50Ms": 0.03575450000062119,
+              "p95Ms": 0.14245600000140257
+            },
+            "backgroundTiming": {
+              "count": 2400,
+              "p50Ms": 1.1808689999998023,
+              "p95Ms": 71.43696799999452
+            },
+            "models": {
+              "arithmetic": {
+                "considered": 233,
+                "attempted": 233,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 233,
+                "busy": 197,
+                "timeout": 7,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 29,
+                    "denominator": 233
+                  },
+                  "busy": {
+                    "numerator": 197,
+                    "denominator": 233
+                  },
+                  "timeout": {
+                    "numerator": 7,
+                    "denominator": 233
+                  }
+                }
+              },
+              "head-answer-sentence": {
+                "considered": 318,
+                "attempted": 318,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 318,
+                "busy": 219,
+                "timeout": 0,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 99,
+                    "denominator": 318
+                  },
+                  "busy": {
+                    "numerator": 219,
+                    "denominator": 318
+                  }
+                }
+              },
+              "head-sufficiency": {
+                "considered": 1193,
+                "attempted": 1193,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 1193,
+                "busy": 1015,
+                "timeout": 0,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 178,
+                    "denominator": 1193
+                  },
+                  "busy": {
+                    "numerator": 1015,
+                    "denominator": 1193
+                  }
+                }
+              },
+              "refusal": {
+                "considered": 2400,
+                "attempted": 2400,
+                "compared": 473,
+                "disagreements": 224,
+                "fallbacks": 1927,
+                "busy": 1877,
+                "timeout": 0,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 50,
+                    "denominator": 2400
+                  },
+                  "busy": {
+                    "numerator": 1877,
+                    "denominator": 2400
+                  },
+                  "ok": {
+                    "numerator": 473,
+                    "denominator": 2400
+                  }
+                }
+              },
+              "router-b0": {
+                "considered": 2400,
+                "attempted": 2400,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 2400,
+                "busy": 1877,
+                "timeout": 0,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 523,
+                    "denominator": 2400
+                  },
+                  "busy": {
+                    "numerator": 1877,
+                    "denominator": 2400
+                  }
+                }
+              },
+              "router-b2": {
+                "considered": 2400,
+                "attempted": 2400,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 2400,
+                "busy": 1877,
+                "timeout": 0,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 523,
+                    "denominator": 2400
+                  },
+                  "busy": {
+                    "numerator": 1877,
+                    "denominator": 2400
+                  }
+                }
+              },
+              "scratch-follow-up": {
+                "considered": 1,
+                "attempted": 1,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 1,
+                "busy": 0,
+                "timeout": 0,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 1,
+                    "denominator": 1
+                  }
+                }
+              },
+              "scratch-refusal": {
+                "considered": 2400,
+                "attempted": 2400,
+                "compared": 260,
+                "disagreements": 220,
+                "fallbacks": 2140,
+                "busy": 1877,
+                "timeout": 2,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 261,
+                    "denominator": 2400
+                  },
+                  "busy": {
+                    "numerator": 1877,
+                    "denominator": 2400
+                  },
+                  "ok": {
+                    "numerator": 260,
+                    "denominator": 2400
+                  },
+                  "timeout": {
+                    "numerator": 2,
+                    "denominator": 2400
+                  }
+                }
+              },
+              "scratch-route": {
+                "considered": 2400,
+                "attempted": 2400,
+                "compared": 288,
+                "disagreements": 177,
+                "fallbacks": 2112,
+                "busy": 1877,
+                "timeout": 0,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 235,
+                    "denominator": 2400
+                  },
+                  "busy": {
+                    "numerator": 1877,
+                    "denominator": 2400
+                  },
+                  "ok": {
+                    "numerator": 288,
+                    "denominator": 2400
+                  }
+                }
+              },
+              "scratch-speech-act": {
+                "considered": 2400,
+                "attempted": 2400,
+                "compared": 522,
+                "disagreements": 1,
+                "fallbacks": 1878,
+                "busy": 1877,
+                "timeout": 1,
+                "outcomes": {
+                  "busy": {
+                    "numerator": 1877,
+                    "denominator": 2400
+                  },
+                  "ok": {
+                    "numerator": 522,
+                    "denominator": 2400
+                  },
+                  "timeout": {
+                    "numerator": 1,
+                    "denominator": 2400
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "combinedShadow": {
+        "turns": 2679,
+        "turnsByLanguage": {
+          "ar": 0,
+          "en": 0,
+          "mixed": 0,
+          "unknown": 2679
+        },
+        "models": {
+          "arithmetic": {
+            "considered": 272,
+            "attempted": 272,
+            "compared": 0,
+            "disagreements": 0,
+            "fallbacks": 272,
+            "busy": 235,
+            "timeout": 7,
+            "outcomes": {
+              "abstained": {
+                "numerator": 30,
+                "denominator": 272
+              },
+              "busy": {
+                "numerator": 235,
+                "denominator": 272
+              },
+              "timeout": {
+                "numerator": 7,
+                "denominator": 272
+              }
+            }
+          },
+          "head-answer-sentence": {
+            "considered": 368,
+            "attempted": 368,
+            "compared": 0,
+            "disagreements": 0,
+            "fallbacks": 368,
+            "busy": 268,
+            "timeout": 0,
+            "outcomes": {
+              "absent": {
+                "numerator": 100,
+                "denominator": 368
+              },
+              "busy": {
+                "numerator": 268,
+                "denominator": 368
+              }
+            }
+          },
+          "head-sufficiency": {
+            "considered": 1251,
+            "attempted": 1251,
+            "compared": 0,
+            "disagreements": 0,
+            "fallbacks": 1251,
+            "busy": 1071,
+            "timeout": 0,
+            "outcomes": {
+              "absent": {
+                "numerator": 180,
+                "denominator": 1251
+              },
+              "busy": {
+                "numerator": 1071,
+                "denominator": 1251
+              }
+            }
+          },
+          "question-edit": {
+            "considered": 2,
+            "attempted": 2,
+            "compared": 0,
+            "disagreements": 0,
+            "fallbacks": 2,
+            "busy": 2,
+            "timeout": 0,
+            "outcomes": {
+              "busy": {
+                "numerator": 2,
+                "denominator": 2
+              }
+            }
+          },
+          "refusal": {
+            "considered": 2679,
+            "attempted": 2679,
+            "compared": 492,
+            "disagreements": 228,
+            "fallbacks": 2187,
+            "busy": 2127,
+            "timeout": 0,
+            "outcomes": {
+              "abstained": {
+                "numerator": 60,
+                "denominator": 2679
+              },
+              "busy": {
+                "numerator": 2127,
+                "denominator": 2679
+              },
+              "ok": {
+                "numerator": 492,
+                "denominator": 2679
+              }
+            }
+          },
+          "router-b0": {
+            "considered": 2679,
+            "attempted": 2679,
+            "compared": 0,
+            "disagreements": 0,
+            "fallbacks": 2679,
+            "busy": 2127,
+            "timeout": 0,
+            "outcomes": {
+              "absent": {
+                "numerator": 552,
+                "denominator": 2679
+              },
+              "busy": {
+                "numerator": 2127,
+                "denominator": 2679
+              }
+            }
+          },
+          "router-b2": {
+            "considered": 2679,
+            "attempted": 2679,
+            "compared": 0,
+            "disagreements": 0,
+            "fallbacks": 2679,
+            "busy": 2127,
+            "timeout": 0,
+            "outcomes": {
+              "absent": {
+                "numerator": 552,
+                "denominator": 2679
+              },
+              "busy": {
+                "numerator": 2127,
+                "denominator": 2679
+              }
+            }
+          },
+          "scratch-follow-up": {
+            "considered": 24,
+            "attempted": 24,
+            "compared": 1,
+            "disagreements": 0,
+            "fallbacks": 23,
+            "busy": 21,
+            "timeout": 0,
+            "outcomes": {
+              "abstained": {
+                "numerator": 2,
+                "denominator": 24
+              },
+              "busy": {
+                "numerator": 21,
+                "denominator": 24
+              },
+              "ok": {
+                "numerator": 1,
+                "denominator": 24
+              }
+            }
+          },
+          "scratch-refusal": {
+            "considered": 2679,
+            "attempted": 2679,
+            "compared": 266,
+            "disagreements": 223,
+            "fallbacks": 2413,
+            "busy": 2127,
+            "timeout": 2,
+            "outcomes": {
+              "abstained": {
+                "numerator": 284,
+                "denominator": 2679
+              },
+              "busy": {
+                "numerator": 2127,
+                "denominator": 2679
+              },
+              "ok": {
+                "numerator": 266,
+                "denominator": 2679
+              },
+              "timeout": {
+                "numerator": 2,
+                "denominator": 2679
+              }
+            }
+          },
+          "scratch-route": {
+            "considered": 2679,
+            "attempted": 2679,
+            "compared": 305,
+            "disagreements": 192,
+            "fallbacks": 2374,
+            "busy": 2127,
+            "timeout": 0,
+            "outcomes": {
+              "abstained": {
+                "numerator": 247,
+                "denominator": 2679
+              },
+              "busy": {
+                "numerator": 2127,
+                "denominator": 2679
+              },
+              "ok": {
+                "numerator": 305,
+                "denominator": 2679
+              }
+            }
+          },
+          "scratch-speech-act": {
+            "considered": 2679,
+            "attempted": 2679,
+            "compared": 551,
+            "disagreements": 3,
+            "fallbacks": 2128,
+            "busy": 2127,
+            "timeout": 1,
+            "outcomes": {
+              "busy": {
+                "numerator": 2127,
+                "denominator": 2679
+              },
+              "ok": {
+                "numerator": 551,
+                "denominator": 2679
+              },
+              "timeout": {
+                "numerator": 1,
+                "denominator": 2679
+              }
+            }
+          }
+        }
+      }
+    },
+    "head": {
+      "commit": "5391ea2d55572861cc7e56620ad6a5454f8a7700",
+      "armReceiptSha256": "ca9244cf164de2f4148339d265126b9eff885ac2b9bf47335536bfb44edf0826",
+      "settings": {
+        "MOHASSAN_SMALL_TALK_MANNERS": "1",
+        "MOHASSAN_CONVERSATION_REVIEW_APPLY": "1",
+        "MOHASSAN_CONVERSATION_SHADOW": "decide",
+        "MOHASSAN_STRUCTURED_MEMORY": "1",
+        "MOHASSAN_EXTRACTIVE_WRITING": "1",
+        "MOHASSAN_PLAN_COMPILER": "on",
+        "MOHASSAN_REASONING": "1",
+        "MOHASSAN_CLARIFY_CHOICES": "1",
+        "MOHASSAN_SCRATCH_CLASSIFIERS": "1",
+        "MOHASSAN_REFUSAL_POLICY": "1",
+        "TEST_DRIVEN_CODING_ENABLED": "true",
+        "MOHASSAN_QUESTION_REWRITER": "1",
+        "MOHASSAN_MODEL_RELATIONS": "shadow",
+        "TEST_DRIVEN_CODING_PYTHON": "/usr/local/bin/python3.12"
+      },
+      "pins": {
+        "v1": "a258b3d47e39b5a2c03c71d4a9eb01107ae3d97f",
+        "v2": "12cedfe592aab40cdd47ee00d05ea86a6d2bae89",
+        "audit": "a1e1cb020b7ba093885edbf501149e7b8252c0cb",
+        "adapters": "0dfff7c54d3658a02cf878ff11faac7f630a6c10"
+      },
+      "inputSha256": {
+        "product/git-archive.tar": "6c793ad08ac351d1e1657982217d0e629eee307dbb90d61fd905ffbd64271025",
+        "product/package-lock.json": "fe2989772964d7cbc188f017985ccaca7805553755510a0314ec4e6e018606f6",
+        "executable/node": "a7ec1b37e6ff9d187e4198c5b6df9a4eb1c74dd31804fb3bac55cc4ceca1ac01",
+        "executable/npm": "8e5f6f3429f8cdbe693cdc29904e9d5a7b127a494bd15c804bd54c7403bfcbe7",
+        "executable/python3": "4dbf3143240288fb2170257ffaa7bd030cdda5d2703d1f5f30b627042267e2e3",
+        "executable//usr/local/bin/python3.12": "4dbf3143240288fb2170257ffaa7bd030cdda5d2703d1f5f30b627042267e2e3",
+        "executable/chromium": "377a9fc07b495c3b8d0ab8ec1fdfd153641759f9756fea34d8dfce4de82f5025",
+        "executable/chromium-headless-shell": "4fa61f0ba0b4f89b7bec242c32ca16d3bccf69dbfef0651924a9ba8fede5f9d6",
+        "library/libseccomp.so.2": "df79d556924ecb71a946482802a0a0d584c30a7a25e564eccf19b7b72996bbbe",
+        "v1/scripts/agent-capability-bench/corpus.ts": "182ec623553b30169955bbd4442cfb2be0ad9649a30102c9a9a2127e7cadc47b",
+        "v1/scripts/agent-capability-bench/observe.ts": "20c6156263ee3a44b4619fd7d718656b9731d3186f0e6f1b60e57f8d22c10420",
+        "v1/scripts/agent-capability-bench/run.ts": "4b8c29e2065a6ab62fb9c73d87928c6b7911443f187d6d9843754b349c4791fd",
+        "v1/scripts/agent-capability-bench/score.ts": "f4bfa46fd5eda8e8c8cf08f19382652567439c49512caffd6caf0a5d32b5abdf",
+        "v1/tests/fixtures/agent-capability-bench/development.json": "712a170d3d60c6aec41f9fe44e7d5cc222bbafbe28d9ca763b5f396db2d2410b",
+        "v1/tests/fixtures/agent-capability-bench/manifest.json": "5191661e97f5f4d5ea3823de8c73957c3728aa1fd9323b96f56c53a536c4eadf",
+        "v1/scripts/agent-capability-bench/by-branch.mjs": "85164ace031d8bd7ef5b457db49d453da533ccebda1d041a3ad660093c79fcd7",
+        "v1/effective/observe.ts": "cb2b0d98c958dd82681d718ff25c81461f9bb0a99bd16543d9ff84ecc5bd64dc",
+        "v1/effective/run.ts": "1cfd6601f7fae01fea89f2eddba37c2bc9385afd07d997a0c0454ce14e993b66",
+        "v2/scripts/agent-capability-bench/corpus.ts": "1cd9738ad502305c48b00ffc32c9e92afb82e47b424b50887a93b702a365f42a",
+        "v2/scripts/agent-capability-bench/observe.ts": "d7fc412372917c89f0fdcd100133dc4fa5b667f3969244badcefaae980e9bdff",
+        "v2/scripts/agent-capability-bench/run.ts": "b55aa786e7ce845245d5d9ed37a1b138ac839dd2a54882ef25083ace70da612a",
+        "v2/scripts/agent-capability-bench/score.ts": "f4bfa46fd5eda8e8c8cf08f19382652567439c49512caffd6caf0a5d32b5abdf",
+        "v2/scripts/agent-capability-bench/v2/dev.ts": "57c936b2ed2b56b63f70a43d54c79389dfb40717aa279786d27992f3bdd7d22f",
+        "v2/scripts/agent-capability-bench/v2/mapping.ts": "5e78c21948fbc1d3072053ef44fce6b57930757428e9747578918421bd2af883",
+        "v2/scripts/agent-capability-bench/v2/sealed.ts": "172fbdad0e4efce6e0e6553b0ada30209043bbd17c8153ac85cf6ea47b77277a",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/accounting.json": "c12009bd8225d603ec06e5b207bc060fe9f2bbdf2ec372107654fef5b0102cef",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/ATTRIBUTION.md": "b1edba63e30e3c5938d42aa1a25cf0c2d423bbec51873442a1830a913335c418",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/CANARD-RELEASE-NOTICE.txt": "938936c5c5ba5adf58296249dd9b44c311e3870a1ffeee263f38b1b675c9f51b",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/CC-BY-SA-3.0-LICENSE.txt": "3f941b3b89cf7b8370ceb83cc76d2120d471b58735d8ca60238a751a48d7f72f",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/CC-BY-SA-4.0-LICENSE.txt": "28a9529c7d0bb4dc51f4bf5c116a3d16ef247a052f7591466768ddf563fd1cf5",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/CLINC150-LICENSE.txt": "e6bc9e9c474700b708f568bac9e5a8a9bcb2b1dad53442f5ba449fcb848b8e76",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/GSM8K-LICENSE.txt": "86bbb73e855821d7c401912fd4bf82e34313e6e3b6fd6f909f2b6cc9e209a53b",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/MASSIVE-LICENSE.txt": "c2e6ea015269147de02117ebdd91f30ef09831251f5345fa8365273b1db1d435",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/MASSIVE-NOTICE.md": "b90534ccd20c6f0e1e5239567af0d150496339542b75a15bfbc3e1e737593ddb",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/MBPP-APACHE-LICENSE.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/MBPP-DATASET-CARD.md": "6377d5c76ba46b9e650daa6d5eb592e671c9b15586e39f23f50ed9bf2ac54cf6",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/MINTAKA-LICENSE.md": "67e2204631e48323a0ca003d5788a36b18c0691133baa87e7d37978106f5a1f7",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/MINTAKA-RELEASE-NOTICE.md": "0b1695c01a6916780a51e47f6c8eebcd4aad033f7ea441814fdefd04de3a44d8",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/TYDIQA-APACHE-LICENSE.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/attribution/wikipedia-articles.json": "1e89c8a763c9a5deb33942f38cb206af79a228b6d803e6c1ff8ec6dd6914c195",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/manifest.json": "2c3d75ffbd7e567aa321d166e7ea0d0bba029cd6f9607488375d472ebc276416",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/payload.json": "6eda0e7052611d10fc87da4e3e8f3f30cfb64452c198eab20041b5da577508d1",
+        "v2/tests/fixtures/agent-capability-bench/v2/dev/sampling-v2-dev.seed": "18b48e2d54c4cec8b96b1f345a0fc66dc1c07a391ccbfae589792f692182ede4",
+        "v2/scripts/agent-capability-bench/by-branch.mjs": "85164ace031d8bd7ef5b457db49d453da533ccebda1d041a3ad660093c79fcd7",
+        "v2/effective/observe.ts": "cd548522bc20e8f86afd399e5fd4e0a849c67bdb9c8cd2a502dcce53a0397dc6",
+        "v2/effective/run.ts": "b656bb95b398bfe5b5d66a8111ae41ec7e571eb24e3d925ac7c0d181c0caee32"
+      },
+      "toolchain": {
+        "nodeOptions": [
+          "--no-wasm-tier-up",
+          "--no-wasm-dynamic-tiering",
+          "--import",
+          "tsx"
+        ],
+        "timeZone": "UTC",
+        "node": "v24.22.3",
+        "npm": "11.19.1",
+        "python3": "Python 3.12.14",
+        "/usr/local/bin/python3.12": "Python 3.12.14",
+        "chromium": "Google Chrome for Testing 156.0.8078.4",
+        "chromium-headless-shell": "Google Chrome for Testing 156.0.8078.4",
+        "chromiumBuild": "chromium-1248",
+        "v2ConcurrentWorkers": 8,
+        "npmInstall": [
+          "npm",
+          "ci",
+          "--no-audit",
+          "--no-fund",
+          "--offline"
+        ]
+      },
+      "versions": {
+        "v1": {
+          "passed": 176,
+          "cases": 240,
+          "scorePassByLanguage": {
+            "ar": {
+              "passed": 85,
+              "total": 120
+            },
+            "en": {
+              "passed": 91,
+              "total": 120
+            }
+          },
+          "endToEndTurnTiming": {
+            "count": 279,
+            "p50Ms": 49.68399799999679,
+            "p95Ms": 342.0317890000006,
+            "scoredTurns": 279
+          },
+          "shadow": {
+            "journalSha256": "19a3d3f256e6d99c720e298aecb22d6496e8a967ca961bec539956f2c74a9941",
+            "cliSummarySha256": "fd6d4850933f7d9553231f6beace0391e43ba8871052eea3cce7b28296b5d35d",
+            "turns": 279,
+            "turnsByLanguage": {
+              "ar": 85,
+              "en": 126,
+              "mixed": 68,
+              "unknown": 0
+            },
+            "publicationTiming": {
+              "count": 279,
+              "p50Ms": 0.035834000000249944,
+              "p95Ms": 0.19027699999969627
+            },
+            "backgroundTiming": {
+              "count": 279,
+              "p50Ms": 119.91868699999759,
+              "p95Ms": 869.0483430000022
+            },
+            "models": {
+              "arithmetic": {
+                "considered": 39,
+                "attempted": 39,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 39,
+                "busy": 0,
+                "timeout": 0,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 39,
+                    "denominator": 39
+                  }
+                },
+                "byLanguage": {
+                  "ar": {
+                    "considered": 16,
+                    "attempted": 16,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 16,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 16,
+                        "denominator": 16
+                      }
+                    }
+                  },
+                  "en": {
+                    "considered": 20,
+                    "attempted": 20,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 20,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 20,
+                        "denominator": 20
+                      }
+                    }
+                  },
+                  "mixed": {
+                    "considered": 3,
+                    "attempted": 3,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 3,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 3,
+                        "denominator": 3
+                      }
+                    }
+                  }
+                }
+              },
+              "head-answer-sentence": {
+                "considered": 50,
+                "attempted": 50,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 50,
+                "busy": 0,
+                "timeout": 0,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 50,
+                    "denominator": 50
+                  }
+                },
+                "byLanguage": {
+                  "ar": {
+                    "considered": 14,
+                    "attempted": 14,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 14,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "absent": {
+                        "numerator": 14,
+                        "denominator": 14
+                      }
+                    }
+                  },
+                  "en": {
+                    "considered": 24,
+                    "attempted": 24,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 24,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "absent": {
+                        "numerator": 24,
+                        "denominator": 24
+                      }
+                    }
+                  },
+                  "mixed": {
+                    "considered": 12,
+                    "attempted": 12,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 12,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "absent": {
+                        "numerator": 12,
+                        "denominator": 12
+                      }
+                    }
+                  }
+                }
+              },
+              "head-sufficiency": {
+                "considered": 58,
+                "attempted": 58,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 58,
+                "busy": 0,
+                "timeout": 0,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 58,
+                    "denominator": 58
+                  }
+                },
+                "byLanguage": {
+                  "ar": {
+                    "considered": 17,
+                    "attempted": 17,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 17,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "absent": {
+                        "numerator": 17,
+                        "denominator": 17
+                      }
+                    }
+                  },
+                  "en": {
+                    "considered": 27,
+                    "attempted": 27,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 27,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "absent": {
+                        "numerator": 27,
+                        "denominator": 27
+                      }
+                    }
+                  },
+                  "mixed": {
+                    "considered": 14,
+                    "attempted": 14,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 14,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "absent": {
+                        "numerator": 14,
+                        "denominator": 14
+                      }
+                    }
+                  }
+                }
+              },
+              "question-edit": {
+                "considered": 2,
+                "attempted": 2,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 2,
+                "busy": 0,
+                "timeout": 0,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 2,
+                    "denominator": 2
+                  }
+                },
+                "byLanguage": {
+                  "en": {
+                    "considered": 2,
+                    "attempted": 2,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 2,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "absent": {
+                        "numerator": 2,
+                        "denominator": 2
+                      }
+                    }
+                  }
+                }
+              },
+              "refusal": {
+                "considered": 279,
+                "attempted": 279,
+                "compared": 195,
+                "disagreements": 28,
+                "fallbacks": 84,
+                "busy": 0,
+                "timeout": 0,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 84,
+                    "denominator": 279
+                  },
+                  "ok": {
+                    "numerator": 195,
+                    "denominator": 279
+                  }
+                },
+                "byLanguage": {
+                  "ar": {
+                    "considered": 85,
+                    "attempted": 85,
+                    "compared": 79,
+                    "disagreements": 5,
+                    "fallbacks": 6,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 6,
+                        "denominator": 85
+                      },
+                      "ok": {
+                        "numerator": 79,
+                        "denominator": 85
+                      }
+                    }
+                  },
+                  "en": {
+                    "considered": 126,
+                    "attempted": 126,
+                    "compared": 71,
+                    "disagreements": 15,
+                    "fallbacks": 55,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 55,
+                        "denominator": 126
+                      },
+                      "ok": {
+                        "numerator": 71,
+                        "denominator": 126
+                      }
+                    }
+                  },
+                  "mixed": {
+                    "considered": 68,
+                    "attempted": 68,
+                    "compared": 45,
+                    "disagreements": 8,
+                    "fallbacks": 23,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 23,
+                        "denominator": 68
+                      },
+                      "ok": {
+                        "numerator": 45,
+                        "denominator": 68
+                      }
+                    }
+                  }
+                }
+              },
+              "router-b0": {
+                "considered": 279,
+                "attempted": 279,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 279,
+                "busy": 0,
+                "timeout": 6,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 273,
+                    "denominator": 279
+                  },
+                  "timeout": {
+                    "numerator": 6,
+                    "denominator": 279
+                  }
+                },
+                "byLanguage": {
+                  "ar": {
+                    "considered": 85,
+                    "attempted": 85,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 85,
+                    "busy": 0,
+                    "timeout": 2,
+                    "outcomes": {
+                      "absent": {
+                        "numerator": 83,
+                        "denominator": 85
+                      },
+                      "timeout": {
+                        "numerator": 2,
+                        "denominator": 85
+                      }
+                    }
+                  },
+                  "en": {
+                    "considered": 126,
+                    "attempted": 126,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 126,
+                    "busy": 0,
+                    "timeout": 3,
+                    "outcomes": {
+                      "absent": {
+                        "numerator": 123,
+                        "denominator": 126
+                      },
+                      "timeout": {
+                        "numerator": 3,
+                        "denominator": 126
+                      }
+                    }
+                  },
+                  "mixed": {
+                    "considered": 68,
+                    "attempted": 68,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 68,
+                    "busy": 0,
+                    "timeout": 1,
+                    "outcomes": {
+                      "absent": {
+                        "numerator": 67,
+                        "denominator": 68
+                      },
+                      "timeout": {
+                        "numerator": 1,
+                        "denominator": 68
+                      }
+                    }
+                  }
+                }
+              },
+              "router-b2": {
+                "considered": 279,
+                "attempted": 279,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 279,
+                "busy": 0,
+                "timeout": 100,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 179,
+                    "denominator": 279
+                  },
+                  "timeout": {
+                    "numerator": 100,
+                    "denominator": 279
+                  }
+                },
+                "byLanguage": {
+                  "ar": {
+                    "considered": 85,
+                    "attempted": 85,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 85,
+                    "busy": 0,
+                    "timeout": 29,
+                    "outcomes": {
+                      "absent": {
+                        "numerator": 56,
+                        "denominator": 85
+                      },
+                      "timeout": {
+                        "numerator": 29,
+                        "denominator": 85
+                      }
+                    }
+                  },
+                  "en": {
+                    "considered": 126,
+                    "attempted": 126,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 126,
+                    "busy": 0,
+                    "timeout": 48,
+                    "outcomes": {
+                      "absent": {
+                        "numerator": 78,
+                        "denominator": 126
+                      },
+                      "timeout": {
+                        "numerator": 48,
+                        "denominator": 126
+                      }
+                    }
+                  },
+                  "mixed": {
+                    "considered": 68,
+                    "attempted": 68,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 68,
+                    "busy": 0,
+                    "timeout": 23,
+                    "outcomes": {
+                      "absent": {
+                        "numerator": 45,
+                        "denominator": 68
+                      },
+                      "timeout": {
+                        "numerator": 23,
+                        "denominator": 68
+                      }
+                    }
+                  }
+                }
+              },
+              "scratch-follow-up": {
+                "considered": 23,
+                "attempted": 23,
+                "compared": 1,
+                "disagreements": 0,
+                "fallbacks": 22,
+                "busy": 0,
+                "timeout": 20,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 2,
+                    "denominator": 23
+                  },
+                  "ok": {
+                    "numerator": 1,
+                    "denominator": 23
+                  },
+                  "timeout": {
+                    "numerator": 20,
+                    "denominator": 23
+                  }
+                },
+                "byLanguage": {
+                  "ar": {
+                    "considered": 8,
+                    "attempted": 8,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 8,
+                    "busy": 0,
+                    "timeout": 8,
+                    "outcomes": {
+                      "timeout": {
+                        "numerator": 8,
+                        "denominator": 8
+                      }
+                    }
+                  },
+                  "en": {
+                    "considered": 11,
+                    "attempted": 11,
+                    "compared": 1,
+                    "disagreements": 0,
+                    "fallbacks": 10,
+                    "busy": 0,
+                    "timeout": 9,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 1,
+                        "denominator": 11
+                      },
+                      "ok": {
+                        "numerator": 1,
+                        "denominator": 11
+                      },
+                      "timeout": {
+                        "numerator": 9,
+                        "denominator": 11
+                      }
+                    }
+                  },
+                  "mixed": {
+                    "considered": 4,
+                    "attempted": 4,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 4,
+                    "busy": 0,
+                    "timeout": 3,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 1,
+                        "denominator": 4
+                      },
+                      "timeout": {
+                        "numerator": 3,
+                        "denominator": 4
+                      }
+                    }
+                  }
+                }
+              },
+              "scratch-refusal": {
+                "considered": 279,
+                "attempted": 279,
+                "compared": 66,
+                "disagreements": 27,
+                "fallbacks": 213,
+                "busy": 0,
+                "timeout": 0,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 213,
+                    "denominator": 279
+                  },
+                  "ok": {
+                    "numerator": 66,
+                    "denominator": 279
+                  }
+                },
+                "byLanguage": {
+                  "ar": {
+                    "considered": 85,
+                    "attempted": 85,
+                    "compared": 18,
+                    "disagreements": 10,
+                    "fallbacks": 67,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 67,
+                        "denominator": 85
+                      },
+                      "ok": {
+                        "numerator": 18,
+                        "denominator": 85
+                      }
+                    }
+                  },
+                  "en": {
+                    "considered": 126,
+                    "attempted": 126,
+                    "compared": 34,
+                    "disagreements": 12,
+                    "fallbacks": 92,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 92,
+                        "denominator": 126
+                      },
+                      "ok": {
+                        "numerator": 34,
+                        "denominator": 126
+                      }
+                    }
+                  },
+                  "mixed": {
+                    "considered": 68,
+                    "attempted": 68,
+                    "compared": 14,
+                    "disagreements": 5,
+                    "fallbacks": 54,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 54,
+                        "denominator": 68
+                      },
+                      "ok": {
+                        "numerator": 14,
+                        "denominator": 68
+                      }
+                    }
+                  }
+                }
+              },
+              "scratch-route": {
+                "considered": 279,
+                "attempted": 279,
+                "compared": 79,
+                "disagreements": 62,
+                "fallbacks": 200,
+                "busy": 0,
+                "timeout": 140,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 60,
+                    "denominator": 279
+                  },
+                  "ok": {
+                    "numerator": 79,
+                    "denominator": 279
+                  },
+                  "timeout": {
+                    "numerator": 140,
+                    "denominator": 279
+                  }
+                },
+                "byLanguage": {
+                  "ar": {
+                    "considered": 85,
+                    "attempted": 85,
+                    "compared": 17,
+                    "disagreements": 16,
+                    "fallbacks": 68,
+                    "busy": 0,
+                    "timeout": 48,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 20,
+                        "denominator": 85
+                      },
+                      "ok": {
+                        "numerator": 17,
+                        "denominator": 85
+                      },
+                      "timeout": {
+                        "numerator": 48,
+                        "denominator": 85
+                      }
+                    }
+                  },
+                  "en": {
+                    "considered": 126,
+                    "attempted": 126,
+                    "compared": 34,
+                    "disagreements": 20,
+                    "fallbacks": 92,
+                    "busy": 0,
+                    "timeout": 67,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 25,
+                        "denominator": 126
+                      },
+                      "ok": {
+                        "numerator": 34,
+                        "denominator": 126
+                      },
+                      "timeout": {
+                        "numerator": 67,
+                        "denominator": 126
+                      }
+                    }
+                  },
+                  "mixed": {
+                    "considered": 68,
+                    "attempted": 68,
+                    "compared": 28,
+                    "disagreements": 26,
+                    "fallbacks": 40,
+                    "busy": 0,
+                    "timeout": 25,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 15,
+                        "denominator": 68
+                      },
+                      "ok": {
+                        "numerator": 28,
+                        "denominator": 68
+                      },
+                      "timeout": {
+                        "numerator": 25,
+                        "denominator": 68
+                      }
+                    }
+                  }
+                }
+              },
+              "scratch-speech-act": {
+                "considered": 279,
+                "attempted": 279,
+                "compared": 275,
+                "disagreements": 7,
+                "fallbacks": 4,
+                "busy": 0,
+                "timeout": 0,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 4,
+                    "denominator": 279
+                  },
+                  "ok": {
+                    "numerator": 275,
+                    "denominator": 279
+                  }
+                },
+                "byLanguage": {
+                  "ar": {
+                    "considered": 85,
+                    "attempted": 85,
+                    "compared": 83,
+                    "disagreements": 5,
+                    "fallbacks": 2,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 2,
+                        "denominator": 85
+                      },
+                      "ok": {
+                        "numerator": 83,
+                        "denominator": 85
+                      }
+                    }
+                  },
+                  "en": {
+                    "considered": 126,
+                    "attempted": 126,
+                    "compared": 124,
+                    "disagreements": 1,
+                    "fallbacks": 2,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 2,
+                        "denominator": 126
+                      },
+                      "ok": {
+                        "numerator": 124,
+                        "denominator": 126
+                      }
+                    }
+                  },
+                  "mixed": {
+                    "considered": 68,
+                    "attempted": 68,
+                    "compared": 68,
+                    "disagreements": 1,
+                    "fallbacks": 0,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "ok": {
+                        "numerator": 68,
+                        "denominator": 68
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "v2": {
+          "passed": 1586,
+          "cases": 2400,
+          "scorePassByLanguage": {
+            "ar": {
+              "passed": 982,
+              "total": 1200
+            },
+            "en": {
+              "passed": 604,
+              "total": 1200
+            }
+          },
+          "endToEndTurnTiming": {
+            "count": 2400,
+            "p50Ms": 118.51739149999412,
+            "p95Ms": 1215.9067389999982,
+            "scoredTurns": 2400
+          },
+          "shadow": {
+            "journalSha256": "4994d669551b6eff434760b5c712936050372797269bd734922dfd81c4ed47c8",
+            "cliSummarySha256": "b39f60ca7fb2e96ef01670d416491f40734b65a12fec2a0b1cd2874a93496603",
+            "turns": 2400,
+            "turnsByLanguage": {
+              "ar": 1094,
+              "en": 1200,
+              "mixed": 106,
+              "unknown": 0
+            },
+            "publicationTiming": {
+              "count": 2400,
+              "p50Ms": 0.04128750000381842,
+              "p95Ms": 0.1782999999995809
+            },
+            "backgroundTiming": {
+              "count": 2400,
+              "p50Ms": 74.35961950000274,
+              "p95Ms": 323.34528700000374
+            },
+            "models": {
+              "arithmetic": {
+                "considered": 233,
+                "attempted": 233,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 233,
+                "busy": 0,
+                "timeout": 25,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 199,
+                    "denominator": 233
+                  },
+                  "timeout": {
+                    "numerator": 25,
+                    "denominator": 233
+                  },
+                  "unhealthy": {
+                    "numerator": 9,
+                    "denominator": 233
+                  }
+                },
+                "byLanguage": {
+                  "ar": {
+                    "considered": 2,
+                    "attempted": 2,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 2,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 2,
+                        "denominator": 2
+                      }
+                    }
+                  },
+                  "en": {
+                    "considered": 231,
+                    "attempted": 231,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 231,
+                    "busy": 0,
+                    "timeout": 25,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 197,
+                        "denominator": 231
+                      },
+                      "timeout": {
+                        "numerator": 25,
+                        "denominator": 231
+                      },
+                      "unhealthy": {
+                        "numerator": 9,
+                        "denominator": 231
+                      }
+                    }
+                  }
+                }
+              },
+              "head-answer-sentence": {
+                "considered": 318,
+                "attempted": 318,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 318,
+                "busy": 0,
+                "timeout": 0,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 318,
+                    "denominator": 318
+                  }
+                },
+                "byLanguage": {
+                  "ar": {
+                    "considered": 226,
+                    "attempted": 226,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 226,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "absent": {
+                        "numerator": 226,
+                        "denominator": 226
+                      }
+                    }
+                  },
+                  "en": {
+                    "considered": 92,
+                    "attempted": 92,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 92,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "absent": {
+                        "numerator": 92,
+                        "denominator": 92
+                      }
+                    }
+                  }
+                }
+              },
+              "head-sufficiency": {
+                "considered": 1193,
+                "attempted": 1193,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 1193,
+                "busy": 0,
+                "timeout": 0,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 1193,
+                    "denominator": 1193
+                  }
+                },
+                "byLanguage": {
+                  "ar": {
+                    "considered": 919,
+                    "attempted": 919,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 919,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "absent": {
+                        "numerator": 919,
+                        "denominator": 919
+                      }
+                    }
+                  },
+                  "en": {
+                    "considered": 218,
+                    "attempted": 218,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 218,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "absent": {
+                        "numerator": 218,
+                        "denominator": 218
+                      }
+                    }
+                  },
+                  "mixed": {
+                    "considered": 56,
+                    "attempted": 56,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 56,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "absent": {
+                        "numerator": 56,
+                        "denominator": 56
+                      }
+                    }
+                  }
+                }
+              },
+              "refusal": {
+                "considered": 2400,
+                "attempted": 2400,
+                "compared": 2065,
+                "disagreements": 711,
+                "fallbacks": 335,
+                "busy": 0,
+                "timeout": 19,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 316,
+                    "denominator": 2400
+                  },
+                  "ok": {
+                    "numerator": 2065,
+                    "denominator": 2400
+                  },
+                  "timeout": {
+                    "numerator": 19,
+                    "denominator": 2400
+                  }
+                },
+                "byLanguage": {
+                  "ar": {
+                    "considered": 1094,
+                    "attempted": 1094,
+                    "compared": 1063,
+                    "disagreements": 111,
+                    "fallbacks": 31,
+                    "busy": 0,
+                    "timeout": 8,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 23,
+                        "denominator": 1094
+                      },
+                      "ok": {
+                        "numerator": 1063,
+                        "denominator": 1094
+                      },
+                      "timeout": {
+                        "numerator": 8,
+                        "denominator": 1094
+                      }
+                    }
+                  },
+                  "en": {
+                    "considered": 1200,
+                    "attempted": 1200,
+                    "compared": 904,
+                    "disagreements": 565,
+                    "fallbacks": 296,
+                    "busy": 0,
+                    "timeout": 11,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 285,
+                        "denominator": 1200
+                      },
+                      "ok": {
+                        "numerator": 904,
+                        "denominator": 1200
+                      },
+                      "timeout": {
+                        "numerator": 11,
+                        "denominator": 1200
+                      }
+                    }
+                  },
+                  "mixed": {
+                    "considered": 106,
+                    "attempted": 106,
+                    "compared": 98,
+                    "disagreements": 35,
+                    "fallbacks": 8,
+                    "busy": 0,
+                    "timeout": 0,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 8,
+                        "denominator": 106
+                      },
+                      "ok": {
+                        "numerator": 98,
+                        "denominator": 106
+                      }
+                    }
+                  }
+                }
+              },
+              "router-b0": {
+                "considered": 2400,
+                "attempted": 2400,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 2400,
+                "busy": 0,
+                "timeout": 43,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 2357,
+                    "denominator": 2400
+                  },
+                  "timeout": {
+                    "numerator": 43,
+                    "denominator": 2400
+                  }
+                },
+                "byLanguage": {
+                  "ar": {
+                    "considered": 1094,
+                    "attempted": 1094,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 1094,
+                    "busy": 0,
+                    "timeout": 24,
+                    "outcomes": {
+                      "absent": {
+                        "numerator": 1070,
+                        "denominator": 1094
+                      },
+                      "timeout": {
+                        "numerator": 24,
+                        "denominator": 1094
+                      }
+                    }
+                  },
+                  "en": {
+                    "considered": 1200,
+                    "attempted": 1200,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 1200,
+                    "busy": 0,
+                    "timeout": 18,
+                    "outcomes": {
+                      "absent": {
+                        "numerator": 1182,
+                        "denominator": 1200
+                      },
+                      "timeout": {
+                        "numerator": 18,
+                        "denominator": 1200
+                      }
+                    }
+                  },
+                  "mixed": {
+                    "considered": 106,
+                    "attempted": 106,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 106,
+                    "busy": 0,
+                    "timeout": 1,
+                    "outcomes": {
+                      "absent": {
+                        "numerator": 105,
+                        "denominator": 106
+                      },
+                      "timeout": {
+                        "numerator": 1,
+                        "denominator": 106
+                      }
+                    }
+                  }
+                }
+              },
+              "router-b2": {
+                "considered": 2400,
+                "attempted": 2400,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 2400,
+                "busy": 0,
+                "timeout": 71,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 2329,
+                    "denominator": 2400
+                  },
+                  "timeout": {
+                    "numerator": 71,
+                    "denominator": 2400
+                  }
+                },
+                "byLanguage": {
+                  "ar": {
+                    "considered": 1094,
+                    "attempted": 1094,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 1094,
+                    "busy": 0,
+                    "timeout": 33,
+                    "outcomes": {
+                      "absent": {
+                        "numerator": 1061,
+                        "denominator": 1094
+                      },
+                      "timeout": {
+                        "numerator": 33,
+                        "denominator": 1094
+                      }
+                    }
+                  },
+                  "en": {
+                    "considered": 1200,
+                    "attempted": 1200,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 1200,
+                    "busy": 0,
+                    "timeout": 34,
+                    "outcomes": {
+                      "absent": {
+                        "numerator": 1166,
+                        "denominator": 1200
+                      },
+                      "timeout": {
+                        "numerator": 34,
+                        "denominator": 1200
+                      }
+                    }
+                  },
+                  "mixed": {
+                    "considered": 106,
+                    "attempted": 106,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 106,
+                    "busy": 0,
+                    "timeout": 4,
+                    "outcomes": {
+                      "absent": {
+                        "numerator": 102,
+                        "denominator": 106
+                      },
+                      "timeout": {
+                        "numerator": 4,
+                        "denominator": 106
+                      }
+                    }
+                  }
+                }
+              },
+              "scratch-follow-up": {
+                "considered": 1,
+                "attempted": 1,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 1,
+                "busy": 0,
+                "timeout": 1,
+                "outcomes": {
+                  "timeout": {
+                    "numerator": 1,
+                    "denominator": 1
+                  }
+                },
+                "byLanguage": {
+                  "en": {
+                    "considered": 1,
+                    "attempted": 1,
+                    "compared": 0,
+                    "disagreements": 0,
+                    "fallbacks": 1,
+                    "busy": 0,
+                    "timeout": 1,
+                    "outcomes": {
+                      "timeout": {
+                        "numerator": 1,
+                        "denominator": 1
+                      }
+                    }
+                  }
+                }
+              },
+              "scratch-refusal": {
+                "considered": 2400,
+                "attempted": 2400,
+                "compared": 1025,
+                "disagreements": 699,
+                "fallbacks": 1375,
+                "busy": 0,
+                "timeout": 313,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 1062,
+                    "denominator": 2400
+                  },
+                  "ok": {
+                    "numerator": 1025,
+                    "denominator": 2400
+                  },
+                  "timeout": {
+                    "numerator": 313,
+                    "denominator": 2400
+                  }
+                },
+                "byLanguage": {
+                  "ar": {
+                    "considered": 1094,
+                    "attempted": 1094,
+                    "compared": 255,
+                    "disagreements": 181,
+                    "fallbacks": 839,
+                    "busy": 0,
+                    "timeout": 151,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 688,
+                        "denominator": 1094
+                      },
+                      "ok": {
+                        "numerator": 255,
+                        "denominator": 1094
+                      },
+                      "timeout": {
+                        "numerator": 151,
+                        "denominator": 1094
+                      }
+                    }
+                  },
+                  "en": {
+                    "considered": 1200,
+                    "attempted": 1200,
+                    "compared": 722,
+                    "disagreements": 496,
+                    "fallbacks": 478,
+                    "busy": 0,
+                    "timeout": 144,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 334,
+                        "denominator": 1200
+                      },
+                      "ok": {
+                        "numerator": 722,
+                        "denominator": 1200
+                      },
+                      "timeout": {
+                        "numerator": 144,
+                        "denominator": 1200
+                      }
+                    }
+                  },
+                  "mixed": {
+                    "considered": 106,
+                    "attempted": 106,
+                    "compared": 48,
+                    "disagreements": 22,
+                    "fallbacks": 58,
+                    "busy": 0,
+                    "timeout": 18,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 40,
+                        "denominator": 106
+                      },
+                      "ok": {
+                        "numerator": 48,
+                        "denominator": 106
+                      },
+                      "timeout": {
+                        "numerator": 18,
+                        "denominator": 106
+                      }
+                    }
+                  }
+                }
+              },
+              "scratch-route": {
+                "considered": 2400,
+                "attempted": 2400,
+                "compared": 1190,
+                "disagreements": 610,
+                "fallbacks": 1210,
+                "busy": 0,
+                "timeout": 382,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 828,
+                    "denominator": 2400
+                  },
+                  "ok": {
+                    "numerator": 1190,
+                    "denominator": 2400
+                  },
+                  "timeout": {
+                    "numerator": 382,
+                    "denominator": 2400
+                  }
+                },
+                "byLanguage": {
+                  "ar": {
+                    "considered": 1094,
+                    "attempted": 1094,
+                    "compared": 444,
+                    "disagreements": 205,
+                    "fallbacks": 650,
+                    "busy": 0,
+                    "timeout": 192,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 458,
+                        "denominator": 1094
+                      },
+                      "ok": {
+                        "numerator": 444,
+                        "denominator": 1094
+                      },
+                      "timeout": {
+                        "numerator": 192,
+                        "denominator": 1094
+                      }
+                    }
+                  },
+                  "en": {
+                    "considered": 1200,
+                    "attempted": 1200,
+                    "compared": 690,
+                    "disagreements": 383,
+                    "fallbacks": 510,
+                    "busy": 0,
+                    "timeout": 167,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 343,
+                        "denominator": 1200
+                      },
+                      "ok": {
+                        "numerator": 690,
+                        "denominator": 1200
+                      },
+                      "timeout": {
+                        "numerator": 167,
+                        "denominator": 1200
+                      }
+                    }
+                  },
+                  "mixed": {
+                    "considered": 106,
+                    "attempted": 106,
+                    "compared": 56,
+                    "disagreements": 22,
+                    "fallbacks": 50,
+                    "busy": 0,
+                    "timeout": 23,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 27,
+                        "denominator": 106
+                      },
+                      "ok": {
+                        "numerator": 56,
+                        "denominator": 106
+                      },
+                      "timeout": {
+                        "numerator": 23,
+                        "denominator": 106
+                      }
+                    }
+                  }
+                }
+              },
+              "scratch-speech-act": {
+                "considered": 2400,
+                "attempted": 2400,
+                "compared": 2196,
+                "disagreements": 2,
+                "fallbacks": 204,
+                "busy": 0,
+                "timeout": 197,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 7,
+                    "denominator": 2400
+                  },
+                  "ok": {
+                    "numerator": 2196,
+                    "denominator": 2400
+                  },
+                  "timeout": {
+                    "numerator": 197,
+                    "denominator": 2400
+                  }
+                },
+                "byLanguage": {
+                  "ar": {
+                    "considered": 1094,
+                    "attempted": 1094,
+                    "compared": 996,
+                    "disagreements": 0,
+                    "fallbacks": 98,
+                    "busy": 0,
+                    "timeout": 98,
+                    "outcomes": {
+                      "ok": {
+                        "numerator": 996,
+                        "denominator": 1094
+                      },
+                      "timeout": {
+                        "numerator": 98,
+                        "denominator": 1094
+                      }
+                    }
+                  },
+                  "en": {
+                    "considered": 1200,
+                    "attempted": 1200,
+                    "compared": 1105,
+                    "disagreements": 2,
+                    "fallbacks": 95,
+                    "busy": 0,
+                    "timeout": 88,
+                    "outcomes": {
+                      "abstained": {
+                        "numerator": 7,
+                        "denominator": 1200
+                      },
+                      "ok": {
+                        "numerator": 1105,
+                        "denominator": 1200
+                      },
+                      "timeout": {
+                        "numerator": 88,
+                        "denominator": 1200
+                      }
+                    }
+                  },
+                  "mixed": {
+                    "considered": 106,
+                    "attempted": 106,
+                    "compared": 95,
+                    "disagreements": 0,
+                    "fallbacks": 11,
+                    "busy": 0,
+                    "timeout": 11,
+                    "outcomes": {
+                      "ok": {
+                        "numerator": 95,
+                        "denominator": 106
+                      },
+                      "timeout": {
+                        "numerator": 11,
+                        "denominator": 106
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "combinedShadow": {
+        "turns": 2679,
+        "turnsByLanguage": {
+          "ar": 1179,
+          "en": 1326,
+          "mixed": 174,
+          "unknown": 0
+        },
+        "models": {
+          "arithmetic": {
+            "considered": 272,
+            "attempted": 272,
+            "compared": 0,
+            "disagreements": 0,
+            "fallbacks": 272,
+            "busy": 0,
+            "timeout": 25,
+            "outcomes": {
+              "abstained": {
+                "numerator": 238,
+                "denominator": 272
+              },
+              "timeout": {
+                "numerator": 25,
+                "denominator": 272
+              },
+              "unhealthy": {
+                "numerator": 9,
+                "denominator": 272
+              }
+            },
+            "byLanguage": {
+              "ar": {
+                "considered": 18,
+                "attempted": 18,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 18,
+                "busy": 0,
+                "timeout": 0,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 18,
+                    "denominator": 18
+                  }
+                }
+              },
+              "en": {
+                "considered": 251,
+                "attempted": 251,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 251,
+                "busy": 0,
+                "timeout": 25,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 217,
+                    "denominator": 251
+                  },
+                  "timeout": {
+                    "numerator": 25,
+                    "denominator": 251
+                  },
+                  "unhealthy": {
+                    "numerator": 9,
+                    "denominator": 251
+                  }
+                }
+              },
+              "mixed": {
+                "considered": 3,
+                "attempted": 3,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 3,
+                "busy": 0,
+                "timeout": 0,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 3,
+                    "denominator": 3
+                  }
+                }
+              }
+            }
+          },
+          "head-answer-sentence": {
+            "considered": 368,
+            "attempted": 368,
+            "compared": 0,
+            "disagreements": 0,
+            "fallbacks": 368,
+            "busy": 0,
+            "timeout": 0,
+            "outcomes": {
+              "absent": {
+                "numerator": 368,
+                "denominator": 368
+              }
+            },
+            "byLanguage": {
+              "ar": {
+                "considered": 240,
+                "attempted": 240,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 240,
+                "busy": 0,
+                "timeout": 0,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 240,
+                    "denominator": 240
+                  }
+                }
+              },
+              "en": {
+                "considered": 116,
+                "attempted": 116,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 116,
+                "busy": 0,
+                "timeout": 0,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 116,
+                    "denominator": 116
+                  }
+                }
+              },
+              "mixed": {
+                "considered": 12,
+                "attempted": 12,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 12,
+                "busy": 0,
+                "timeout": 0,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 12,
+                    "denominator": 12
+                  }
+                }
+              }
+            }
+          },
+          "head-sufficiency": {
+            "considered": 1251,
+            "attempted": 1251,
+            "compared": 0,
+            "disagreements": 0,
+            "fallbacks": 1251,
+            "busy": 0,
+            "timeout": 0,
+            "outcomes": {
+              "absent": {
+                "numerator": 1251,
+                "denominator": 1251
+              }
+            },
+            "byLanguage": {
+              "ar": {
+                "considered": 936,
+                "attempted": 936,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 936,
+                "busy": 0,
+                "timeout": 0,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 936,
+                    "denominator": 936
+                  }
+                }
+              },
+              "en": {
+                "considered": 245,
+                "attempted": 245,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 245,
+                "busy": 0,
+                "timeout": 0,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 245,
+                    "denominator": 245
+                  }
+                }
+              },
+              "mixed": {
+                "considered": 70,
+                "attempted": 70,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 70,
+                "busy": 0,
+                "timeout": 0,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 70,
+                    "denominator": 70
+                  }
+                }
+              }
+            }
+          },
+          "question-edit": {
+            "considered": 2,
+            "attempted": 2,
+            "compared": 0,
+            "disagreements": 0,
+            "fallbacks": 2,
+            "busy": 0,
+            "timeout": 0,
+            "outcomes": {
+              "absent": {
+                "numerator": 2,
+                "denominator": 2
+              }
+            },
+            "byLanguage": {
+              "en": {
+                "considered": 2,
+                "attempted": 2,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 2,
+                "busy": 0,
+                "timeout": 0,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 2,
+                    "denominator": 2
+                  }
+                }
+              }
+            }
+          },
+          "refusal": {
+            "considered": 2679,
+            "attempted": 2679,
+            "compared": 2260,
+            "disagreements": 739,
+            "fallbacks": 419,
+            "busy": 0,
+            "timeout": 19,
+            "outcomes": {
+              "abstained": {
+                "numerator": 400,
+                "denominator": 2679
+              },
+              "ok": {
+                "numerator": 2260,
+                "denominator": 2679
+              },
+              "timeout": {
+                "numerator": 19,
+                "denominator": 2679
+              }
+            },
+            "byLanguage": {
+              "ar": {
+                "considered": 1179,
+                "attempted": 1179,
+                "compared": 1142,
+                "disagreements": 116,
+                "fallbacks": 37,
+                "busy": 0,
+                "timeout": 8,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 29,
+                    "denominator": 1179
+                  },
+                  "ok": {
+                    "numerator": 1142,
+                    "denominator": 1179
+                  },
+                  "timeout": {
+                    "numerator": 8,
+                    "denominator": 1179
+                  }
+                }
+              },
+              "en": {
+                "considered": 1326,
+                "attempted": 1326,
+                "compared": 975,
+                "disagreements": 580,
+                "fallbacks": 351,
+                "busy": 0,
+                "timeout": 11,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 340,
+                    "denominator": 1326
+                  },
+                  "ok": {
+                    "numerator": 975,
+                    "denominator": 1326
+                  },
+                  "timeout": {
+                    "numerator": 11,
+                    "denominator": 1326
+                  }
+                }
+              },
+              "mixed": {
+                "considered": 174,
+                "attempted": 174,
+                "compared": 143,
+                "disagreements": 43,
+                "fallbacks": 31,
+                "busy": 0,
+                "timeout": 0,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 31,
+                    "denominator": 174
+                  },
+                  "ok": {
+                    "numerator": 143,
+                    "denominator": 174
+                  }
+                }
+              }
+            }
+          },
+          "router-b0": {
+            "considered": 2679,
+            "attempted": 2679,
+            "compared": 0,
+            "disagreements": 0,
+            "fallbacks": 2679,
+            "busy": 0,
+            "timeout": 49,
+            "outcomes": {
+              "absent": {
+                "numerator": 2630,
+                "denominator": 2679
+              },
+              "timeout": {
+                "numerator": 49,
+                "denominator": 2679
+              }
+            },
+            "byLanguage": {
+              "ar": {
+                "considered": 1179,
+                "attempted": 1179,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 1179,
+                "busy": 0,
+                "timeout": 26,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 1153,
+                    "denominator": 1179
+                  },
+                  "timeout": {
+                    "numerator": 26,
+                    "denominator": 1179
+                  }
+                }
+              },
+              "en": {
+                "considered": 1326,
+                "attempted": 1326,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 1326,
+                "busy": 0,
+                "timeout": 21,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 1305,
+                    "denominator": 1326
+                  },
+                  "timeout": {
+                    "numerator": 21,
+                    "denominator": 1326
+                  }
+                }
+              },
+              "mixed": {
+                "considered": 174,
+                "attempted": 174,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 174,
+                "busy": 0,
+                "timeout": 2,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 172,
+                    "denominator": 174
+                  },
+                  "timeout": {
+                    "numerator": 2,
+                    "denominator": 174
+                  }
+                }
+              }
+            }
+          },
+          "router-b2": {
+            "considered": 2679,
+            "attempted": 2679,
+            "compared": 0,
+            "disagreements": 0,
+            "fallbacks": 2679,
+            "busy": 0,
+            "timeout": 171,
+            "outcomes": {
+              "absent": {
+                "numerator": 2508,
+                "denominator": 2679
+              },
+              "timeout": {
+                "numerator": 171,
+                "denominator": 2679
+              }
+            },
+            "byLanguage": {
+              "ar": {
+                "considered": 1179,
+                "attempted": 1179,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 1179,
+                "busy": 0,
+                "timeout": 62,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 1117,
+                    "denominator": 1179
+                  },
+                  "timeout": {
+                    "numerator": 62,
+                    "denominator": 1179
+                  }
+                }
+              },
+              "en": {
+                "considered": 1326,
+                "attempted": 1326,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 1326,
+                "busy": 0,
+                "timeout": 82,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 1244,
+                    "denominator": 1326
+                  },
+                  "timeout": {
+                    "numerator": 82,
+                    "denominator": 1326
+                  }
+                }
+              },
+              "mixed": {
+                "considered": 174,
+                "attempted": 174,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 174,
+                "busy": 0,
+                "timeout": 27,
+                "outcomes": {
+                  "absent": {
+                    "numerator": 147,
+                    "denominator": 174
+                  },
+                  "timeout": {
+                    "numerator": 27,
+                    "denominator": 174
+                  }
+                }
+              }
+            }
+          },
+          "scratch-follow-up": {
+            "considered": 24,
+            "attempted": 24,
+            "compared": 1,
+            "disagreements": 0,
+            "fallbacks": 23,
+            "busy": 0,
+            "timeout": 21,
+            "outcomes": {
+              "abstained": {
+                "numerator": 2,
+                "denominator": 24
+              },
+              "ok": {
+                "numerator": 1,
+                "denominator": 24
+              },
+              "timeout": {
+                "numerator": 21,
+                "denominator": 24
+              }
+            },
+            "byLanguage": {
+              "ar": {
+                "considered": 8,
+                "attempted": 8,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 8,
+                "busy": 0,
+                "timeout": 8,
+                "outcomes": {
+                  "timeout": {
+                    "numerator": 8,
+                    "denominator": 8
+                  }
+                }
+              },
+              "en": {
+                "considered": 12,
+                "attempted": 12,
+                "compared": 1,
+                "disagreements": 0,
+                "fallbacks": 11,
+                "busy": 0,
+                "timeout": 10,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 1,
+                    "denominator": 12
+                  },
+                  "ok": {
+                    "numerator": 1,
+                    "denominator": 12
+                  },
+                  "timeout": {
+                    "numerator": 10,
+                    "denominator": 12
+                  }
+                }
+              },
+              "mixed": {
+                "considered": 4,
+                "attempted": 4,
+                "compared": 0,
+                "disagreements": 0,
+                "fallbacks": 4,
+                "busy": 0,
+                "timeout": 3,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 1,
+                    "denominator": 4
+                  },
+                  "timeout": {
+                    "numerator": 3,
+                    "denominator": 4
+                  }
+                }
+              }
+            }
+          },
+          "scratch-refusal": {
+            "considered": 2679,
+            "attempted": 2679,
+            "compared": 1091,
+            "disagreements": 726,
+            "fallbacks": 1588,
+            "busy": 0,
+            "timeout": 313,
+            "outcomes": {
+              "abstained": {
+                "numerator": 1275,
+                "denominator": 2679
+              },
+              "ok": {
+                "numerator": 1091,
+                "denominator": 2679
+              },
+              "timeout": {
+                "numerator": 313,
+                "denominator": 2679
+              }
+            },
+            "byLanguage": {
+              "ar": {
+                "considered": 1179,
+                "attempted": 1179,
+                "compared": 273,
+                "disagreements": 191,
+                "fallbacks": 906,
+                "busy": 0,
+                "timeout": 151,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 755,
+                    "denominator": 1179
+                  },
+                  "ok": {
+                    "numerator": 273,
+                    "denominator": 1179
+                  },
+                  "timeout": {
+                    "numerator": 151,
+                    "denominator": 1179
+                  }
+                }
+              },
+              "en": {
+                "considered": 1326,
+                "attempted": 1326,
+                "compared": 756,
+                "disagreements": 508,
+                "fallbacks": 570,
+                "busy": 0,
+                "timeout": 144,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 426,
+                    "denominator": 1326
+                  },
+                  "ok": {
+                    "numerator": 756,
+                    "denominator": 1326
+                  },
+                  "timeout": {
+                    "numerator": 144,
+                    "denominator": 1326
+                  }
+                }
+              },
+              "mixed": {
+                "considered": 174,
+                "attempted": 174,
+                "compared": 62,
+                "disagreements": 27,
+                "fallbacks": 112,
+                "busy": 0,
+                "timeout": 18,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 94,
+                    "denominator": 174
+                  },
+                  "ok": {
+                    "numerator": 62,
+                    "denominator": 174
+                  },
+                  "timeout": {
+                    "numerator": 18,
+                    "denominator": 174
+                  }
+                }
+              }
+            }
+          },
+          "scratch-route": {
+            "considered": 2679,
+            "attempted": 2679,
+            "compared": 1269,
+            "disagreements": 672,
+            "fallbacks": 1410,
+            "busy": 0,
+            "timeout": 522,
+            "outcomes": {
+              "abstained": {
+                "numerator": 888,
+                "denominator": 2679
+              },
+              "ok": {
+                "numerator": 1269,
+                "denominator": 2679
+              },
+              "timeout": {
+                "numerator": 522,
+                "denominator": 2679
+              }
+            },
+            "byLanguage": {
+              "ar": {
+                "considered": 1179,
+                "attempted": 1179,
+                "compared": 461,
+                "disagreements": 221,
+                "fallbacks": 718,
+                "busy": 0,
+                "timeout": 240,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 478,
+                    "denominator": 1179
+                  },
+                  "ok": {
+                    "numerator": 461,
+                    "denominator": 1179
+                  },
+                  "timeout": {
+                    "numerator": 240,
+                    "denominator": 1179
+                  }
+                }
+              },
+              "en": {
+                "considered": 1326,
+                "attempted": 1326,
+                "compared": 724,
+                "disagreements": 403,
+                "fallbacks": 602,
+                "busy": 0,
+                "timeout": 234,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 368,
+                    "denominator": 1326
+                  },
+                  "ok": {
+                    "numerator": 724,
+                    "denominator": 1326
+                  },
+                  "timeout": {
+                    "numerator": 234,
+                    "denominator": 1326
+                  }
+                }
+              },
+              "mixed": {
+                "considered": 174,
+                "attempted": 174,
+                "compared": 84,
+                "disagreements": 48,
+                "fallbacks": 90,
+                "busy": 0,
+                "timeout": 48,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 42,
+                    "denominator": 174
+                  },
+                  "ok": {
+                    "numerator": 84,
+                    "denominator": 174
+                  },
+                  "timeout": {
+                    "numerator": 48,
+                    "denominator": 174
+                  }
+                }
+              }
+            }
+          },
+          "scratch-speech-act": {
+            "considered": 2679,
+            "attempted": 2679,
+            "compared": 2471,
+            "disagreements": 9,
+            "fallbacks": 208,
+            "busy": 0,
+            "timeout": 197,
+            "outcomes": {
+              "abstained": {
+                "numerator": 11,
+                "denominator": 2679
+              },
+              "ok": {
+                "numerator": 2471,
+                "denominator": 2679
+              },
+              "timeout": {
+                "numerator": 197,
+                "denominator": 2679
+              }
+            },
+            "byLanguage": {
+              "ar": {
+                "considered": 1179,
+                "attempted": 1179,
+                "compared": 1079,
+                "disagreements": 5,
+                "fallbacks": 100,
+                "busy": 0,
+                "timeout": 98,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 2,
+                    "denominator": 1179
+                  },
+                  "ok": {
+                    "numerator": 1079,
+                    "denominator": 1179
+                  },
+                  "timeout": {
+                    "numerator": 98,
+                    "denominator": 1179
+                  }
+                }
+              },
+              "en": {
+                "considered": 1326,
+                "attempted": 1326,
+                "compared": 1229,
+                "disagreements": 3,
+                "fallbacks": 97,
+                "busy": 0,
+                "timeout": 88,
+                "outcomes": {
+                  "abstained": {
+                    "numerator": 9,
+                    "denominator": 1326
+                  },
+                  "ok": {
+                    "numerator": 1229,
+                    "denominator": 1326
+                  },
+                  "timeout": {
+                    "numerator": 88,
+                    "denominator": 1326
+                  }
+                }
+              },
+              "mixed": {
+                "considered": 174,
+                "attempted": 174,
+                "compared": 163,
+                "disagreements": 1,
+                "fallbacks": 11,
+                "busy": 0,
+                "timeout": 11,
+                "outcomes": {
+                  "ok": {
+                    "numerator": 163,
+                    "denominator": 174
+                  },
+                  "timeout": {
+                    "numerator": 11,
+                    "denominator": 174
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
