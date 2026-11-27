@@ -2,20 +2,26 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { sql } from 'kysely';
+import { SelectQueryNode, TableNode, sql } from 'kysely';
 import sharp from 'sharp';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentBrowser } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
 import { describeDesktopCommand, parseDesktopCommand } from '@mohassan/desktop';
 import { createJudgeShadow, type JudgeShadowLine } from '../apps/server/src/assistant/judge-shadow.js';
-import { SUMMARY_MIN_MESSAGES } from '../apps/server/src/assistant/review/ledger.js';
+import { reviewReply } from '../apps/server/src/assistant/review/checks.js';
+import { buildConversationLedger, buildConversationSummary, splitRequest, SUMMARY_MIN_MESSAGES, type ConversationSummary, type ReviewMessage } from '../apps/server/src/assistant/review/ledger.js';
+import { REVIEW_MESSAGE_WINDOW, reviewJudgedReply } from '../apps/server/src/assistant/review/publication.js';
 import { createCommandChatControl, type CommandChatConfig } from '../apps/server/src/command-chat.js';
+import { developmentConversations } from '../scripts/conversation-review/dev-conversations.js';
 
 const owner = 'conversation-publication-test-owner';
 const request = 'ما النوافذ المفتوحة؟';
 const draft = 'Hello, Shivawn! The catalogue is ready.';
 const preference = 'My name is Siobhán, not Shivawn.';
+const acknowledgment = 'Understood.';
+const thanks = 'Thanks.';
+const fixtures = new Map(developmentConversations().map(fixture => [fixture.id, fixture]));
 const source = {
   url: 'https://reviewer-fixtures.test/france', title: 'فرنسا',
   text: 'فرنسا دولة في أوروبا الغربية، عاصمتها باريس وهي أكبر مدنها وأهمها.\nيبلغ عدد سكان فرنسا نحو 68 مليون نسمة حسب تقديرات سنة 2025.',
@@ -84,7 +90,7 @@ describe('conversation review at chat publication', () => {
     await database.db.insertInto('chat_messages').values(Array.from({ length: count }, (_, index) => ({
       id: randomUUID(), conversation_id: conversationId, created_at: new Date(Date.UTC(2024, 0, 1, 0, index)),
       role: index % 2 ? 'assistant' : 'user',
-      text: index === 0 ? preference : index % 2 ? 'Understood.' : 'Thanks.',
+      text: index === 0 ? preference : index % 2 ? acknowledgment : thanks,
     }))).execute();
   }
 
@@ -96,6 +102,63 @@ describe('conversation review at chat publication', () => {
     });
     return log.trim().split('\n').filter(Boolean)
       .map(line => JSON.parse(line) as JudgeShadowLine).filter(line => line.conversationId === id);
+  }
+
+  async function reviewFixture(candidate: string, beforeFence?: (id: string) => Promise<void>) {
+    const { id } = await shadow.create(owner);
+    const runId = randomUUID();
+    const reads = new WeakSet<object>();
+    let rowsRead = 0;
+    const db = database.db.withPlugin({
+      transformQuery({ node, queryId }) {
+        if (SelectQueryNode.is(node) && node.from?.froms.some(from => TableNode.is(from) && from.table.identifier.name === 'chat_messages')) {
+          reads.add(queryId);
+        }
+        return node;
+      },
+      async transformResult({ result, queryId }) {
+        if (reads.has(queryId)) rowsRead += result.rows.length;
+        return result;
+      },
+    });
+    const context = { id, runId, db, allowApply: true, clean: (text: string) => text };
+    const options = { status: 'completed' };
+    async function publish(question: string, reply = candidate) {
+      const before = rowsRead;
+      const published = await reviewJudgedReply(async work => {
+        await beforeFence?.(id);
+        return db.transaction().execute(work);
+      }, context, () => {
+        judge.observe({ conversationId: id, runId, question, reply, ...options });
+        return { text: reply, withheld: false };
+      });
+      return { published, rowsRead: rowsRead - before };
+    }
+    return {
+      id, publish,
+      async expectFullReview(messages: ReviewMessage[], summary?: ConversationSummary, reply = candidate) {
+        const expected = reviewReply(buildConversationLedger(messages, summary), reply, options);
+        const result = await publish(messages.at(-1)!.content, reply);
+        expect(result.published.text).toBe(expected.reply);
+        expect((await judgeLines(id)).at(-1)?.conversationReview).toMatchObject({
+          action: expected.action, findings: expected.findings, applied: expected.reply !== reply,
+        });
+        return { ...result, expected };
+      },
+    };
+  }
+
+  function messageRows(id: string, messages: readonly ReviewMessage[], offset = 0) {
+    return messages.map((message, index) => ({
+      id: message.id ?? `${id}-${String(offset + index).padStart(5, '0')}`,
+      conversation_id: id, role: message.role, text: message.content,
+      created_at: new Date(Date.UTC(2024, 0, 1, 0, Math.floor((offset + index + 1) / 2))),
+    }));
+  }
+
+  function filler(length: number): ReviewMessage[] {
+    return Array.from({ length }, (_, index) => (length - index) % 2 === 0
+      ? { role: 'user', content: thanks } : { role: 'assistant', content: acknowledgment });
   }
 
   async function last(id: string) {
@@ -135,6 +198,171 @@ describe('conversation review at chat publication', () => {
         throughMessageId: conversation.messages.at(-2)!.id,
         preferences: expect.arrayContaining([expect.objectContaining({ kind: 'name', value: 'Siobhán' })]) });
     }
+  });
+
+  it.each([
+    { fixtureId: 'en-library-contradiction-issue', count: 500, keepFinalTurn: false },
+    { fixtureId: 'en-library-commitments-issue', count: 500, keepFinalTurn: false },
+    { fixtureId: 'ar-library-corrections-issue', count: 500, keepFinalTurn: true },
+    { fixtureId: 'en-library-repetition-issue', count: 500, keepFinalTurn: true },
+    { fixtureId: 'en-cafeteria-preferences-issue', count: 2_000, keepFinalTurn: false },
+  ])('preserves old evidence for $fixtureId in $count messages', async ({ fixtureId, count, keepFinalTurn }) => {
+    vi.stubEnv('MOHASSAN_CONVERSATION_REVIEW_APPLY', '1');
+    const fixture = fixtures.get(fixtureId)!;
+    const earlier = keepFinalTurn ? fixture.messages : fixture.messages.slice(0, -1);
+    const finalQuestion = keepFinalTurn ? thanks : fixture.messages.at(-1)!.content;
+    const review = await reviewFixture(fixture.draft);
+    const messages = [
+      ...earlier.map(({ role, content }) => ({ role, content })),
+      ...filler(count - earlier.length - 1),
+      { role: 'user', content: finalQuestion },
+    ] satisfies ReviewMessage[];
+    const rows = messageRows(review.id, messages);
+    const full = messages.map((message, index) => ({ ...message, id: rows[index]!.id }));
+    const prior = full.slice(0, -2);
+    const legacySummary = buildConversationSummary(buildConversationLedger(prior));
+    await database.db.updateTable('chat_conversations').set({ review_summary: JSON.stringify(legacySummary) }).where('id', '=', review.id).execute();
+    await database.db.insertInto('chat_messages').values(rows.slice(0, -2)).execute();
+    await review.publish(prior.at(-1)!.content);
+    await database.db.insertInto('chat_messages').values(rows.slice(-2)).execute();
+    const { expected, rowsRead } = await review.expectFullReview(full, legacySummary);
+    expect(expected.findings.map(finding => finding.check)).toEqual(expect.arrayContaining(fixture.expected));
+    const recentOnly = reviewReply(buildConversationLedger(full.slice(-REVIEW_MESSAGE_WINDOW)), fixture.draft, { status: 'completed' });
+    for (const check of fixture.expected) expect(recentOnly.findings).not.toContainEqual(expect.objectContaining({ check }));
+    expect(rowsRead).toBeGreaterThan(0);
+    expect(rowsRead).toBeLessThanOrEqual(REVIEW_MESSAGE_WINDOW);
+  });
+
+  it('reopens old requests when a new turn rejects the checkpointed answer', async () => {
+    vi.stubEnv('MOHASSAN_CONVERSATION_REVIEW_APPLY', '1');
+    const coverage = fixtures.get('en-library-coverage-clean')!;
+    const questions = splitRequest(coverage.messages.at(-1)!.content);
+    const feedback = fixtures.get('en-library-repetition-issue')!.messages.at(-1)!.content;
+    const review = await reviewFixture(coverage.draft);
+    const initial = [
+      ...filler(500 - questions.length - 1),
+      ...questions.map(({ text }) => ({ role: 'user' as const, content: text })),
+      { role: 'assistant', content: coverage.draft },
+    ] satisfies ReviewMessage[];
+    const rows = messageRows(review.id, initial);
+    const prior = initial.map((message, index) => ({ ...message, id: rows[index]!.id }));
+    const priorLedger = buildConversationLedger(prior);
+    const priorSummary = buildConversationSummary(priorLedger);
+    expect(priorSummary.openRequests).toEqual([]);
+    await database.db.insertInto('chat_messages').values(rows).execute();
+    await review.publish(questions.at(-1)!.text);
+
+    const [row] = messageRows(review.id, [{ role: 'user', content: feedback }], prior.length);
+    await database.db.insertInto('chat_messages').values(row!).execute();
+    const full = [...prior, { id: row!.id, role: 'user' as const, content: feedback }];
+    const { expected } = await review.expectFullReview(full, priorSummary);
+    expect(expected.findings).toContainEqual(expect.objectContaining({ check: 'repetition' }));
+    const restoredSummary = buildConversationSummary(buildConversationLedger(full, priorSummary));
+    expect(restoredSummary.openRequests).toEqual(expect.arrayContaining(priorLedger.requests));
+    const { review_summary } = await database.db.selectFrom('chat_conversations').select('review_summary')
+      .where('id', '=', review.id).executeTakeFirstOrThrow();
+    expect(review_summary.openRequests).toEqual(restoredSummary.openRequests);
+
+    const continuation = [
+      { role: 'assistant', content: acknowledgment },
+      // Reuse the explicit continuation from conversation-review-checks.test.ts.
+      { role: 'user', content: 'Please continue.' },
+    ] satisfies ReviewMessage[];
+    const continuedRows = messageRows(review.id, continuation, full.length);
+    await database.db.insertInto('chat_messages').values(continuedRows).execute();
+    const continued = [...full, ...continuation.map((message, index) => ({ ...message, id: continuedRows[index]!.id }))];
+    const addressOnly = fixtures.get('en-library-coverage-issue')!.draft;
+    const partial = coverage.draft.slice(addressOnly.length).trim();
+    const { expected: next } = await review.expectFullReview(continued, restoredSummary, partial);
+    expect(next.findings).toContainEqual(expect.objectContaining({ check: 'coverage' }));
+    expect(next.reply).toContain(priorLedger.requests[0]!.text);
+  });
+
+  it('compacts a full tail and preserves its evidence in the next bounded review', async () => {
+    vi.stubEnv('MOHASSAN_CONVERSATION_REVIEW_APPLY', '1');
+    const fixture = fixtures.get('en-library-contradiction-issue')!;
+    const language = fixtures.get('ar-gallery-preferences-issue')!.messages[0]!;
+    const question = { role: 'user', content: fixture.messages.at(-1)!.content } satisfies ReviewMessage;
+    const review = await reviewFixture(fixture.draft);
+    const history: ReviewMessage[] = [];
+    let prior: ConversationSummary | undefined;
+
+    async function publishAfter(messages: ReviewMessage[]) {
+      const rows = messageRows(review.id, messages, history.length);
+      await database.db.insertInto('chat_messages').values(rows).execute();
+      history.push(...messages.map((message, index) => ({ ...message, id: rows[index]!.id })));
+      const result = await review.expectFullReview(history, prior);
+      prior = buildConversationSummary(buildConversationLedger(history, prior));
+      const { review_summary } = await database.db.selectFrom('chat_conversations').select('review_summary')
+        .where('id', '=', review.id).executeTakeFirstOrThrow();
+      expect(review_summary).toMatchObject(prior);
+      return { ...result, checkpoint: review_summary.checkpoint };
+    }
+
+    const prefixLength = 2_000 - REVIEW_MESSAGE_WINDOW - 2;
+    const prefix = await publishAfter([{ role: language.role, content: language.content }, ...filler(prefixLength - 2), question]);
+    const claim = fixture.messages[1]!;
+    const buffered = await publishAfter([
+      { role: claim.role, content: claim.content }, ...filler(REVIEW_MESSAGE_WINDOW - 4), question,
+    ]);
+    expect(buffered.checkpoint.data).toBe(prefix.checkpoint.data);
+    expect(buffered.checkpoint.cursor).toEqual(prefix.checkpoint.cursor);
+
+    const nextTurn = [{ role: 'assistant', content: acknowledgment }, question] satisfies ReviewMessage[];
+    const compacted = await publishAfter(nextTurn);
+    expect(compacted.checkpoint.data).not.toBe(prefix.checkpoint.data);
+    expect(compacted.checkpoint.cursor.id).toBe(history.at(-1)!.id);
+
+    const warm = await publishAfter(nextTurn);
+    expect(history).toHaveLength(2_000);
+    expect(warm.expected.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ check: 'contradiction' }), expect.objectContaining({ code: 'reply_language' }),
+    ]));
+    expect(warm.checkpoint.data).toBe(compacted.checkpoint.data);
+    expect(warm.checkpoint.cursor).toEqual(compacted.checkpoint.cursor);
+    expect(warm.rowsRead).toBeGreaterThan(0);
+    expect(warm.rowsRead).toBeLessThanOrEqual(REVIEW_MESSAGE_WINDOW);
+  });
+
+  it('rebuilds a checkpoint when a newly stored message sorts before it', async () => {
+    vi.stubEnv('MOHASSAN_CONVERSATION_REVIEW_APPLY', '1');
+    const fixture = fixtures.get('en-cafeteria-preferences-issue')!;
+    const requestedLanguage = fixtures.get('ar-gallery-preferences-issue')!.messages[0]!;
+    const review = await reviewFixture(fixture.draft);
+    const question = fixture.messages.at(-1)!;
+    const initial = [...filler(499), { role: question.role, content: question.content }];
+    const rows = messageRows(review.id, initial);
+    await database.db.insertInto('chat_messages').values(rows).execute();
+    const prior = initial.map((message, index) => ({ ...message, id: rows[index]!.id }));
+    const { expected: before } = await review.expectFullReview(prior);
+
+    const backdated = { ...requestedLanguage, id: `${rows[0]!.id}-backdated` };
+    await database.db.insertInto('chat_messages').values(messageRows(review.id, [backdated])).execute();
+    const full = [...prior.slice(0, 1), backdated, ...prior.slice(1)];
+    const { expected: after } = await review.expectFullReview(full);
+    expect(before.findings).not.toContainEqual(expect.objectContaining({ code: 'reply_language' }));
+    expect(after.findings).toContainEqual(expect.objectContaining({ code: 'reply_language' }));
+  });
+
+  it('retries when the conversation changes between preparation and the fence', async () => {
+    vi.stubEnv('MOHASSAN_CONVERSATION_REVIEW_APPLY', '1');
+    const fixture = fixtures.get('en-cafeteria-preferences-issue')!;
+    const requestedLanguage = fixtures.get('ar-gallery-preferences-issue')!.messages[0]!;
+    let fences = 0;
+    const review = await reviewFixture(fixture.draft, async id => {
+      if (++fences !== 1) return;
+      await database.db.transaction().execute(async tx => {
+        await tx.insertInto('chat_messages').values(messageRows(id, [requestedLanguage])).execute();
+        await tx.updateTable('chat_conversations').set({ updated_at: new Date() }).where('id', '=', id).execute();
+      });
+    });
+    const initial = [...filler(SUMMARY_MIN_MESSAGES), fixture.messages.at(-1)!];
+    const rows = messageRows(review.id, initial, 1);
+    await database.db.insertInto('chat_messages').values(rows).execute();
+    const full = [requestedLanguage, ...initial.map((message, index) => ({ ...message, id: rows[index]!.id }))];
+    const { expected } = await review.expectFullReview(full);
+    expect(expected.findings).toContainEqual(expect.objectContaining({ code: 'reply_language' }));
+    expect(fences).toBe(2);
   });
 
   it('leaves waiting replies and approval prompts on the existing judge path', async () => {

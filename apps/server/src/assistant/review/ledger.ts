@@ -32,6 +32,14 @@ export interface ConversationLedger {
   preferences: Preference[];
   rejectedAnswers: RejectedAnswer[];
   summary?: ConversationSummary;
+  /** Absolute indices are unchanged when publication retains only a suffix. */
+  messageOffset?: number;
+  currentRequest?: string;
+  fullOpenRequests?: RequestPart[];
+  archivedClaims?: {
+    forSubject(subject: string): readonly Claim[];
+    decisions: readonly Claim[];
+  };
 }
 
 export interface ConversationSummary {
@@ -65,16 +73,39 @@ function cancelledByUser(commitment: Commitment, userText: string): boolean {
 }
 
 export function buildConversationLedger(messages: readonly ReviewMessage[], summary?: ConversationSummary): ConversationLedger {
-  const ledger: ConversationLedger = {
+  const ledger = emptyLedger(messages);
+  extendLedger(ledger, messages, 0, {});
+  // Stored summaries may lag by a turn. Accept only one tied to a retained
+  // message so a reset, deleted transcript, or another conversation cannot seed retrieval.
+  if (summary && validSummary(summary, messages)) ledger.summary = summary;
+  return ledger;
+}
+
+export function emptyLedger(messages: readonly ReviewMessage[]): ConversationLedger {
+  return {
     messages, currentRequestIndex: -1, requests: [], claims: [], userClaims: [], commitments: [],
     corrections: [], preferences: [], rejectedAnswers: [],
   };
-  const preferences = new Map<string, Preference>();
-  let latestAssistantIndex = -1;
-  let latestRejectedIndex = -1;
-  messages.forEach(({ role, content }, index) => {
+}
+
+export interface LedgerProgress {
+  latestAssistant?: { messageIndex: number; content: string };
+  /** Requests before the latest assistant answer, plus any later user requests. */
+  beforeLatestAnswer?: RequestPart[];
+}
+
+export function extendLedger(ledger: ConversationLedger, messages: readonly ReviewMessage[], offset: number, progress: LedgerProgress): void {
+  const preferences = new Map(ledger.preferences.map(preference => [preferenceKey(preference), preference]));
+  let latestRejectedIndex = ledger.rejectedAnswers.at(-1)?.answerIndex ?? -1;
+  messages.forEach(({ role, content }, localIndex) => {
+    const index = offset + localIndex;
     if (role === 'assistant') {
-      latestAssistantIndex = index;
+      progress.latestAssistant = { messageIndex: index, content };
+      if (ledger.fullOpenRequests) {
+        const before = ledger.fullOpenRequests;
+        ledger.fullOpenRequests = afterAnswer(before, content);
+        progress.beforeLatestAnswer = ledger.fullOpenRequests.length === before.length ? undefined : before;
+      }
       ledger.claims.push(...extractClaims(content, index));
       ledger.commitments = ledger.commitments.filter(item => commitmentDisposition(item, content) !== 'kept');
       for (const promise of extractCommitments(content, index)) {
@@ -84,10 +115,13 @@ export function buildConversationLedger(messages: readonly ReviewMessage[], summ
       return;
     }
     ledger.currentRequestIndex = index;
+    if (ledger.messageOffset !== undefined) ledger.currentRequest = content;
     ledger.userClaims.push(...extractClaims(content, index));
-    const lastAnswer = messages[latestAssistantIndex]?.content;
+    const lastAnswer = progress.latestAssistant?.content;
+    const latestAssistantIndex = progress.latestAssistant?.messageIndex ?? -1;
     const corrections = extractCorrections(content, index, lastAnswer);
     const userPreferences = extractPreferences(content, index);
+    const firstNewRequest = ledger.requests.length;
     for (const part of splitRequest(content, index)) {
       const partKey = normalizeReviewText(part.text);
       const wholeTurn = part.text === content.trim();
@@ -100,6 +134,15 @@ export function buildConversationLedger(messages: readonly ReviewMessage[], summ
     if (lastAnswer && latestRejectedIndex !== latestAssistantIndex && (rejectsAnswer(content) || corrections.some(item => item.before))) {
       ledger.rejectedAnswers.push({ text: lastAnswer, messageIndex: index, answerIndex: latestAssistantIndex, feedback: content });
       latestRejectedIndex = latestAssistantIndex;
+      if (progress.beforeLatestAnswer) {
+        ledger.fullOpenRequests = progress.beforeLatestAnswer;
+        progress.beforeLatestAnswer = undefined;
+      }
+    }
+    if (ledger.fullOpenRequests && ledger.requests.length > firstNewRequest) {
+      const added = ledger.requests.slice(firstNewRequest);
+      ledger.fullOpenRequests.push(...added);
+      progress.beforeLatestAnswer?.push(...added);
     }
     for (const preference of userPreferences) {
       const key = preferenceKey(preference);
@@ -112,14 +155,9 @@ export function buildConversationLedger(messages: readonly ReviewMessage[], summ
     ledger.commitments = ledger.commitments.filter(item => !cancelledByUser(item, content));
   });
   ledger.preferences = [...preferences.values()];
-
-  // Stored summaries may lag by a turn. Accept only one tied to a retained
-  // message so a reset, deleted transcript, or another conversation cannot seed retrieval.
-  if (summary && validSummary(summary, messages)) ledger.summary = summary;
-  return ledger;
 }
 
-function validSummary(summary: ConversationSummary, messages: readonly ReviewMessage[]): boolean {
+export function validSummary(summary: ConversationSummary, messages: readonly ReviewMessage[]): boolean {
   const count = summary.messageCount;
   if (summary.version !== 1 || !Number.isSafeInteger(count) || count < 1 || count > messages.length
     || typeof summary.throughMessageId !== 'string' || !summary.throughMessageId
@@ -151,17 +189,34 @@ function topicWords(text: string): string[] {
 
 const DEFERRED = /(?:\b(?:cannot|can t|could not|couldn t|unable|pending|unconfirmed|unavailable|unknown|not yet|no information|must wait|need more|will|we need)\b|(?:^|\s)(?:لم|لن|لا يمكن|لا استطيع|غير متاح|غير مؤكد|غير معروف|يحتاج|ناقص|سوف)(?:\s|$))/u;
 
+function answeredTopics(content: string): Set<string>[] {
+  return replyClauses(content).filter(clause => !DEFERRED.test(normalizeReviewText(clause)))
+    .map(clause => new Set(topicWords(clause)));
+}
+
+function coversTopics(clauses: readonly Set<string>[], topics: readonly string[]): boolean {
+  return clauses.some(words => topics.filter(word => words.has(word)).length >= Math.max(1, Math.ceil(topics.length * 0.6)));
+}
+
+function afterAnswer(open: RequestPart[], content: string): RequestPart[] {
+  if (!open.length) return open;
+  const clauses = answeredTopics(content);
+  return open.filter(part => !coversTopics(clauses, topicWords(part.text)));
+}
+
 function openRequestParts(ledger: ConversationLedger, published?: ReviewMessage): RequestPart[] {
   const anchor = ledger.summary?.messageCount ?? 0;
   const historicalAnswerRejected = ledger.rejectedAnswers.some(answer => answer.messageIndex >= anchor && answer.answerIndex < anchor);
   const checkpoint = historicalAnswerRejected ? undefined : ledger.summary;
+  if (!checkpoint && ledger.fullOpenRequests && !published) return ledger.fullOpenRequests;
   const start = checkpoint?.messageCount ?? 0;
   const open = new Map<RequestPart, string[]>((checkpoint?.openRequests ?? []).map(part => [part, topicWords(part.text)]));
   const rejected = new Set(ledger.rejectedAnswers.map(reply => reply.answerIndex));
   const requests = ledger.requests.filter(part => part.messageIndex >= start);
   let requestIndex = 0;
-  for (let index = start; index <= ledger.messages.length; index++) {
-    const message = ledger.messages[index] ?? published;
+  const offset = ledger.messageOffset ?? 0;
+  for (let index = start; index <= offset + ledger.messages.length; index++) {
+    const message = ledger.messages[index - offset] ?? published;
     if (!message) break;
     if (message.role === 'user') {
       while (requests[requestIndex]?.messageIndex === index) {
@@ -171,10 +226,9 @@ function openRequestParts(ledger: ConversationLedger, published?: ReviewMessage)
       continue;
     }
     if (!open.size || rejected.has(index)) continue;
-    const clauses = replyClauses(message.content).filter(clause => !DEFERRED.test(normalizeReviewText(clause)))
-      .map(clause => new Set(topicWords(clause)));
+    const clauses = answeredTopics(message.content);
     for (const [part, topics] of open) {
-      if (clauses.some(words => topics.filter(word => words.has(word)).length >= Math.max(1, Math.ceil(topics.length * 0.6)))) open.delete(part);
+      if (coversTopics(clauses, topics)) open.delete(part);
     }
   }
   return [...open.keys()];
@@ -186,14 +240,16 @@ function extractiveEntries<T extends RequestPart>(values: readonly T[]): T[] {
 }
 
 export function buildConversationSummary(ledger: ConversationLedger, published?: ReviewMessage): ConversationSummary {
-  const messageCount = ledger.messages.length + Number(Boolean(published));
-  const throughMessageId = (published ?? ledger.messages.at(-1))?.id;
+  const messageCount = (ledger.messageOffset ?? 0) + ledger.messages.length + Number(Boolean(published));
+  const throughMessageId = (published ?? ledger.messages.at(-1))?.id ?? ledger.summary?.throughMessageId;
   const latestDecisions = new Map<string, Claim>();
   const additionalClaims = published?.role === 'assistant' ? extractClaims(published.content, messageCount - 1) : [];
-  for (const claim of [...ledger.claims, ...additionalClaims]) {
-    if (claim.kind !== 'decision') continue;
-    latestDecisions.delete(claim.subject);
-    latestDecisions.set(claim.subject, claim);
+  for (const claims of [ledger.archivedClaims?.decisions ?? [], ledger.claims, additionalClaims]) {
+    for (const claim of claims) {
+      if (claim.kind !== 'decision') continue;
+      latestDecisions.delete(claim.subject);
+      latestDecisions.set(claim.subject, claim);
+    }
   }
 
   const commitments = published?.role === 'assistant'

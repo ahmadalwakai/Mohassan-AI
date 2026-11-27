@@ -58,11 +58,12 @@ function getClaims(draft: string): Claim[] {
 }
 
 function contradictedClaims(ledger: ConversationLedger, claims: readonly Claim[], evidence: ReviewOptions['evidence']): Claim[] {
+  if (!claims.length) return [];
   const latest = new Map<string, Claim>();
   for (const earlier of ledger.claims) latest.set(earlier.subject, earlier);
   let fromSource: Claim[] | undefined;
   return claims.filter(claim => {
-    const earlier = latest.get(claim.subject);
+    const earlier = latest.get(claim.subject) ?? ledger.archivedClaims?.forSubject(claim.subject).at(-1);
     if (!earlier || !claimRank(claim, earlier) || sameValue(earlier.value, claim.value)) return false;
     const userFact = ledger.userClaims.findLast(fact => fact.subject === claim.subject);
     if (userFact && userFact.messageIndex > earlier.messageIndex && sameClaim(userFact, claim)) return false;
@@ -251,9 +252,10 @@ function userCoverageEvidence(ledger: ConversationLedger, part: RequestPart, dra
   if (!asked || reportRequested.test(normalizeReviewText(part.text))) return undefined;
   const match = ledger.userClaims.findLast(claim => claim.messageIndex < part.messageIndex
     && coverageTokens(claim.subject).sort().join(' ') === asked);
+  const conflicts = (claim: Claim) => match && claim.messageIndex > match.messageIndex && claimRank(claim, match) && !sameValue(claim.value, match.value);
   if (!match || match.text.length > 150 || literalSource.test(draft)
     || !/^[-+$€£¥\s\p{L}\p{N}\p{M}.,:：'’%/]+$/u.test(match.text)
-    || ledger.claims.some(claim => claim.messageIndex > match.messageIndex && claimRank(claim, match) && !sameValue(claim.value, match.value))
+    || ledger.claims.some(conflicts) || ledger.archivedClaims?.forSubject(match.subject).some(conflicts)
     || ledger.corrections.some(correction => correction.messageIndex > match.messageIndex && correctionPair(correction)
       ?.some(([before]) => sameValue(before, match.value)))) return undefined;
   return match;
@@ -266,14 +268,15 @@ function requestParts(ledger: ConversationLedger, request: string): RequestPart[
   const earlier = summary.openRequests.flatMap(saved => {
     const part = ledger.requests.find(source => source.messageIndex === saved.messageIndex && source.text === saved.text);
     if (!part || part.messageIndex >= ledger.currentRequestIndex) return [];
-    const later = ledger.messages.slice(summary.messageCount, ledger.currentRequestIndex);
+    const offset = ledger.messageOffset ?? 0;
+    const later = ledger.messages.slice(summary.messageCount - offset, Math.max(0, ledger.currentRequestIndex - offset));
     return later.some(message => message.role === 'assistant' && !uncoveredParts([part], message.content, null, true).length) ? [] : [part];
   });
   return earlier.length ? earlier : current;
 }
 
 export function reviewReply(ledger: ConversationLedger, draft: string, options: ReviewOptions = {}): ReviewResult {
-  const request = ledger.messages[ledger.currentRequestIndex]?.content ?? '';
+  const request = ledger.currentRequest ?? ledger.messages[ledger.currentRequestIndex]?.content ?? '';
   const preferences = ledger.preferences;
   const preferredLanguage = preferences.findLast(preference => preference.kind === 'language')?.value;
   const lang = preferredLanguage === 'ar' || preferredLanguage === 'en' ? preferredLanguage : questionLanguage(request || draft);
