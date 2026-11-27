@@ -1,0 +1,52 @@
+{
+  "retrieved": "2026-11-27",
+  "recordings": {
+    "oicstat": {
+      "publisher": "Statistical, Economic and Social Research and Training Centre for Islamic Countries",
+      "url": "https://www.sesric.org/oicstat-indicators_ar.php",
+      "excerpts": [
+        "معدل نمو السكان، السنوي",
+        "متوسط العمر المتوقع عند الولادة، كلا الجنسين"
+      ]
+    },
+    "abuDhabiHumanDevelopment": {
+      "publisher": "Statistics Centre – Abu Dhabi",
+      "url": "https://www.statad.gov.ae/documents/20122/2310860/HDI_2017.pdf/f9bca09d-fdb1-6ebe-b77b-b103cdbe1e6f?download=true&t=1684163276877",
+      "excerpts": [
+        "معدل نمو عدد السكان"
+      ]
+    },
+    "worldBankWestBankAndGaza": {
+      "publisher": "The World Bank",
+      "url": "https://www.albankaldawli.org/ext/ar/country/westbankandgaza",
+      "excerpts": [
+        "معدل البطالة",
+        "نسبة البطالة"
+      ]
+    },
+    "worldBankEgypt": {
+      "publisher": "The World Bank",
+      "url": "https://www.albankaldawli.org/ext/ar/country/egypt",
+      "excerpts": [
+        "معدل نمو الناتج المحلي الإجمالي",
+        "الناتج المحلي الإجمالي",
+        "عدد سكانها",
+        "مليون نسمة"
+      ]
+    },
+    "moroccoOlderPersons": {
+      "publisher": "High Commission for Planning, Morocco",
+      "url": "https://www.hcp.ma/file/246440/",
+      "excerpts": [
+        "أمل الحياة"
+      ]
+    },
+    "saudiPressAgencyComoros": {
+      "publisher": "Saudi Press Agency",
+      "url": "https://www.spa.gov.sa/82ffeea278",
+      "excerpts": [
+        "الناتج المحلي الإجمالي للفرد"
+      ]
+    }
+  }
+}
