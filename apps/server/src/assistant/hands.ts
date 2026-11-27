@@ -822,13 +822,19 @@ const OVERVIEW_QUESTION = /\b(?:documentation|docs|overview|introduction)\b|(?:^
 const DEFINE_QUESTION = /^(?:ما هو|ما هي|من هو|من هي|ما معنى|ما المقصود ب|ماذا يعني|what is|what are|what was|who is|who was|who were)\s/iu;
 const ARABIC_DEFINITION_LEAD = /^(?:(?:ما معنى|ماذا يعني)\s+|ما المقصود\s+ب\s*)/iu;
 const CONCEPT_QUESTION = /^(?:ما هو|ما هي|what is|what['’]s)\s+/iu;
+const COMPARISON_SUBJECT = /^(?:(?:the )?(?:differences?|comparison) between|compare|(?:ال)?(?:فرق|اختلاف|مقارنه) بين|قارن)(?=\s)|\S\s+(?:vs\.?|versus|مقابل)\s+\S/iu;
+const ASPECT_HEAD = /^(?:(?:(?:the|a|an) )?(?:(?:main|primary|common|typical) )?(?:history|treatments?|components?|methods?|types?|uses?|symptoms?|causes?|benefits?)\s+(?:of|for|to|behind)\s+\S|(?:ال)?(?:تاريخ|علاج|مكونات|طريقه|طرق|انواع|استخدامات|استخدام|اعراض|اسباب|فوائد)\s+\S)/iu;
 const FACT_LOOKUP = /(?:^|\s)(?:افضل|اطول|اكبر|اصغر|اعلي|اقدم|اول|اخر|احدث|اسرع|best|first|last|latest|newest|largest|longest|fastest|most)(?=\s|$)|\b(?:rating|speed|date|difference|version|number|cost)\s+(?:of|for)\b|\b(?:made of|used for|known for)\b/iu;
 const REFERENCE_SECTION = /(?:^|\n|(?<=[.!?؟]))\s*(?:المراجع|المصادر والمراجع|references|bibliography|works cited)\s*(?=[:：.\n]|[↑^]|\[\s*\p{Nd}|\p{Nd}+[.)]|$)/iu;
 const DEFINITION_PREDICATE = '(?:هو|هي|يعد|تعد|يعرف|تعرف|عباره عن|(?:is|are|was|were)\\s+(?:a|an|the|one of|defined as|known as|called)|refers to|means)';
 
 export function needsDefinition(question: string): boolean {
-  if (ARABIC_DEFINITION_LEAD.test(question.trim())) return true;
-  return CONCEPT_QUESTION.test(question.trim()) && !isLiveWebQuestion(question) && figureKind(question) === 'any'
+  const text = tidy(question);
+  if (ARABIC_DEFINITION_LEAD.test(text)) return true;
+  const lead = CONCEPT_QUESTION.exec(text);
+  if (!lead) return false;
+  const subject = fold(text.slice(lead[0].length));
+  return !COMPARISON_SUBJECT.test(subject) && !ASPECT_HEAD.test(subject) && !isLiveWebQuestion(question) && figureKind(question) === 'any'
     && !isReasonQuestion(question) && !aspectSubject(question).length && !entityWords(question).length && !FACT_LOOKUP.test(fold(question));
 }
 
