@@ -127,9 +127,9 @@ describe('offline factual answers', () => {
     });
   });
 
-  it('uses dated office observations while declining an ended or conflicting current claim', () => {
-    // These deliberately fictional people and states exercise term qualification.
-    const database = join(directory, 'office-scenarios.sqlite');
+  it('requires dated offices, present capitals and populations of the whole entity', () => {
+    // These deliberately fictional people and places exercise statement qualification.
+    const database = join(directory, 'term-scenarios.sqlite');
     const person = (id: string, en: string): StoredEntity => ({
       id, revision: null, labels: { en }, categories: ['people'], aliases: {}, descriptions: {}, claims: [],
     });
@@ -138,12 +138,14 @@ describe('offline factual answers', () => {
     });
     const first = person('Q900000001', 'First Fixture Holder');
     const second = person('Q900000002', 'Second Fixture Holder');
+    const presentCapital: StoredEntity = { ...person('Q900000003', 'Present Fixture Capital'), categories: ['cities'] };
+    const plannedCapital: StoredEntity = { ...person('Q900000004', 'Planned Fixture Capital'), categories: ['cities'] };
     const past = time('P585', '2020-01-01', 11);
     const recent = time('P585', '2025-01-01', 11);
     const started = time('P580', '2024-01-01', 11);
     const ended = time('P582', '2021-01-01', 11);
     const future = time('P580', '2027-01-01', 11);
-    const records = [first, second,
+    const records = [first, second, presentCapital, plannedCapital,
       state('Q900000010', 'First Fixture State', [
         item('P35', first.id, { qualifiers: { P585: [past], P582: [ended] } }),
       ]),
@@ -156,9 +158,22 @@ describe('offline factual answers', () => {
         item('P6', first.id, { qualifiers: { P585: [recent] } }),
         item('P6', second.id, { rank: 'preferred', qualifiers: { P580: [started] } }),
       ]),
+      state('Q900000013', 'Fourth Fixture State', [
+        item('P36', presentCapital.id),
+        item('P36', plannedCapital.id, { rank: 'preferred', qualifiers: { P580: [future] } }),
+      ]),
+      state('Q900000014', 'Fifth Fixture State', [
+        item('P36', presentCapital.id, { qualifiers: { P580: [started] } }),
+      ]),
+      state('Q900000015', 'Sixth Fixture State', [
+        quantity('P1082', '+100', '1', { qualifiers: { P585: [past] } }),
+        quantity('P1082', '+30', '1', { qualifiers: {
+          P585: [recent], P518: [item('P518', presentCapital.id).snak],
+        } }),
+      ]),
     ];
-    const build = openBuild(database, { source: 'fixture:office-scenarios', dumpDate, fingerprint: 'sha256:fixture',
-      categories: ['countries', 'people'] });
+    const build = openBuild(database, { source: 'fixture:term-scenarios', dumpDate, fingerprint: 'sha256:fixture',
+      categories: ['countries', 'people', 'cities'] });
     try {
       build.commit({ phase: 'entities', offset: 0 }, () => {});
       build.writeEntities(records, { phase: 'entities', offset: records.length });
@@ -172,6 +187,10 @@ describe('offline factual answers', () => {
     expect(answerOfflineQuestion(database, 'Who is the head of state of Second Fixture State?'))
       .toContain('Second Fixture Holder (as of 2025-01-01)');
     expect(answerOfflineQuestion(database, 'Who is the head of government of Third Fixture State?')).toBeUndefined();
+    expect(answerOfflineQuestion(database, 'What is the capital of Fourth Fixture State?')).toBeUndefined();
+    expect(answerOfflineQuestion(database, 'What is the capital of Fifth Fixture State?'))
+      .toContain('Present Fixture Capital');
+    expect(answerOfflineQuestion(database, 'What is the population of Sixth Fixture State?')).toBeUndefined();
   });
 
   it('compares comparable values and marks the index scope of a category superlative', () => {

@@ -11,7 +11,7 @@ const STABLE_PROPERTIES = new Set<string>([
   PROPERTIES.inception.property.id, PROPERTIES.publication.property.id,
 ]);
 
-function officeTerm(fact: Fact) {
+function termBounds(fact: Fact) {
   const { P580: starts, P582: ends } = fact.statement.qualifiers;
   return {
     start: starts ? uniqueDateBounds(starts) : { earliest: -Infinity, latest: -Infinity },
@@ -25,7 +25,9 @@ export function answerOfflineQuestion(databasePath: string, text: string): strin
   if (!question || question.kind !== 'lookup' || question.multiple) return;
   const { property, language, entity, time } = question;
   const office = OFFICE_PROPERTIES.has(property.id);
-  const dated = office || property.id === PROPERTIES.population.property.id;
+  const capital = property.id === PROPERTIES.capital.property.id;
+  const population = property.id === PROPERTIES.population.property.id;
+  const dated = office || population;
   const currentOffice = office && time?.year === undefined && time?.order !== 'earliest';
   if (!dated && !STABLE_PROPERTIES.has(property.id)) return;
   // A year-qualified request for a stable fact requires context beyond its bare value.
@@ -48,8 +50,8 @@ export function answerOfflineQuestion(databasePath: string, text: string): strin
     if (!facts.length) return;
 
     const snapshotDay = Number(facts[0].source.dumpDate.replaceAll('-', ''));
-    if (currentOffice && facts.some(fact => {
-      const { start, end } = officeTerm(fact);
+    if ((currentOffice || capital) && facts.some(fact => {
+      const { start, end } = termBounds(fact);
       return (start?.latest ?? Infinity) > snapshotDay || (end?.earliest ?? -Infinity) <= snapshotDay;
     })) return;
 
@@ -62,8 +64,9 @@ export function answerOfflineQuestion(databasePath: string, text: string): strin
     for (const fact of facts) {
       const { dumpSource, dumpDate, url } = fact.source;
       if (!dumpSource || !/^\d{4}-\d{2}-\d{2}$/u.test(dumpDate) || !url) return;
-      // An ended capital statement cannot answer the unqualified capital question.
-      if (property.id === PROPERTIES.capital.property.id && fact.statement.qualifiers.P582?.length) return;
+      // A count that applies to part of the entity cannot establish its total population.
+      // https://www.wikidata.org/wiki/Special:EntityData/P518.json (retrieved 2026-11-27)
+      if (population && fact.statement.qualifiers.P518?.length) return;
       const value = readKnowledgeValue(fact, property.answerType, label);
       if (!value || value.kind === 'entity' && value.label === value.id) return;
       if (value.kind === 'quantity') {
@@ -82,9 +85,9 @@ export function answerOfflineQuestion(databasePath: string, text: string): strin
     if (values.size !== 1 || dated && observations.size !== 1) return;
 
     if (currentOffice && store.lookupFacts(entityId, property.id, { allRanks: true }).some(fact => {
-      // Dated observations already participated in chronological selection.
+      // The dated lookup already handles comparable observations.
       if (orderedStatementDate(fact.statement, true)) return false;
-      const { start, end } = officeTerm(fact);
+      const { start, end } = termBounds(fact);
       if ((start?.earliest ?? -Infinity) > snapshotDay || (end?.latest ?? Infinity) < snapshotDay) return false;
       const value = readKnowledgeValue(fact, property.answerType, label);
       return !value || !values.has(knowledgeValueKey(value));
