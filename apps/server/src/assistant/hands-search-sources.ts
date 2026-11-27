@@ -34,7 +34,7 @@ export function plannedSearchProgress(plan: SourcePlan, selection: SearchSelecti
   const separator = ar ? '، ' : ', ';
   const providers = selection.searchedProviders.join(separator);
   const reason = selection.wikipediaFallback
-    ? ar ? 'لم يتوفر مصدر متخصص لهذا السؤال العام' : 'a specialized source was unavailable for this general question'
+    ? ar ? 'المصادر المتخصصة لهذا السؤال غير متاحة' : 'a specialized source was unavailable for this question'
     : plan.reasons.map(item => item[plan.language]).join(ar ? '، و' : ', and ');
   return ar ? `بحثتُ في: ${providers} لأن ${reason}` : `I searched ${providers} because ${reason}`;
 }

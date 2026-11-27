@@ -1480,6 +1480,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
     // search that answered with nothing about the question.
     let providerFailure: string | null = null;
     let unavailableOnly = false;
+    let wikipediaFallback = false;
     const lookup = async (words: string) => {
       let hits: SearchHit[] = [];
       let selection: SearchSelection | undefined;
@@ -1490,6 +1491,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         else if (!(error instanceof BrowserError) || error.code !== 'RESEARCH_SEARCH_UNAVAILABLE') throw error;
       }
       if (selection) {
+        wikipediaFallback = selection.wikipediaFallback === true;
         const detail = unavailableSearchSources(sources, selection);
         if (detail) sourceNotes.add(detail);
         unavailableOnly = Boolean(detail && !selection.searchedProviders.length && !providerFailure);
@@ -1524,14 +1526,14 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
     // A figure with no attribute word («كم تستغرق عملية المياه البيضاء») has its subject opened by name too, never searched for.
     const subject = searchable.length ? searchable : WANTS_NUMBER.test(subjectQuery) ? topicWords(wikiTerms(subjectQuery)) : [];
     const surface = !subject.length ? '' : reason ? reason : entity.length ? entitySurface(subjectQuery, entity) : wikiTerms(subjectQuery);
-    // Wikipedia opens a subject's article by its name and follows its redirects («المياه البيضاء» → «الساد», «الشاي الأخضر»
-    // → «شاي أخضر», measured 2026-11-22), so the article is read while the search runs, not searched for after it: the search
-    // lookup cost 1.1 to 1.9 s a question (the engine's one-second spacing, then the search). The page reader caches it.
+    // Wikipedia resolves the subject's name to its article. Read it in parallel for encyclopedic questions, or after
+    // selection confirms the fallback for other questions.
     const article = surface.trim() ? articleUrl(surface, sources.language) : null;
-    const direct = article && sources.domains.includes('encyclopedia') && !live && !sources.fresh && allowsSearchSource(article, sources) && io.read
-      ? io.read(article).catch((): HandsRead => ({ kind: 'unreadable' })) : null;
+    const readArticle = article && !live && !sources.fresh && allowsSearchSource(article, sources) && io.read
+      ? () => io.read!(article).catch((): HandsRead => ({ kind: 'unreadable' })) : null;
+    const direct = sources.domains.includes('encyclopedia') ? readArticle?.() : null;
     let results = await lookup(query);
-    const openedByName = direct ? await direct : null;
+    const openedByName = await (direct ?? (wikipediaFallback ? readArticle?.() : null));
     const named = openedByName?.kind === 'page' && allowsSearchSource(openedByName.page.url, sources) && readableOverHttp(openedByName.page.text) && !isDisambiguationPage(openedByName.page) ? openedByName.page : null;
     if (named) {
       const title = tidy(named.title) || hostOf(named.url);
