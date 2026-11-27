@@ -24,7 +24,7 @@ describe('model commands', () => {
     return spawnSync(process.execPath, ['--import', 'tsx', cli, ...args], {
       cwd: root,
       encoding: 'utf8',
-      env: { ...process.env, MOHASSAN_MODEL_WORKER_CONFIG: join(scratch, 'missing-worker.json'), MOHASSAN_OCR_MODEL_DIR: scratch },
+      env: { ...process.env, MOHASSAN_GOAL_TAGGER_CONFIG: join(scratch, 'missing-worker.json'), MOHASSAN_OCR_MODEL_DIR: scratch },
       timeout: 15_000,
     });
   }

@@ -41,17 +41,22 @@ const probe = 'What time is it?';
 const scratchHeads = { 'scratch-route': 'route', 'scratch-speech-act': 'speechAct', 'scratch-refusal': 'refusal', 'scratch-follow-up': 'followUp' } as const;
 
 async function loadScratch(model: ResolvedModel, head: typeof scratchHeads[keyof typeof scratchHeads]): Promise<ModelAdapter> {
-  const { loadScratchClassifiers } = await import('../../scratch-classifiers/src/index.js');
+  const { loadScratchClassifiers, ScratchClassifierPinMismatch } = await import('../../scratch-classifiers/src/index.js');
   const directory = dirname(requiredArtifact(model, 'manifest').path);
-  const classifier = loadScratchClassifiers(pathToFileURL(directory + sep));
-  return {
-    warmup: () => { classifier.predict(head, probe); },
-    health: () => true,
-    run: input => {
-      const { text, ...options } = inputAs(scratchInput, input);
-      return classifier.predict(head, text, options);
-    },
-  };
+  try {
+    const classifier = loadScratchClassifiers(pathToFileURL(directory + sep));
+    return {
+      warmup: () => { classifier.predict(head, probe); },
+      health: () => true,
+      run: input => {
+        const { text, ...options } = inputAs(scratchInput, input);
+        return classifier.predict(head, text, options);
+      },
+    };
+  } catch (error) {
+    if (error instanceof ScratchClassifierPinMismatch) throw new ModelRuntimeError('unhealthy', undefined, 'pin-mismatch');
+    throw error;
+  }
 }
 
 async function loadMonitorHead(model: ResolvedModel): Promise<ModelAdapter> {

@@ -18,6 +18,7 @@ checkpoint. Set `EXECUTOR_PYTHON` if that environment lives elsewhere.
 | --- | --- | --- |
 | Permanent inference interpreter | `.venv-execution/Scripts/python.exe` | `.venv-execution/bin/python` |
 | Permanent worker configuration | `.data/model-worker.json` | `.data/model-worker.json` |
+| GoalTagger worker configuration | `.data/goal-tagger-worker.json` | `.data/goal-tagger-worker.json` |
 | Permanent worker device with `model.device` omitted | `cpu` | `cpu` |
 
 The commands for a registry ID are the same on both systems.
@@ -79,6 +80,18 @@ export manifest or worker configuration as applicable before running
 inference. Use `Get-FileHash -Algorithm SHA256` on Windows or `sha256sum` on
 Linux to compare a local file with a documented digest. A gate receipt that lives
 in an ignored run directory needs the corresponding owner copy.
+
+Git preserves the exact bytes of the tracked model and gate files listed in
+`.gitattributes` even with `core.autocrlf=true`. To renormalise an older
+Windows checkout after updating to this rule, list the affected files and
+save any staged or unstaged edits to them. Then restore their working-tree
+bytes from the current commit before checking health or packaging for cloud.
+
+```sh
+git ls-files -- ':(attr:-text)'
+git restore --source=HEAD --worktree -- ':(attr:-text)'
+npm test -- tests/pinned-bytes.test.ts
+```
 
 If an artifact is absent, continue with the existing rules and report the
 missing registry ID. Restore a tracked artifact from the same commit or copy
@@ -179,6 +192,11 @@ capability to its own passed receipt. With that file or its pins missing, the
 capability is off. For a configured server, `GET /health` reports the running
 worker's state. [Worker configuration and limits](../packages/execution-integration/docs/permanent-model-worker.md) · [Provider gates](OWN-MODEL-PROVIDER.md) · [Head data and licenses](../packages/head-training/DATASETS.md) · [Head gates](../packages/head-training/GATES.md)
 
+A checkpoint pin, model identity or configuration refusal leaves the
+resident worker degraded with a reason and `terminal: true` in `GET /health`.
+Correct the artifact or configuration and restart the server to try again.
+A temporary refusal such as `gpu_locked` retries with backoff.
+
 To check an approved CPU worker configuration with an explicit interpreter
 and config path, use the commands for your shell. Both need the owner's v5
 artifact and a configuration that pins it.
@@ -274,8 +292,12 @@ For an Ads fine-tune, keep the matching tokenizer and prompt framing.
 
 To run the GoalTagger, use a separate owner configuration with
 `checkpoint.format` set to `goal-tagger` and the approved checkpoint SHA-256.
-Set `MOHASSAN_MODEL_WORKER_CONFIG` to that file in the shell running
-`models:health` or `models:run`. [Worker checkpoint formats](../packages/execution-integration/docs/permanent-model-worker.md#configuration)
+Set `MOHASSAN_GOAL_TAGGER_CONFIG` to its path, or install it at
+`.data/goal-tagger-worker.json`. Relative config paths are searched in the
+configured model store, the working directory and the checkout containing
+the registry. Checkpoint paths inside the config are relative to the config
+file. Set `MOHASSAN_MODEL_WORKER_CONFIG` for the v5 worker in the same
+environment. [Worker checkpoint formats](../packages/execution-integration/docs/permanent-model-worker.md#configuration)
 
 | Existing Ads lab setting | Default |
 | --- | --- |

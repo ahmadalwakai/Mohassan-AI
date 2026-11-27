@@ -85,6 +85,16 @@ The second run, 19:41 UTC, on this PC's CPU (`council-questions-2026-11-26T19-41
 
 On this set the council did not raise accuracy. It kept six wrong model answers from replacing right ones. These results set the rule above: a model answer needs the pages and a second member.
 
+The measurement fixture starts the API in a temporary working directory. The
+old lookup searched that directory and `MOHASSAN_MODELS_ROOT`, so the
+checked-in `refusal`, `scratch-refusal`, `scratch-speech-act`, and
+`scratch-route` artifacts could be reported absent while `router-b0` in the
+configured model store answered. The council and the models page now also
+search the checkout containing the registry module. A failed council member's
+note identifies the reason, such as `absent`, `unhealthy`, `pin-mismatch` or
+`timeout`. The owner reported that the lookup issue affected the November 26
+run, so its results for those four members reflect artifact availability.
+
 The production server is an ARM CPU, so its times will differ. They are not measured here.
 
 ## Switches and rollback

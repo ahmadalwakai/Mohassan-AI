@@ -86,7 +86,7 @@ describe.skipIf(!python)('model relations runtime through the permanent CPU work
       await writeFile(checkpoint, Buffer.concat([originalBytes, Buffer.from('different trunk bytes')]));
       const mismatched = createModelRuntime(options);
       try {
-        expect(await mismatched.health('head-follow-up')).toMatchObject({ ok: false, reason: 'incompatible' });
+        expect(await mismatched.health('head-follow-up')).toMatchObject({ ok: false, reason: 'incompatible', code: 'pin-mismatch' });
       } finally {
         await mismatched.close();
       }

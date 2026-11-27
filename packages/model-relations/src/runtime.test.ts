@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { appendFile, cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -188,6 +188,19 @@ describe('model runtime', () => {
     expect(await instance.health('refusal')).toMatchObject({ ok: true });
     expect(await instance.run('refusal', { text: 'Hello' })).toMatchObject({ ok: true, output: { label: expect.any(String), confidence: expect.any(Number) } });
     expect(await instance.run('refusal', { text: 3 })).toMatchObject({ ok: false, reason: 'invalid-input' });
+  });
+
+  it('identifies a scratch pin mismatch for the affected head and other heads sharing the loader', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'model-runtime-pins-'));
+    roots.push(root);
+    const relative = 'packages/scratch-classifiers/models';
+    await mkdir(join(root, 'packages', 'scratch-classifiers'), { recursive: true });
+    await cp(new URL('../../scratch-classifiers/models/', import.meta.url), join(root, relative), { recursive: true });
+    await appendFile(join(root, relative, 'route.json'), '\n');
+    const instance = runtime({ root });
+    for (const id of ['scratch-route', 'scratch-refusal']) {
+      expect(await instance.health(id)).toMatchObject({ ok: false, reason: 'unhealthy', code: 'pin-mismatch' });
+    }
   });
 
   it('runs the checked-in arithmetic ranker in its CPU worker', async () => {

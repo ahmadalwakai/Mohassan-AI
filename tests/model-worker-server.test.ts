@@ -91,9 +91,31 @@ describe('server model worker lifecycle', () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     await startServerModelWorker(app, { MOHASSAN_MODEL_WORKER: '1', MOHASSAN_MODEL_WORKER_CONFIG: configPath });
     expect(controls.construct).not.toHaveBeenCalled();
-    expect((await app.inject('/health')).json()).toEqual({ status: 'ok', modelWorker: { state: 'degraded' } });
+    expect((await app.inject('/health')).json()).toEqual({
+      status: 'ok', modelWorker: { state: 'degraded', reason: 'invalid_configuration', terminal: true },
+    });
     expect(log).toHaveBeenCalledWith(JSON.stringify({
-      level: 'warn', event: 'model_worker_degraded', reason: 'invalid_configuration',
+      level: 'warn', event: 'model_worker_degraded', reason: 'invalid_configuration', terminal: true,
+    }));
+  });
+
+  it('reports a terminal startup refusal in health and logs', async () => {
+    const app = application();
+    const directory = await mkdtemp(join(tmpdir(), 'model-worker-server-'));
+    directories.push(directory);
+    const configPath = join(directory, 'model.json');
+    await writeFile(configPath, JSON.stringify({ identity: { modelId: 'fixture', tokenizerId: 'token-ids', checkpointId: 'pinned' } }));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    await startServerModelWorker(app, { MOHASSAN_MODEL_WORKER: '1', MOHASSAN_MODEL_WORKER_CONFIG: configPath });
+
+    const refusal = { state: 'degraded', code: 'checkpoint_pin_mismatch', terminal: true };
+    Object.assign(getServerModelWorker(app)!, { status: refusal });
+    controls.construct.mock.calls[0]?.[0].onState(refusal);
+    expect((await app.inject('/health')).json()).toEqual({
+      status: 'ok', modelWorker: { state: 'degraded', reason: 'checkpoint_pin_mismatch', terminal: true },
+    });
+    expect(log).toHaveBeenCalledWith(JSON.stringify({
+      level: 'warn', event: 'model_worker_degraded', reason: 'checkpoint_pin_mismatch', terminal: true,
     }));
   });
 

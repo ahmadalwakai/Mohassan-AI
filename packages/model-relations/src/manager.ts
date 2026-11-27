@@ -45,8 +45,8 @@ type TurnType = OneOf<typeof turnTypes>;
 type Sufficiency = OneOf<typeof sufficiencyLabels>;
 type JudgeDecision = OneOf<typeof judgeLabels>;
 type StageName = 'refusal' | 'speech-act' | 'router' | 'arithmetic' | 'turn-type' | 'question-rewrite' | 'evidence-reader' | 'answer-sentence' | 'reply-judge' | 'image-reader';
-type RunFailure = Extract<ModelRunResult, { ok: false }>['reason'];
-type Outcome = 'ok' | 'abstained' | 'invalid-output' | RunFailure;
+type RunFailure = Extract<ModelRunResult, { ok: false }>;
+type Outcome = 'ok' | 'abstained' | 'invalid-output' | RunFailure['reason'] | NonNullable<RunFailure['code']>;
 
 export interface TurnEvidence {
   kind: 'page' | 'memory' | 'knowledge' | 'computed';
@@ -405,7 +405,7 @@ export class ModelRelationsManager {
         });
         const run = await Promise.race([this.runtime.run(id, input), timeout]);
         if (deadline.expired || performance.now() >= deadline.at) outcome = 'timeout';
-        else if (!run.ok) outcome = run.reason;
+        else if (!run.ok) outcome = run.code ?? run.reason;
         else {
           result = decode(run.output);
           outcome = result === null ? 'abstained' : result === undefined ? 'invalid-output' : 'ok';

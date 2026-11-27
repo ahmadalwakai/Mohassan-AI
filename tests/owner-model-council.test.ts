@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatConversationSchema, ModelListSchema } from '@mohassan/contracts';
 import { createApplication } from '../apps/server/src/app.js';
@@ -12,8 +15,7 @@ vi.mock('../apps/server/src/v5-chat.js', async (importOriginal) => ({
 
 /**
  * The owner's model council through the real chat: it runs on the server before the reply is stored, its record reaches
- * the owner only, and the models page is owner-only. Python models are absent in the checkout, so they are recorded as
- * failed members; the checked-in classifiers answer the understanding round.
+ * the owner only, and the models page is owner-only. The checked-in classifiers run from an isolated working directory.
  */
 describe('owner model council over signed-in sessions', () => {
   const webOrigin = 'http://127.0.0.1:3000';
@@ -26,6 +28,8 @@ describe('owner model council over signed-in sessions', () => {
   let application: Awaited<ReturnType<typeof createApplication>>;
   let ownerCookie: string;
   let memberCookie: string;
+  const checkout = process.cwd();
+  let workingDirectory: string | undefined;
   const mockGenerate = vi.mocked(generateV5ChatReply);
   const mockReady = vi.mocked(isV5ChatReady);
 
@@ -46,6 +50,8 @@ describe('owner model council over signed-in sessions', () => {
   }
 
   beforeAll(async () => {
+    workingDirectory = await mkdtemp(join(tmpdir(), 'owner-model-council-'));
+    process.chdir(workingDirectory);
     vi.stubEnv('MOHASSAN_V5_CHAT', 'owner');
     vi.stubEnv('MOHASSAN_MODEL_WORKER', '1');
     vi.stubEnv('MOHASSAN_MODEL_COUNCIL', 'owner');
@@ -69,8 +75,13 @@ describe('owner model council over signed-in sessions', () => {
   });
 
   afterAll(async () => {
-    await application?.app.close();
-    vi.unstubAllEnvs();
+    try {
+      await application?.app.close();
+    } finally {
+      vi.unstubAllEnvs();
+      process.chdir(checkout);
+      if (workingDirectory) await rm(workingDirectory, { recursive: true, force: true });
+    }
   });
 
   it('deliberates before publishing the owner reply and stores the discussion with it', async () => {
@@ -78,6 +89,10 @@ describe('owner model council over signed-in sessions', () => {
     const reply = conversation.messages.at(-1);
     expect(reply).toMatchObject({ role: 'assistant', experiment: 'v5', text: `${body}\n\n${V5_CHAT_LABEL}` });
     expect(reply?.council).toMatchObject({ version: 1, chosen: 'chat-v5', changed: true });
+    const understanding = reply!.council!.members.filter(member => member.round === 'understanding');
+    for (const id of ['refusal', 'scratch-refusal', 'scratch-speech-act', 'scratch-route']) {
+      expect(understanding.find(member => member.model === id)).toMatchObject({ outcome: 'ok', output: expect.any(String) });
+    }
     const answers = reply!.council!.members.filter(member => member.round === 'answer');
     expect(answers.map(member => member.model)).toEqual(expect.arrayContaining(['pipeline', 'chat-v5']));
     expect(answers.find(member => member.model === 'chat-v5')).toMatchObject({ chosen: true, output: body });

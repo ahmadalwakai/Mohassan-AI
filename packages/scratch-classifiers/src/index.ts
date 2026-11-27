@@ -5,6 +5,8 @@ import { featureIndices, featureSets } from './features.ts';
 export const SCRATCH_HEADS = ['refusal', 'speechAct', 'route', 'followUp'] as const;
 export type ScratchHead = typeof SCRATCH_HEADS[number];
 
+export class ScratchClassifierPinMismatch extends Error {}
+
 export interface ScratchPrediction {
   label: string | undefined;
   abstained: boolean;
@@ -71,7 +73,7 @@ function loadHead(file: URL, expectedHash: unknown): Model {
   }
   const bytes = readArtifact(file, HEAD_LIMIT_BYTES);
   if (createHash('sha256').update(bytes).digest('hex') !== expectedHash) {
-    throw new Error(`Scratch classifier SHA-256 mismatch: ${file.pathname}`);
+    throw new ScratchClassifierPinMismatch(`Scratch classifier SHA-256 mismatch: ${file.pathname}`);
   }
 
   const model: unknown = JSON.parse(bytes.toString('utf8'));

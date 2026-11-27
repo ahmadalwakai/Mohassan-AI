@@ -14,6 +14,17 @@ import {
 const STABLE_WORKER_MS = 30_000;
 const STDERR_BYTES_PER_SECOND = 1_048_576;
 const PROCESS_ERROR = 'model_process_failure';
+const TERMINAL_STARTUP_ERRORS: ReadonlySet<TransportErrorCode | ModelWorkerStartupError> = new Set([
+  'checkpoint_pin_mismatch', 'model_identity_mismatch', 'invalid_config', 'invalid_checkpoint', 'invalid_configuration',
+  'invalid_model_output',
+]);
+
+function spawnFailureCode(error: unknown): TransportErrorCode {
+  // https://github.com/nodejs/node/blob/v24.22.3/doc/api/errors.md#common-system-errors (retrieved 2026-11-27)
+  const code = record(error) ? error.code : undefined;
+  return code === 'ENOENT' || code === 'ENOTDIR' || code === 'EACCES' || code === 'EPERM'
+    ? 'invalid_configuration' : PROCESS_ERROR;
+}
 
 export interface PermanentModelWorkerOptions {
   readonly executable: string;
@@ -31,7 +42,7 @@ export interface PermanentModelWorkerOptions {
 export type PermanentModelWorkerStatus =
   | { readonly state: 'stopped' | 'starting' | 'stopping' }
   | { readonly state: 'ready'; readonly pid: number; readonly startupMs: number; readonly ready: PermanentModelWorkerReady }
-  | { readonly state: 'degraded'; readonly code: TransportErrorCode | ModelWorkerStartupError; readonly restartInMs?: number };
+  | { readonly state: 'degraded'; readonly code: TransportErrorCode | ModelWorkerStartupError; readonly restartInMs?: number; readonly terminal?: true };
 
 export interface PermanentModelWorkerRequest {
   readonly operation: ModelWorkerOperation;
@@ -239,8 +250,8 @@ export class PermanentModelWorker {
       child = spawn(executable, args, {
         cwd, env: environment, stdio: 'pipe', shell: false, windowsHide: true, detached: process.platform === 'linux',
       });
-    } catch {
-      this.scheduleRestart(this.recordFailure(PROCESS_ERROR));
+    } catch (error) {
+      this.scheduleRestart(this.recordFailure(spawnFailureCode(error)));
       return;
     }
     let close!: () => void;
@@ -249,7 +260,7 @@ export class PermanentModelWorker {
     this.worker = worker;
     worker.startupDeadline = setTimeout(() => this.fail(worker, 'timeout'), startupTimeoutMs);
     const onError = () => this.fail(worker, PROCESS_ERROR);
-    child.once('error', onError);
+    child.once('error', error => this.fail(worker, child.pid === undefined ? spawnFailureCode(error) : PROCESS_ERROR));
     child.once('exit', () => {
       // Let buffered frames drain even if the worker exits before stdout closes.
       worker.exitDeadline = setTimeout(onError, this.options.cleanupTimeoutMs);
@@ -268,7 +279,7 @@ export class PermanentModelWorker {
         this.setStatus({ state: 'stopped' });
         return;
       }
-      this.scheduleRestart(worker.restartInMs ?? this.recordFailure(PROCESS_ERROR));
+      this.scheduleRestart(worker.failed ? worker.restartInMs : this.recordFailure(PROCESS_ERROR));
     });
 
     this.readOutput(worker);
@@ -425,7 +436,11 @@ export class PermanentModelWorker {
       this.options.cleanupTimeoutMs);
   }
 
-  private recordFailure(code: TransportErrorCode | ModelWorkerStartupError, readyAt?: number): number {
+  private recordFailure(code: TransportErrorCode | ModelWorkerStartupError, readyAt?: number): number | undefined {
+    if (readyAt === undefined && TERMINAL_STARTUP_ERRORS.has(code)) {
+      this.setStatus({ state: 'degraded', code, terminal: true });
+      return;
+    }
     if (readyAt !== undefined && performance.now() - readyAt >= STABLE_WORKER_MS) {
       this.nextRestartMs = this.options.restartMinMs;
     }
@@ -435,7 +450,8 @@ export class PermanentModelWorker {
     return restartInMs;
   }
 
-  private scheduleRestart(delay: number): void {
+  private scheduleRestart(delay: number | undefined): void {
+    if (delay === undefined) return;
     this.restartTimer = setTimeout(() => {
       this.restartTimer = undefined;
       if (this.running) this.launch();
