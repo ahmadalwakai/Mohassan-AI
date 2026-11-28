@@ -135,9 +135,11 @@ async function preflight() {
     'service-user': { type: 'string', default: 'mohassan' },
     'owner-trial': { type: 'boolean' },
     'owner-v5': { type: 'boolean' },
+    'owner-coding-link': { type: 'boolean' },
   } });
   const envFile = values['env-file'];
   const ownerV5 = values['owner-v5'];
+  const ownerCodingLink = values['owner-coding-link'];
   const ownerTrial = values['owner-trial'] || ownerV5;
   if (!check('Linux with Node 24', () => process.platform === 'linux' && process.versions.node.split('.')[0] === '24')) return;
   let env;
@@ -166,12 +168,14 @@ async function preflight() {
   check(ownerV5 ? 'other new runtime switches are off' : 'new runtime switches are off', () =>
     inactiveSwitches.every(name => !env[name] || env[name] === '0')
     && (ownerV5 || !env.MOHASSAN_V5_CHAT || env.MOHASSAN_V5_CHAT === 'off')
-    && (!env.CODING_DEVICE_LINK || env.CODING_DEVICE_LINK === 'off')
+    && (ownerCodingLink || !env.CODING_DEVICE_LINK || env.CODING_DEVICE_LINK === 'off')
     && (!env.MOHASSAN_PLAN_COMPILER || env.MOHASSAN_PLAN_COMPILER === 'off')
     && env.MOHASSAN_MODEL_RELATIONS === 'off' && (!env.TEST_DRIVEN_CODING_ENABLED || env.TEST_DRIVEN_CODING_ENABLED === 'false')
     && !env.MOHASSAN_DESKTOP_SHELL && !env.MOHASSAN_ROUTER_SHADOW && !env.EXECUTOR_EXPERIMENT);
   const v5Enabled = ownerV5 && check('worker and owner-only v5 chat are enabled', () =>
     env.MOHASSAN_MODEL_WORKER === '1' && env.MOHASSAN_V5_CHAT === 'owner');
+  // The owner's coding device link stays off unless the deploy names it, and then it must be exactly 'owner'.
+  if (ownerCodingLink) check('owner coding device link is enabled', () => env.CODING_DEVICE_LINK === 'owner');
   if (!ownerTrial) check('queue worker is off during cutover', () => env.RUN_WORKER === 'false');
   check(ownerTrial ? 'owner-only monitors and production metrics are enabled' : 'monitors and production metrics are off', () =>
     ownerTrial ? env.MOHASSAN_MONITORS_ENABLED === 'owner' && env.PRODUCTION_METRICS_ENABLED === 'true'
