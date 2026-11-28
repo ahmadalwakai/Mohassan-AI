@@ -1,0 +1,23 @@
+{
+  "capturedAt": "2026-11-27T00:16:16.309Z",
+  "sourceCommit": "29448ae",
+  "request": {
+    "method": "POST",
+    "url": "/api/windows/devices/d98a9b67-e17c-4e6e-b0ce-54d3a44c97a5/grants",
+    "body": {
+      "scope": "control",
+      "durationSeconds": 120,
+      "targetKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "approvalNonce": "e90e39ba-ba93-4e5b-a26a-5c534d9c5853"
+    }
+  },
+  "response": {
+    "status": 409,
+    "body": {
+      "error": {
+        "code": "WINDOWS_LOCAL_CONSENT_REQUIRED",
+        "message": "يحتاج الجهاز اتصالًا حيًا وموافقة محلية حديثة على النطاق المحدد."
+      }
+    }
+  }
+}

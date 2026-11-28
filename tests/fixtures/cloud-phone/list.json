@@ -1,0 +1,88 @@
+{
+  "capturedAt": "2026-11-27T00:16:16.255Z",
+  "sourceCommit": "29448ae",
+  "request": {
+    "method": "GET",
+    "url": "/api/chat/conversations"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "configured": false,
+      "capabilities": {
+        "chatModel": false,
+        "available": [
+          "computation",
+          "web",
+          "browser",
+          "memory",
+          "knowledge",
+          "documents",
+          "sites",
+          "planner",
+          "letters",
+          "pc"
+        ]
+      },
+      "requestKeys": true,
+      "conversations": [
+        {
+          "id": "02ebfeba-0028-461b-b05e-9b3ed15874ce",
+          "title": "مرحبا، كيف حالك اليوم؟",
+          "status": "idle",
+          "browserAccount": null,
+          "updatedAt": "2026-11-27T00:16:16.222Z"
+        },
+        {
+          "id": "a5bff154-26fe-4143-a409-b676114b2acb",
+          "title": "افتح http://10.0.0.9/",
+          "status": "failed",
+          "browserAccount": null,
+          "updatedAt": "2026-11-27T00:16:16.102Z"
+        },
+        {
+          "id": "e09d4c4f-119a-48c4-a802-9c77e524bc51",
+          "title": "افتح http://fixture-site.test/account وسجّل الدخول",
+          "status": "idle",
+          "browserAccount": null,
+          "updatedAt": "2026-11-27T00:16:15.948Z"
+        },
+        {
+          "id": "d9cea195-b911-4ef3-9963-32107622eed5",
+          "title": "افتح http://fixture-site.test/ads",
+          "status": "idle",
+          "browserAccount": null,
+          "updatedAt": "2026-11-27T00:16:15.363Z"
+        },
+        {
+          "id": "7e73971c-d2f2-4884-87b0-dfa048faea29",
+          "title": "افتح http://fixture-site.test/ads",
+          "status": "idle",
+          "browserAccount": null,
+          "updatedAt": "2026-11-27T00:16:14.683Z"
+        },
+        {
+          "id": "86343be3-282c-4a39-b3f5-7ec80aa5c952",
+          "title": "اكتب رسالة شكر لفريق العمل",
+          "status": "idle",
+          "browserAccount": null,
+          "updatedAt": "2026-11-27T00:16:12.952Z"
+        },
+        {
+          "id": "8dc8c414-5d76-40b7-b8aa-aa3b0ca86d72",
+          "title": "اكتب لي رسالة اعتذار لعميل",
+          "status": "idle",
+          "browserAccount": null,
+          "updatedAt": "2026-11-27T00:16:12.808Z"
+        },
+        {
+          "id": "dbc1d5dc-545d-4a34-a34f-be61dbf7cdc4",
+          "title": "كم يساوي 15 ضرب 23؟",
+          "status": "idle",
+          "browserAccount": null,
+          "updatedAt": "2026-11-27T00:16:12.555Z"
+        }
+      ]
+    }
+  }
+}

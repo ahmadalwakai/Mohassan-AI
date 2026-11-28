@@ -1,0 +1,126 @@
+{
+  "capturedAt": "2026-11-27T00:16:12.565Z",
+  "sourceCommit": "29448ae",
+  "request": {
+    "method": "POST",
+    "url": "/api/chat/conversations/dbc1d5dc-545d-4a34-a34f-be61dbf7cdc4/messages",
+    "idempotencyKey": "phone-message-0002",
+    "body": {
+      "text": "و 40 ضرب 3؟"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "dbc1d5dc-545d-4a34-a34f-be61dbf7cdc4",
+      "title": "كم يساوي 15 ضرب 23؟",
+      "status": "running",
+      "updatedAt": "2026-11-27T00:16:12.447Z",
+      "browserAccount": null,
+      "messages": [
+        {
+          "id": "0f9f94d5-6f47-4508-a991-14d7d294e450",
+          "role": "user",
+          "text": "كم يساوي 15 ضرب 23؟",
+          "createdAt": "2026-11-27T00:16:11.704Z"
+        },
+        {
+          "id": "f150201c-5a70-42a0-a8d2-d1affe022371",
+          "role": "assistant",
+          "text": "15 * 23 = 345",
+          "createdAt": "2026-11-27T00:16:12.028Z"
+        },
+        {
+          "id": "1426cbfd-0dc7-4749-ab04-06dcbe2e7ecf",
+          "role": "user",
+          "text": "و 40 ضرب 3؟",
+          "createdAt": "2026-11-27T00:16:12.425Z"
+        }
+      ],
+      "question": null,
+      "approval": null,
+      "secure": null,
+      "browser": null,
+      "progress": "يفهم طلبك…",
+      "steps": [],
+      "error": null,
+      "configured": false,
+      "capabilities": {
+        "chatModel": false,
+        "available": [
+          "computation",
+          "web",
+          "browser",
+          "memory",
+          "knowledge",
+          "documents",
+          "sites",
+          "planner",
+          "letters",
+          "pc"
+        ]
+      },
+      "visibility": {
+        "version": 1,
+        "level": 0,
+        "code": "local_compute",
+        "reason": "حساب محلي؛ لا يحتاج متصفحًا",
+        "lang": "ar",
+        "decidedAt": "2026-11-27T00:16:12.447Z",
+        "requested": 0,
+        "canView": true,
+        "history": [
+          {
+            "level": 0,
+            "code": "local_compute",
+            "at": "2026-11-27T00:16:12.447Z"
+          }
+        ]
+      },
+      "campaign": null,
+      "version": "67e33bd46b8bcaf29841d53b",
+      "run": {
+        "id": "8c8465cc-a297-4a7f-bb29-81504becc3af",
+        "phase": "received",
+        "path": "direct",
+        "engine": {
+          "kind": "rules",
+          "modelCalls": 0
+        },
+        "context": {
+          "objective": "و 40 ضرب 3؟",
+          "previousTurns": 1,
+          "constraints": [],
+          "corrections": [],
+          "capabilities": [
+            "computation",
+            "web",
+            "browser",
+            "memory",
+            "knowledge",
+            "documents",
+            "sites",
+            "planner",
+            "letters",
+            "pc"
+          ],
+          "limitations": [
+            "chatModel"
+          ]
+        },
+        "plan": null,
+        "evidence": [],
+        "permissions": [],
+        "verification": null,
+        "verdict": null,
+        "repairs": {
+          "used": 0,
+          "limit": 1
+        },
+        "steeredFrom": null,
+        "sequence": 0,
+        "updatedAt": "2026-11-27T00:16:12.443Z"
+      }
+    }
+  }
+}

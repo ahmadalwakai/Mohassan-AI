@@ -1,0 +1,114 @@
+{
+  "capturedAt": "2026-11-27T00:16:12.407Z",
+  "sourceCommit": "29448ae",
+  "request": {
+    "method": "POST",
+    "url": "/api/chat/conversations",
+    "idempotencyKey": "phone-create-0001",
+    "body": {
+      "goal": "كم يساوي 15 ضرب 23؟"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "dbc1d5dc-545d-4a34-a34f-be61dbf7cdc4",
+      "run": {
+        "id": "1fd59460-9d54-44d8-9b69-5ddce734b007",
+        "path": "direct",
+        "plan": null,
+        "phase": "received",
+        "engine": {
+          "kind": "rules",
+          "modelCalls": 0
+        },
+        "context": {
+          "objective": "كم يساوي 15 ضرب 23؟",
+          "constraints": [],
+          "corrections": [],
+          "limitations": [
+            "chatModel"
+          ],
+          "capabilities": [
+            "computation",
+            "web",
+            "browser",
+            "memory",
+            "knowledge",
+            "documents",
+            "sites",
+            "planner",
+            "letters",
+            "pc"
+          ],
+          "previousTurns": 0
+        },
+        "repairs": {
+          "used": 0,
+          "limit": 1
+        },
+        "verdict": null,
+        "evidence": [],
+        "sequence": 0,
+        "updatedAt": "2026-11-27T00:16:11.860Z",
+        "permissions": [],
+        "steeredFrom": null,
+        "verification": null
+      },
+      "error": null,
+      "steps": [],
+      "title": "كم يساوي 15 ضرب 23؟",
+      "secure": null,
+      "status": "running",
+      "browser": null,
+      "version": "32118dce435720f9c91ad69c",
+      "approval": null,
+      "campaign": null,
+      "messages": [
+        {
+          "id": "0f9f94d5-6f47-4508-a991-14d7d294e450",
+          "role": "user",
+          "text": "كم يساوي 15 ضرب 23؟",
+          "createdAt": "2026-11-27T00:16:11.704Z"
+        }
+      ],
+      "progress": "يفهم طلبك…",
+      "question": null,
+      "updatedAt": "2026-11-27T00:16:11.873Z",
+      "configured": false,
+      "visibility": {
+        "code": "local_compute",
+        "lang": "ar",
+        "level": 0,
+        "reason": "حساب محلي؛ لا يحتاج متصفحًا",
+        "canView": true,
+        "history": [
+          {
+            "at": "2026-11-27T00:16:11.873Z",
+            "code": "local_compute",
+            "level": 0
+          }
+        ],
+        "version": 1,
+        "decidedAt": "2026-11-27T00:16:11.873Z",
+        "requested": 0
+      },
+      "capabilities": {
+        "available": [
+          "computation",
+          "web",
+          "browser",
+          "memory",
+          "knowledge",
+          "documents",
+          "sites",
+          "planner",
+          "letters",
+          "pc"
+        ],
+        "chatModel": false
+      },
+      "browserAccount": null
+    }
+  }
+}

@@ -1,0 +1,156 @@
+{
+  "capturedAt": "2026-11-27T00:16:12.081Z",
+  "sourceCommit": "29448ae",
+  "request": {
+    "method": "GET",
+    "url": "/api/chat/conversations/dbc1d5dc-545d-4a34-a34f-be61dbf7cdc4"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "dbc1d5dc-545d-4a34-a34f-be61dbf7cdc4",
+      "title": "كم يساوي 15 ضرب 23؟",
+      "status": "idle",
+      "updatedAt": "2026-11-27T00:16:12.036Z",
+      "browserAccount": null,
+      "messages": [
+        {
+          "id": "0f9f94d5-6f47-4508-a991-14d7d294e450",
+          "role": "user",
+          "text": "كم يساوي 15 ضرب 23؟",
+          "createdAt": "2026-11-27T00:16:11.704Z"
+        },
+        {
+          "id": "f150201c-5a70-42a0-a8d2-d1affe022371",
+          "role": "assistant",
+          "text": "15 * 23 = 345",
+          "createdAt": "2026-11-27T00:16:12.028Z"
+        }
+      ],
+      "question": null,
+      "approval": null,
+      "secure": null,
+      "browser": null,
+      "progress": null,
+      "steps": [
+        {
+          "id": "16499a02-a59a-4a0b-98d5-a9d6671f597c",
+          "text": "حساب محلي",
+          "createdAt": "2026-11-27T00:16:12.013Z"
+        }
+      ],
+      "error": null,
+      "configured": false,
+      "capabilities": {
+        "chatModel": false,
+        "available": [
+          "computation",
+          "web",
+          "browser",
+          "memory",
+          "knowledge",
+          "documents",
+          "sites",
+          "planner",
+          "letters",
+          "pc"
+        ]
+      },
+      "visibility": {
+        "version": 1,
+        "level": 0,
+        "code": "local_compute",
+        "reason": "حساب محلي؛ لا يحتاج متصفحًا",
+        "lang": "ar",
+        "decidedAt": "2026-11-27T00:16:12.036Z",
+        "requested": 0,
+        "canView": true,
+        "history": [
+          {
+            "level": 0,
+            "code": "local_compute",
+            "at": "2026-11-27T00:16:12.036Z"
+          }
+        ]
+      },
+      "campaign": null,
+      "version": "dc72d1418bf61a1591e317b3",
+      "run": {
+        "id": "1fd59460-9d54-44d8-9b69-5ddce734b007",
+        "phase": "completed",
+        "path": "direct",
+        "engine": {
+          "kind": "rules",
+          "modelCalls": 0
+        },
+        "context": {
+          "objective": "كم يساوي 15 ضرب 23؟",
+          "previousTurns": 0,
+          "constraints": [],
+          "corrections": [],
+          "capabilities": [
+            "computation",
+            "web",
+            "browser",
+            "memory",
+            "knowledge",
+            "documents",
+            "sites",
+            "planner",
+            "letters",
+            "pc"
+          ],
+          "limitations": [
+            "chatModel"
+          ]
+        },
+        "plan": null,
+        "evidence": [
+          {
+            "id": "df885c560b251dda",
+            "stepId": null,
+            "kind": "computation",
+            "label": "فحص الحساب المحلي: مؤكَّد",
+            "reference": "1fd59460-9d54-44d8-9b69-5ddce734b007:local-answer",
+            "observedAt": "2026-11-27T00:16:12.018Z",
+            "independent": true
+          },
+          {
+            "id": "02d17636e5da7ba9",
+            "stepId": null,
+            "kind": "computation",
+            "label": "15 * 23 = 345",
+            "reference": null,
+            "observedAt": "2026-11-27T00:16:12.032Z",
+            "independent": true
+          }
+        ],
+        "permissions": [],
+        "verification": {
+          "status": "not_applicable",
+          "criteria": [
+            {
+              "id": "computed-answer",
+              "label": "الجواب يحمل ناتج الحساب المحلي نفسه",
+              "required": false,
+              "status": "verified"
+            }
+          ],
+          "checkedAt": "2026-11-27T00:16:12.032Z"
+        },
+        "verdict": {
+          "status": "completed",
+          "reason": "answered",
+          "decidedAt": "2026-11-27T00:16:12.032Z"
+        },
+        "repairs": {
+          "used": 0,
+          "limit": 1
+        },
+        "steeredFrom": null,
+        "sequence": 6,
+        "updatedAt": "2026-11-27T00:16:12.038Z"
+      }
+    }
+  }
+}

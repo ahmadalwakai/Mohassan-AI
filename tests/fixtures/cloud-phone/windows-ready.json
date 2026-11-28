@@ -1,0 +1,55 @@
+{
+  "capturedAt": "2026-11-27T00:16:16.315Z",
+  "sourceCommit": "29448ae",
+  "request": {
+    "method": "GET",
+    "url": "/api/windows"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "enabled": true,
+      "devices": [
+        {
+          "id": "d98a9b67-e17c-4e6e-b0ce-54d3a44c97a5",
+          "name": "Office PC",
+          "revoked": false,
+          "online": true,
+          "lastSeenAt": "2026-11-27T00:16:16.310Z",
+          "state": {
+            "status": "جلسة تفاعلية",
+            "target": {
+              "key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "mode": "window",
+              "title": "Mohassan Companion",
+              "width": 400,
+              "height": 200
+            },
+            "localView": true,
+            "sessionId": 1,
+            "safeDesktop": true,
+            "localControl": true,
+            "approvalNonce": "e90e39ba-ba93-4e5b-a26a-5c534d9c5853"
+          },
+          "grant": null
+        }
+      ],
+      "events": [
+        {
+          "id": "ad4f9943-d08e-46f5-9b48-dde3d08f24b0",
+          "deviceId": "d98a9b67-e17c-4e6e-b0ce-54d3a44c97a5",
+          "type": "device_paired",
+          "detail": {},
+          "createdAt": "2026-11-27T00:16:16.292Z"
+        },
+        {
+          "id": "89f19a12-c776-4c36-a4c1-8a670db7c7a4",
+          "deviceId": null,
+          "type": "pairing_created",
+          "detail": {},
+          "createdAt": "2026-11-27T00:16:16.289Z"
+        }
+      ]
+    }
+  }
+}

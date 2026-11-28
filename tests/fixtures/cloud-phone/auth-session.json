@@ -1,0 +1,31 @@
+{
+  "capturedAt": "2026-11-27T00:16:11.610Z",
+  "sourceCommit": "29448ae",
+  "request": {
+    "method": "GET",
+    "url": "/api/auth/get-session"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "session": {
+        "expiresAt": "2026-12-04T00:16:11.595Z",
+        "createdAt": "2026-11-27T00:16:11.595Z",
+        "updatedAt": "2026-11-27T00:16:11.595Z",
+        "ipAddress": "127.0.0.0/24",
+        "userAgent": "lightMyRequest",
+        "userId": "ocHPn7XMJOXJGHRzoN4SyqjShSXmIXDG",
+        "id": "mLlzoBETPDQldamtXUC0DoI965Ll1EyS"
+      },
+      "user": {
+        "name": "Phone fixture owner",
+        "email": "phone-owner@example.test",
+        "emailVerified": false,
+        "image": null,
+        "createdAt": "2026-11-27T00:16:11.389Z",
+        "updatedAt": "2026-11-27T00:16:11.389Z",
+        "id": "ocHPn7XMJOXJGHRzoN4SyqjShSXmIXDG"
+      }
+    }
+  }
+}

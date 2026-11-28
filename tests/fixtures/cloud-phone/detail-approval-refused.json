@@ -1,0 +1,206 @@
+{
+  "capturedAt": "2026-11-27T00:16:14.715Z",
+  "sourceCommit": "29448ae",
+  "request": {
+    "method": "GET",
+    "url": "/api/chat/conversations/7e73971c-d2f2-4884-87b0-dfa048faea29"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "7e73971c-d2f2-4884-87b0-dfa048faea29",
+      "title": "افتح http://fixture-site.test/ads",
+      "status": "idle",
+      "updatedAt": "2026-11-27T00:16:14.683Z",
+      "browserAccount": null,
+      "messages": [
+        {
+          "id": "e4904648-0e24-44f1-8a86-5d06c9e72d2c",
+          "role": "user",
+          "text": "افتح http://fixture-site.test/ads",
+          "createdAt": "2026-11-27T00:16:12.983Z"
+        },
+        {
+          "id": "0042b3d9-c655-44b1-bce3-35cec4741ccd",
+          "role": "assistant",
+          "text": "أريد إرسال «رفض ملفات الارتباط غير الضرورية» إلى fixture-site.test. هل أتابع؟",
+          "createdAt": "2026-11-27T00:16:14.037Z"
+        },
+        {
+          "id": "1e4b225d-51af-4966-9e10-05870eaf1573",
+          "role": "user",
+          "text": "لا تفعل ذلك",
+          "createdAt": "2026-11-27T00:16:14.095Z"
+        },
+        {
+          "id": "c9b5d2b6-56f9-4657-98af-a6055a59c5e0",
+          "role": "assistant",
+          "text": "وصلت إلى صفحة إعدادات ملفات الارتباط في fixture-site.test.",
+          "createdAt": "2026-11-27T00:16:14.680Z"
+        }
+      ],
+      "question": null,
+      "approval": null,
+      "secure": null,
+      "browser": {
+        "url": "http://fixture-site.test/consent",
+        "title": "Cookie consent",
+        "observedAt": "2026-11-27T00:16:14.666Z",
+        "live": true,
+        "screenUrl": "/api/chat/conversations/7e73971c-d2f2-4884-87b0-dfa048faea29/screen?v=fb6ff7ea-b7f7-47f4-a235-6b5ee4c1906e",
+        "recovery": "available",
+        "recoveryToken": "23153fec99b6a99fcee3efed256b3f89c68800585e9d5197644209ac14d9b3b5"
+      },
+      "progress": null,
+      "steps": [
+        {
+          "id": "88d77a8c-f197-49ec-a744-d9634281152a",
+          "text": "فتح fixture-site.test",
+          "createdAt": "2026-11-27T00:16:13.023Z"
+        }
+      ],
+      "error": null,
+      "configured": false,
+      "capabilities": {
+        "chatModel": false,
+        "available": [
+          "computation",
+          "web",
+          "browser",
+          "memory",
+          "knowledge",
+          "documents",
+          "sites",
+          "planner",
+          "letters",
+          "pc"
+        ]
+      },
+      "visibility": {
+        "version": 1,
+        "level": 2,
+        "code": "browser_steps",
+        "reason": "خطوات داخل موقع في متصفح مخفي",
+        "lang": "ar",
+        "decidedAt": "2026-11-27T00:16:14.683Z",
+        "requested": 2,
+        "canView": true,
+        "history": [
+          {
+            "level": 2,
+            "code": "browser_steps",
+            "at": "2026-11-27T00:16:14.683Z"
+          }
+        ]
+      },
+      "campaign": null,
+      "version": "55625b98f9e3d3b857c93f56",
+      "run": {
+        "id": "20c016e1-0592-4e54-926a-29982e0aa9fe",
+        "phase": "partial",
+        "path": "action",
+        "engine": {
+          "kind": "rules",
+          "modelCalls": 0
+        },
+        "context": {
+          "objective": "افتح http://fixture-site.test/ads",
+          "previousTurns": 0,
+          "constraints": [],
+          "corrections": [],
+          "capabilities": [
+            "computation",
+            "web",
+            "browser",
+            "memory",
+            "knowledge",
+            "documents",
+            "sites",
+            "planner",
+            "letters",
+            "pc"
+          ],
+          "limitations": [
+            "chatModel"
+          ]
+        },
+        "plan": {
+          "version": 1,
+          "steps": [
+            {
+              "id": "approve-1",
+              "outcome": "رفض ملفات الارتباط غير الضرورية",
+              "dependsOn": [],
+              "capability": "browser.submit",
+              "input": "POST http://fixture-site.test/consent",
+              "acceptance": [
+                "نُفّذ الإجراء الموافَق عليه بتفاصيله نفسها مرة واحدة"
+              ],
+              "verification": "observation",
+              "required": true,
+              "risk": "irreversible_write",
+              "authorization": "refused",
+              "state": "invalidated",
+              "attempts": 0
+            }
+          ]
+        },
+        "evidence": [
+          {
+            "id": "49f7e2461a9dec57",
+            "stepId": null,
+            "kind": "observation",
+            "label": "HTTP 200",
+            "reference": "http://fixture-site.test/consent",
+            "observedAt": "2026-11-27T00:16:14.005Z",
+            "independent": true
+          }
+        ],
+        "permissions": [
+          {
+            "id": "5772e8a2-45c5-4ba9-b6c9-bdd81e671a89",
+            "stepId": "approve-1",
+            "action": "رفض ملفات الارتباط غير الضرورية",
+            "target": "POST http://fixture-site.test/consent",
+            "consequence": "يُرسَل طلب POST إلى fixture-site.test بالقيم المعروضة، مرة واحدة.",
+            "reversible": null,
+            "fingerprint": "002406b88bc548484087ad7a4f07f080d6251f337122b5b0bb827f8c1178f71c",
+            "decision": "refused",
+            "reason": "owner_refused",
+            "decidedAt": "2026-11-27T00:16:14.096Z"
+          }
+        ],
+        "verification": {
+          "status": "failed",
+          "criteria": [
+            {
+              "id": "step:approve-1",
+              "label": "رفض ملفات الارتباط غير الضرورية",
+              "required": true,
+              "status": "failed"
+            },
+            {
+              "id": "navigation",
+              "label": "المتصفح وصل إلى الصفحة المطلوبة",
+              "required": false,
+              "status": "unverified"
+            }
+          ],
+          "checkedAt": "2026-11-27T00:16:14.682Z"
+        },
+        "verdict": {
+          "status": "partial",
+          "reason": "owner_refused",
+          "decidedAt": "2026-11-27T00:16:14.682Z"
+        },
+        "repairs": {
+          "used": 0,
+          "limit": 1
+        },
+        "steeredFrom": null,
+        "sequence": 10,
+        "updatedAt": "2026-11-27T00:16:14.684Z"
+      }
+    }
+  }
+}

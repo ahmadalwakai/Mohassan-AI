@@ -1,0 +1,124 @@
+{
+  "capturedAt": "2026-11-27T00:16:16.250Z",
+  "sourceCommit": "29448ae",
+  "request": {
+    "method": "GET",
+    "url": "/api/chat/conversations/02ebfeba-0028-461b-b05e-9b3ed15874ce"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "02ebfeba-0028-461b-b05e-9b3ed15874ce",
+      "title": "مرحبا، كيف حالك اليوم؟",
+      "status": "idle",
+      "updatedAt": "2026-11-27T00:16:16.222Z",
+      "browserAccount": null,
+      "messages": [
+        {
+          "id": "448cad5e-9559-4683-bd94-c3c25e6b1074",
+          "role": "user",
+          "text": "مرحبا، كيف حالك اليوم؟",
+          "createdAt": "2026-11-27T00:16:16.188Z"
+        },
+        {
+          "id": "b0d3686d-1b40-4f8b-80af-eb25895b192b",
+          "role": "assistant",
+          "text": "مرحبًا! كيف أساعدك؟",
+          "createdAt": "2026-11-27T00:16:16.218Z"
+        }
+      ],
+      "question": null,
+      "approval": null,
+      "secure": null,
+      "browser": null,
+      "progress": null,
+      "steps": [],
+      "error": null,
+      "configured": false,
+      "capabilities": {
+        "chatModel": false,
+        "available": [
+          "computation",
+          "web",
+          "browser",
+          "memory",
+          "knowledge",
+          "documents",
+          "sites",
+          "planner",
+          "letters",
+          "pc"
+        ]
+      },
+      "visibility": {
+        "version": 1,
+        "level": 0,
+        "code": "local_chat",
+        "reason": "رد مباشر؛ لا يحتاج متصفحًا",
+        "lang": "ar",
+        "decidedAt": "2026-11-27T00:16:16.222Z",
+        "requested": 0,
+        "canView": true,
+        "history": [
+          {
+            "level": 0,
+            "code": "local_chat",
+            "at": "2026-11-27T00:16:16.222Z"
+          }
+        ]
+      },
+      "campaign": null,
+      "version": "44762bbc9b1c31fa01cbca44",
+      "run": {
+        "id": "f821553c-37c4-40c5-aaf2-3363d580360a",
+        "phase": "completed",
+        "path": "direct",
+        "engine": {
+          "kind": "rules",
+          "modelCalls": 0
+        },
+        "context": {
+          "objective": "مرحبا، كيف حالك اليوم؟",
+          "previousTurns": 0,
+          "constraints": [],
+          "corrections": [],
+          "capabilities": [
+            "computation",
+            "web",
+            "browser",
+            "memory",
+            "knowledge",
+            "documents",
+            "sites",
+            "planner",
+            "letters",
+            "pc"
+          ],
+          "limitations": [
+            "chatModel"
+          ]
+        },
+        "plan": null,
+        "evidence": [],
+        "permissions": [],
+        "verification": {
+          "status": "not_applicable",
+          "criteria": [],
+          "checkedAt": "2026-11-27T00:16:16.221Z"
+        },
+        "verdict": {
+          "status": "completed",
+          "reason": "answered",
+          "decidedAt": "2026-11-27T00:16:16.221Z"
+        },
+        "repairs": {
+          "used": 0,
+          "limit": 1
+        },
+        "steeredFrom": null,
+        "sequence": 4,
+        "updatedAt": "2026-11-27T00:16:16.222Z"
+      }
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "capturedAt": "2026-11-27T00:16:16.353Z",
+  "sourceCommit": "29448ae",
+  "request": {
+    "method": "GET",
+    "url": "/api/windows/devices/d98a9b67-e17c-4e6e-b0ce-54d3a44c97a5/frame"
+  },
+  "response": {
+    "status": 409,
+    "body": {
+      "error": {
+        "code": "WINDOWS_FRAME_UNAVAILABLE",
+        "message": "لا توجد صورة حديثة ضمن إذن مشاهدة صالح."
+      }
+    }
+  }
+}

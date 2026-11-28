@@ -2,7 +2,7 @@
  * Records what the iPhone app receives from the cloud server, the same routes the web uses: sign-in, the chat
  * with its questions, approvals and request keys, and Windows remote control. A real server (the current brain,
  * no model, an in-memory database, a browser on a small fixture site) answers every call; the Swift check in
- * apps/ios/Tools (branch feat/iphone-cloud) decodes the same files, so a shape the server stopped sending fails there.
+ * apps/ios/Tools decodes the same files, so a shape the server stopped sending fails there.
  *
  * Usage: npx tsx scripts/cloud-phone-fixtures.ts <output directory>
  * Only *.json files in the output directory are replaced. No network beyond 127.0.0.1.
@@ -13,7 +13,6 @@ import { mkdir, mkdtemp, readdir, rm, realpath, unlink, writeFile } from 'node:f
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { createApplication } from '../apps/server/src/app.ts';
 
 const target = process.argv[2];
 if (!target) { console.error('Usage: npx tsx scripts/cloud-phone-fixtures.ts <output directory>'); process.exit(2); }
@@ -51,12 +50,17 @@ function fixtureSite() {
 }
 
 async function main() {
+  // Use the server's test guard before importing the app, including its shadow classifiers.
+  process.env.VITEST = '1';
+  delete process.env.MOHASSAN_SCRATCH_CLASSIFIERS;
+  const { createApplication } = await import('../apps/server/src/app.ts');
   const site = fixtureSite();
   await new Promise<void>(done => site.listen(0, '127.0.0.1', done));
   const origin = `http://127.0.0.1:${(site.address() as { port: number }).port}`;
   const directory = await realpath(await mkdtemp(join(await realpath(tmpdir()), 'mohassan-cloud-phone-fixtures-')));
   const webOrigin = 'http://127.0.0.1:3000', secret = 'cloud-phone-fixture-internal-secret-0001', setupToken = 'cloud-phone-fixture-setup-token-000001';
   const owner = { name: 'Phone fixture owner', email: 'phone-owner@example.test', password: 'Phone-Owner-Fixture-Password-42' };
+  const wrongPassword = 'not-the-password-0000';
   // No model is configured: the brain answers with its own calculator, writer, planner and browser hands.
   const application = await createApplication({ authSecret: 'cloud-phone-fixture-auth-secret-00000001', internalSecret: secret, setupToken, webOrigin, production: false, runWorker: false,
     codingAllowedRoots: [directory], codingDataDir: join(directory, 'coding'), documentsDir: join(directory, 'documents'), browserProfileDir: join(directory, 'browser'),
@@ -65,16 +69,23 @@ async function main() {
   const commit = (() => { try { return execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim(); } catch { return 'unknown'; } })();
   const written: { file: string; status: number; conversationStatus?: string }[] = [];
   let cookie = '';
+  const redactions = new Map([[owner.password, '[fixture password]'], [wrongPassword, '[wrong fixture password]']]);
   /** What the web proxy sends to the server for the phone: the internal secret, the site's origin and the session cookie. */
   const web = (extra: Record<string, string> = {}) => ({ origin: webOrigin, 'x-mohassan-internal': secret, ...(cookie ? { cookie } : {}), ...extra });
-  /** The fixture site's address and the session cookie change with every run; the recorded text names neither. */
-  const stable = (text: string) => text.split(origin).join('http://fixture-site.test').split(origin.replace('http://', '')).join('fixture-site.test');
+  /** Preserve wire shapes while excluding ephemeral credentials from the recordings. */
+  const stable = (text: string) => {
+    let result = text.replaceAll(origin, 'http://fixture-site.test').replaceAll(origin.replace('http://', ''), 'fixture-site.test');
+    for (const [value, replacement] of redactions) result = result.replaceAll(value, replacement);
+    return result;
+  };
 
   async function record(file: string, method: 'GET' | 'POST' | 'DELETE', url: string, payload?: unknown, options: { key?: string; signedOut?: boolean; headers?: string[] } = {}) {
     const headers = options.signedOut ? { origin: webOrigin, 'x-mohassan-internal': secret } : web(options.key ? { 'idempotency-key': options.key } : {});
     const response = await app.inject({ method, url, headers, ...(payload === undefined ? {} : { payload: payload as object }) });
-    const text = stable(response.body);
-    const body = text ? JSON.parse(text) : null;
+    const body = response.body ? response.json() : null;
+    if (url === '/api/auth/sign-in/email' && typeof body?.token === 'string' && body.token) redactions.set(body.token, '[fixture token]');
+    if (url === '/api/auth/get-session' && typeof body?.session?.token === 'string' && body.session.token) redactions.set(body.session.token, '[fixture token]');
+    if (url === '/api/windows/pairing' && typeof body?.code === 'string' && body.code) redactions.set(body.code, 'A'.repeat(16));
     const kept: Record<string, string[]> = {};
     for (const name of options.headers ?? []) {
       const value = response.headers[name];
@@ -82,7 +93,7 @@ async function main() {
     }
     const envelope = { capturedAt: new Date().toISOString(), sourceCommit: commit,
       request: { method, url: stable(url), ...(options.key ? { idempotencyKey: options.key } : {}), ...(payload === undefined ? {} : { body: JSON.parse(stable(JSON.stringify(payload))) }) },
-      response: { status: response.statusCode, ...(Object.keys(kept).length ? { headers: kept } : {}), body } };
+      response: { status: response.statusCode, ...(Object.keys(kept).length ? { headers: kept } : {}), body: response.body ? JSON.parse(stable(response.body)) : null } };
     await writeFile(join(OUT, `${file}.json`), JSON.stringify(envelope, null, 2) + '\n', 'utf8');
     written.push({ file, status: response.statusCode, ...(body && typeof body === 'object' && 'status' in body && typeof body.status === 'string' ? { conversationStatus: body.status } : {}) });
     return { status: response.statusCode, body, raw: response };
@@ -112,7 +123,7 @@ async function main() {
     // 0. Signing in, as the phone does it: the session cookie comes back in Set-Cookie and is sent on every later call.
     const setup = await app.inject({ method: 'POST', url: '/api/setup', headers: web(), payload: { ...owner, setupToken } });
     if (setup.statusCode !== 200) throw new Error(`setup: ${setup.statusCode} ${setup.body}`);
-    await record('auth-sign-in-wrong-password', 'POST', '/api/auth/sign-in/email', { email: owner.email, password: 'not-the-password-0000', rememberMe: true }, { signedOut: true });
+    await record('auth-sign-in-wrong-password', 'POST', '/api/auth/sign-in/email', { email: owner.email, password: wrongPassword, rememberMe: true }, { signedOut: true });
     const signIn = await record('auth-sign-in', 'POST', '/api/auth/sign-in/email', { email: owner.email, password: owner.password, rememberMe: true }, { signedOut: true, headers: ['set-cookie'] });
     if (signIn.status !== 200) throw new Error(`sign-in: ${signIn.status}`);
     cookie = [signIn.raw.headers['set-cookie']].flat().filter(Boolean).map(value => String(value).split(';')[0]).join('; ');
