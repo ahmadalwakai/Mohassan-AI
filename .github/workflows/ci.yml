@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [feat/model-council]
+  push:
+    branches: [feat/model-council]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fast:
+    name: Fast checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24.22.3'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12.14'
+      - run: npm ci
+      - run: npm run typecheck
+      - name: Run production guard tests
+        run: >-
+          npm test --
+          tests/config-boundary.test.ts
+          tests/external-ai-cut.test.ts
+          tests/api-security.test.ts
+          tests/members-access.test.ts
+          tests/platform-wave-migrations.test.ts
+          tests/chat-idempotency.test.ts
+          tests/chat-wait.test.ts
+
+  full:
+    name: Full Vitest (shard ${{ matrix.shard }}/4)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24.22.3'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12.14'
+      - run: npm ci
+      - name: Install Chromium for Playwright tests
+        run: npx playwright install --with-deps chromium
+      - name: Run full Vitest shard
+        run: npm test -- --shard=${{ matrix.shard }}/4

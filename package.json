@@ -3,7 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "overrides": {
-    "zod": "4.6.7"
+    "zod": "4.6.7",
+    "lighthouse@12.8.2": {
+      "@sentry/node@9.47.2": {
+        "@opentelemetry/instrumentation-knex": "0.65.0",
+        "@opentelemetry/instrumentation-mysql": "0.67.0",
+        "@opentelemetry/instrumentation-tedious": "0.40.0"
+      }
+    }
   },
   "type": "module",
   "workspaces": [
