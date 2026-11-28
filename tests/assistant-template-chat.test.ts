@@ -51,6 +51,32 @@ describe('complete template answers through the real chat', () => {
     expect(completed.detail.messages.at(-2)?.text).not.toContain('companion text');
     expect(completed.detail.messages.at(-2)?.text).toContain(values.tasks);
   });
+  it('keeps actionable weekly planning questions and explains an interrupted session', async () => {
+    const draft = await start('خطط لي أسبوعي');
+    expect(draft.question?.fields?.map(field => field.id)).toEqual(['tasks', 'days', 'fixed']);
+    expect(draft.run?.phase).toBe('awaiting_input');
+    await database.db.updateTable('chat_runs').set({ lease_expires_at: new Date(0) })
+      .where('id', '=', draft.run!.id).execute();
+    await control.recoverExpired();
+
+    const reopened = await control.detail(owner, draft.id);
+    expect(reopened).toMatchObject({ status: 'failed', question: null, run: { verdict: { reason: 'interrupted' } } });
+    const prompts = [/ما مهامك هذا الأسبوع/u, /أي أيام تعمل فيها/u, /هل عندك مواعيد ثابتة/u];
+    for (const prompt of prompts) {
+      expect(draft.question?.prompt).toMatch(prompt);
+      expect(draft.messages.at(-1)?.text).toMatch(prompt);
+      expect(reopened.messages.at(-1)?.text).toMatch(prompt);
+    }
+    expect(reopened.error).toMatch(/انقطع التخطيط.*أعد طلب الخطة/u);
+    await control.send(owner, draft.id, { text: 'خطط لي أسبوعي' });
+    await control.settled(draft.id);
+    const restarted = await control.detail(owner, draft.id);
+    expect(restarted).toMatchObject({ status: 'waiting_user', error: null });
+    expect(restarted.question?.id).toBeDefined();
+    expect(restarted.question?.id).not.toBe(draft.question?.id);
+    await control.cancel(owner, draft.id);
+    expect(external).not.toHaveBeenCalled();
+  });
   it('asks the letter fields for a modal owned-subject request and leaves delivery incomplete', async () => {
     const draft = await start('Please write a letter to my clients and send it.');
     expect(draft.question?.fields?.map(field => field.id)).toEqual(['to', 'kind', 'details', 'from']);

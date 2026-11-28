@@ -7,7 +7,7 @@ import base from './playwright.config';
  */
 export default defineConfig({
   ...base,
-  testMatch: '**/agent-execution.spec.ts',
+  testMatch: ['**/agent-execution.spec.ts', '**/assistant-weekly-planning.spec.ts'],
   globalSetup: './tests/e2e/browser-autonomy-setup.ts',
   outputDir: './test-results/agent-execution',
 });

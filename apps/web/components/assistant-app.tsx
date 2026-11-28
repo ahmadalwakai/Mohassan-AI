@@ -322,8 +322,11 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
   const status = conversation?.status;
   const hasThread = Boolean(conversation?.messages.length);
   useEffect(() => {
-    if (!conversation || status !== "running") return;
+    const working = status === "running";
+    if (!conversation || !working && status !== "waiting_user") return;
     const id = conversation.id;
+    // A pending question can expire while its tab stays open. A slow check keeps the card tied to the live run.
+    const pollMs = working ? POLL_MS : HIDDEN_POLL_MS;
     let active = true;
     let inFlight = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -336,17 +339,17 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
     const schedule = (delay: number) => { clearTimeout(timer); timer = setTimeout(poll, delay); };
     const poll = () => {
       if (!active) return;
-      if (inFlight) { schedule(POLL_MS); return; }
+      if (inFlight) { schedule(pollMs); return; }
       inFlight = true;
-      const waiting = Boolean(since) && !document.hidden;
+      const waiting = working && Boolean(since) && !document.hidden;
       const sent = Date.now(), asked = since;
-      let next = POLL_MS;
+      let next = pollMs;
       void api<Conversation>(`/api/chat/conversations/${id}${waiting ? `?since=${asked}&wait=${WAIT_MS}` : ""}`, { signal: held.signal }).then((result) => {
         if (!active || selection.current !== id) return;
         // A slow answer never moves the view back past a newer one (run-view.ts isNewerSnapshot).
         setConversation((current) => isNewerSnapshot(current, result) ? result : current);
-        setError("");
-        if (result.status !== "running") void refreshHistory().catch(() => {});
+        if (working || result.status !== status) setError("");
+        if (result.status !== status) void refreshHistory().catch(() => {});
         since = result.version;
         // Waited on and answered: ask again at once. The same mark back within moments means the server did not wait.
         // An answer that shows the task ended waits POLL_MS instead: this effect is replaced within moments and its timer
@@ -357,7 +360,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
     };
     const shown = () => { if (!document.hidden) schedule(0); };
     document.addEventListener("visibilitychange", shown);
-    schedule(document.hidden ? HIDDEN_POLL_MS : since ? 0 : POLL_MS);
+    schedule(document.hidden ? HIDDEN_POLL_MS : working && since ? 0 : pollMs);
     return () => { active = false; clearTimeout(timer); held.abort(); document.removeEventListener("visibilitychange", shown); };
   }, [conversation?.id, status, refreshHistory]);
 

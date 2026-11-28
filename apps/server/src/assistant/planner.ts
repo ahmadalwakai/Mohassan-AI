@@ -33,16 +33,18 @@ export function planningTask(request: string): PlanningTask | null {
 /** One card with three questions; the usual working week is chosen in advance and can be changed. */
 export function planningQuestion(task: PlanningTask) {
   const ar = task.lang === 'ar';
-  return {
-    prompt: ar ? 'أرتّب لك الأسبوع من مهامك أنت، دون أن أضيف شيئاً من عندي. أجب عن هذه الأسئلة:' : "I'll lay out your week from your own tasks, adding nothing of my own. Answer these:",
-    fields: [
-      { id: 'tasks', multiline: true, prompt: ar ? 'ما مهامك هذا الأسبوع؟ افصل بينها بفاصلة أو سطر، وضع ! قبل المهم.' : 'What are your tasks this week? Separate them with commas or line breaks; put ! before the important ones.', suggestions: [],
-        placeholder: ar ? 'مثلاً: !تسليم التقرير، مراجعة الميزانية، الاتصال بالمورد' : 'e.g. !send the report, review the budget, call the supplier' },
-      { id: 'days', prompt: ar ? 'أي أيام تعمل فيها؟' : 'Which days do you work?', suggestions: SPANS[task.lang].map(([label]) => ({ label })), selected: [0] },
-      { id: 'fixed', multiline: true, prompt: ar ? 'هل عندك مواعيد ثابتة؟ اذكر اليوم مع كل موعد (اختياري).' : 'Any fixed appointments? Name the day with each one (optional).', suggestions: [],
-        placeholder: ar ? 'مثلاً: الثلاثاء اجتماع الفريق، الخميس طبيب الأسنان' : 'e.g. Tuesday team meeting, Thursday dentist' },
-    ],
-  };
+  const intro = ar ? 'سأرتّب أسبوعك حسب مهامك وأيام عملك ومواعيدك.' : "I'll lay out your week around your tasks, working days, and appointments.";
+  const fields = [
+    { id: 'tasks', multiline: true, prompt: ar ? 'ما مهامك هذا الأسبوع؟ افصل بينها بفاصلة أو سطر، وضع ! قبل المهم.' : 'What are your tasks this week? Separate them with commas or line breaks; put ! before the important ones.', suggestions: [],
+      placeholder: ar ? 'مثلاً: !تسليم التقرير، مراجعة الميزانية، الاتصال بالمورد' : 'e.g. !send the report, review the budget, call the supplier' },
+    { id: 'days', prompt: ar ? 'أي أيام تعمل فيها؟' : 'Which days do you work?', suggestions: SPANS[task.lang].map(([label]) => ({ label })), selected: [0] },
+    { id: 'fixed', multiline: true, prompt: ar ? 'هل عندك مواعيد ثابتة؟ اذكر اليوم مع كل موعد، أو أجب «لا توجد مواعيد».' : 'Any fixed appointments? Name the day with each one, or answer “No fixed appointments.”',
+      suggestions: [{ label: ar ? 'لا توجد مواعيد' : 'No fixed appointments' }],
+      placeholder: ar ? 'مثلاً: الثلاثاء اجتماع الفريق، الخميس طبيب الأسنان' : 'e.g. Tuesday team meeting, Thursday dentist' },
+  ];
+  // The message remains in the thread after its interactive card is gone.
+  const questions = fields.map((field, index) => `${index + 1}. ${field.prompt}`).join('\n');
+  return { prompt: `${intro}\n\n${questions}`, fields };
 }
 
 const items = (answer: string) => answer.split(/[،,;؛\n]+/u).map(item => item.trim()).filter(Boolean);

@@ -5,8 +5,14 @@ import { ChevronDown } from "lucide-react";
 import type { ModelCouncil, ModelCouncilMember } from "@mohassan/contracts";
 import styles from "./model-council.module.css";
 
-const OUTCOME: Record<ModelCouncilMember["outcome"], string> = { ok: "أجاب", abstained: "امتنع", failed: "تعذّر", timeout: "انتهى وقته" };
-const JUDGE: Record<NonNullable<ModelCouncilMember["judge"]>, string> = { send: "يقبله الحَكَم", fix: "يقبله الحَكَم مع إصلاح", withhold: "يحجبه الحَكَم" };
+const OUTCOME: Record<ModelCouncilMember["outcome"], string> = { ok: "اكتمل التشغيل", abstained: "امتنع عن الإجابة", failed: "تعذّر التشغيل", timeout: "انتهى وقت التشغيل" };
+const JUDGE: Record<NonNullable<ModelCouncilMember["judge"]>, string> = {
+  send: "فحص الرد بلا حجب", fix: "فحص الرد يقترح تعديلًا", withhold: "فحص الرد يوصي بالحجب", failed: "تعذّر فحص الرد",
+};
+const PUBLICATION: Record<NonNullable<ModelCouncilMember["publication"]>, string> = {
+  pipeline: "أولوية النشر للمحرك", corroborated: "بديل مشروط بتعذّر جواب المحرك",
+  "owner-fallback": "خيار تجريبي أخير للمالك", ineligible: "غير مؤهل للنشر في هذا الدور",
+};
 
 function seconds(ms: number): string {
   return ms < 1000 ? `${ms} م.ث` : `${(ms / 1000).toFixed(1)} ث`;
@@ -26,16 +32,30 @@ function Understanding({ member }: { member: ModelCouncilMember }) {
   </li>;
 }
 
+function sourceMatchLabel({ inEvidence, publication }: ModelCouncilMember): string {
+  if (inEvidence === undefined) return "مطابقة المصدر غير مقيسة";
+  if (publication === undefined) return inEvidence
+    ? "ظهر تشابه تقريبي في الأدلة في الفحص السابق"
+    : "لم يظهر تشابه تقريبي في الأدلة في الفحص السابق";
+  return inEvidence ? "ظهرت مطابقة نصية في الأدلة" : "لم تظهر مطابقة نصية في الأدلة";
+}
+
 function Answer({ member }: { member: ModelCouncilMember }) {
   return <li className={`${styles.answer} ${member.chosen ? styles.chosen : ""}`} data-chosen={member.chosen ? "true" : undefined}>
     <div className={styles.answerHead}>
       <span className={styles.name}>{member.label}</span>
-      {member.chosen ? <span className={`${styles.chip} ${styles.agree}`}>الجواب المرسل</span> : null}
+      {member.chosen ? <span className={`${styles.chip} ${styles.agree}`}>اختيار المجلس</span> : null}
       <span className={styles.chip}>{OUTCOME[member.outcome]}</span>
-      {member.judge ? <span className={`${styles.chip} ${member.judge === "withhold" ? styles.differ : ""}`}>{JUDGE[member.judge]}</span> : null}
-      {member.inEvidence === undefined ? null
-        : <span className={`${styles.chip} ${member.inEvidence ? styles.agree : styles.differ}`}>{member.inEvidence ? "موجود في الصفحات" : "غير موجود في الصفحات"}</span>}
-      {member.agreements ? <span className={styles.chip}>وافقه {member.agreements}</span> : null}
+      {member.outcome === "ok" ? <>
+        <span className={`${styles.chip} ${member.judge === "withhold" || member.judge === "failed" ? styles.differ : ""}`}>
+          {member.judge ? JUDGE[member.judge] : "نتيجة فحص الرد غير مسجّلة"}
+        </span>
+        <span className={styles.chip}>{sourceMatchLabel(member)}</span>
+      </> : null}
+      {member.agreements ? <span className={styles.chip}>{member.publication === undefined
+        ? `تشابه تقريبي مع ${member.agreements} من الأعضاء في الفحص السابق`
+        : `مطابقة نصية مع ${member.agreements} من الأعضاء`}</span> : null}
+      {member.publication ? <span className={styles.chip}>{PUBLICATION[member.publication]}</span> : null}
       <span className={styles.note}>{seconds(member.elapsedMs)}</span>
     </div>
     {member.output ? <p dir="auto" className={styles.text}>{member.output}</p> : null}
@@ -66,6 +86,7 @@ export function CouncilPanel({ council, id }: { council: ModelCouncil; id?: stri
     </section> : null}
     {answers.length ? <section aria-label="أجوبة الأعضاء">
       <h3 className={styles.heading}>أجوبة الأعضاء</h3>
+      <p className={styles.note}>يفحص الحَكَم صياغة الرد وبعض شروط السند عند توفره. صحة الأجوبة غير مقيسة في هذا الفحص.</p>
       <ol className={styles.list}>{answers.map((member, index) => <Answer key={`${member.model}-${index}`} member={member} />)}</ol>
     </section> : null}
   </div>;

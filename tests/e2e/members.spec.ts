@@ -5,7 +5,7 @@ import { signInAsFixtureOwner } from './helpers';
 test('an invited member joins from a one-time link and reaches only cloud services', async ({ page, browser }, testInfo) => {
   // Includes the real owner's throttled sign-in and an11-second declared auth
   // Retry-After below; do not race the fixture's10-second sign-in window.
-  test.setTimeout(60_000);
+  test.setTimeout(90_000);
   await signInAsFixtureOwner(page);
   const ownerSession = await (await page.request.get('/api/auth/get-session')).json();
   await page.getByRole('navigation', { name: 'التنقل الرئيسي' }).getByRole('button', { name: 'الأعضاء' }).click();
@@ -59,6 +59,11 @@ test('an invited member joins from a one-time link and reaches only cloud servic
     await member.getByRole('button', { name: /العودة إلى المحادثة/ }).click();
     await expect(member.getByRole('heading', { name: /كيف أساعدك اليوم/ })).toBeVisible();
     await member.screenshot({ path: testInfo.outputPath('member-chat.png'), fullPage: true });
+
+    await member.goto('/#tools/models');
+    await expect(member.getByRole('heading', { name: 'Google Ads' })).toBeVisible();
+    await expect(member.getByRole('navigation', { name: 'التنقل الرئيسي' })).toHaveCount(0);
+    expect((await member.request.get('/api/models')).status()).toBe(403);
 
     // The same link cannot make a second account.
     const reused = await guest.newPage();

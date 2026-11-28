@@ -87,7 +87,7 @@ function provenanceFor(messages: readonly StoredMessage[], runs: readonly Stored
       origins,
       quotes: origins.includes('tool-output') ? [] : conversationPublicToolQuotes(run.state),
       couldRepeatPriorAnswer: Boolean(run.called_model) || (run.state?.agentRun?.modelCalls ?? 0) > 0
-        || Array.isArray(run.state?.trail) && run.state.trail.some(entry => entry?.action === 'shorten_previous_answer'),
+        || Array.isArray(run.state?.trail) && run.state.trail.some(entry => entry?.action === 'shorten_previous_answer' || entry?.action === 'explain_previous_answer'),
     };
   });
   const byId = new Map(indexed.map(run => [run.id, run]));

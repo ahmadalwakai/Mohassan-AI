@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BrowserError, type AgentAction, type AgentElement, type AgentPage } from '@mohassan/browser';
-import { describe as describeReply, excerpt, headlines, findSearchBox, findTarget, ordinalOf, parseHands, realUrl, relevantLines, resultLinks, runHands, readableText, webQuestion, WIKI_SEARCH, type HandsIO, type HandsPlan } from '../apps/server/src/assistant/hands.js';
+import { describe as describeReply, excerpt, headlines, findSearchBox, findTarget, needsDefinition, ordinalOf, parseHands, realUrl, relevantLines, resultLinks, runHands, readableText, webQuestion, WIKI_SEARCH, type HandsIO, type HandsPlan } from '../apps/server/src/assistant/hands.js';
 
 const el = (ref: string, role: string, label: string, extra: Partial<AgentElement> = {}): AgentElement => ({ ref, role, label, inViewport: true, ...extra });
 const pageOf = (url: string, elements: AgentElement[], text = ''): AgentPage => ({
@@ -501,6 +501,52 @@ describe('question answers from the web', () => {
       + 'Photosynthesis is really important for animals because it feeds the food chain.';
     expect(relevantLines(pageOf('https://example.com/leaf', [], plain), 'What is photosynthesis?', 3, true)[0]).toMatch(/^Photosynthesis is really/u);
   });
+
+  it.each([
+    ['What is the Internet of Things?', 'The Internet of Things is a network of physical objects connected to the internet.'],
+    ['What is an AI chatbot?', 'An AI chatbot is a program that uses artificial intelligence to converse with users.'],
+  ])('retains the whole subject phrase for definitions: %s', (question, definition) => {
+    const page = pageOf('https://example.com/guide', [], definition);
+    expect(relevantLines(page, question, 1, true, { requireDefinition: true })).toEqual([definition]);
+  });
+
+  it.each([
+    ['What is the difference between TCP and UDP', 'The main difference between TCP and UDP is that TCP is connection-oriented while UDP sends independent datagrams.'],
+    ['ما هو الفرق بين TCP و UDP', 'يكمن الفرق بين TCP و UDP في أن TCP ينشئ اتصالًا، بينما يرسل UDP حزمًا مستقلة.'],
+    ['What is TCP vs UDP', 'The main difference between TCP and UDP is that TCP is connection-oriented while UDP sends independent datagrams.'],
+    ['What is the history of Rome', 'The history of Rome begins with settlements on the hills beside the Tiber River.'],
+    ['ما هو تاريخ الأندلس', 'يبدأ تاريخ الأندلس بدخول المسلمين إلى شبه الجزيرة الإيبيرية في القرن الثامن.'],
+    ['What is the treatment for migraine', 'Treatment for migraine includes pain relievers and medication to prevent frequent attacks.'],
+    ['ما هي مكونات الخلية', 'تشمل مكونات الخلية الغشاء البلازمي والسيتوبلازم والمادة الوراثية.'],
+    ['ما هي طريقة عمل الكيك', 'تبدأ طريقة عمل الكيك بمزج الدقيق والبيض والسكر ثم خبز الخليط في الفرن.'],
+  ])('answers comparisons and aspects without requiring a definition: %s', async (question, sentence) => {
+    expect(needsDefinition(question)).toBe(false);
+    const url = 'https://example.test/guide';
+    const article = pageOf(url, [], sentence);
+    const { io } = fakeIO({}, null, {}, { [url]: article });
+    io.search = async () => [hit(question, url)];
+    const outcome = await runHands({ steps: webQuestion(question)!, next: 0 }, io);
+    expect(outcome).toMatchObject({ kind: 'done', status: 'completed', text: expect.stringContaining(sentence) });
+    expect(outcome.kind === 'done' && outcome.text).toContain(url);
+  });
+
+  it.each([
+    'Compare TCP and UDP', 'What is the comparison between TCP and UDP',
+    'What is the method for making cake', 'ما هو علاج الشقيقة',
+    'What is the main use of limestone', 'What is the cause of earthquakes',
+    'What is the benefit of walking', 'What is the symptom of dehydration',
+    'What is the type of cell in this tissue', 'What is a component of blood',
+    'ما هي أنواع الخلايا', 'ما هي استخدامات الحجر الجيري', 'ما هي أعراض الجفاف',
+    'ما هي أسباب الزلازل', 'ما هي فوائد المشي',
+  ])('keeps other property and comparison questions out of the strict definition gate: %s', question => {
+    expect(needsDefinition(question)).toBe(false);
+  });
+
+  it.each(['ما هو ChatGPT', 'ما هو الذكاء الاصطناعي', 'What is VS Code?', 'What is history?'])(
+    'still requires a definition for a named concept: %s', question => {
+      expect(needsDefinition(question)).toBe(true);
+    },
+  );
 
   it.each([
     'ما معنى الذكاء الاصطناعي؟',

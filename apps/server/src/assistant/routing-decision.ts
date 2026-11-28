@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { standaloneMannersRoute } from './manners/chat.js';
+import { answerProvenanceRequest } from './answer-provenance.js';
 import { directRoute } from './brain.js';
-import { isCampaignRequest } from './campaign-request.js';
+import { isCampaignRequest, parseCampaignPlanRequest } from './campaign-request.js';
 import { recognizeEverydayClarification } from './everyday-clarification.js';
 import { parseHands, type HandsStep } from './hands.js';
 import { evaluateInlineDataFile } from './inline-data-file.js';
@@ -241,6 +242,12 @@ function* routingClaims(input: RequestRoutingInput, choices: ScratchRoutingChoic
     return { ...base('chat', 'chat', 'local_conversation', 'local_conversation'), resolution, ...(reply ? { localReply: reply } : {}) };
   }
   if (resolution.kind === 'answer') return base('reply', resolution.intent === 'unknown' && pending.success ? pending.data.route ?? 'unknown' : resolution.intent, 'resume', 'pending_answer');
+  if (sourceAssessment.source === 'prior_conversation' && answerProvenanceRequest(scopeRequest)) {
+    const decision = base('chat', 'chat', 'local_conversation', 'local_conversation');
+    return { ...decision, resolution: { ...decision.resolution, kind: 'follow_up', query: null,
+      sourceAssessment, ambiguities: [], nextState: previousContext } };
+  }
+  if (parseCampaignPlanRequest(scopeRequest)) return base('planning', 'planning', 'planning', 'explicit_handler');
   if (evaluateInlineDataFile(input.text) !== null) {
     const decision = base('writing', 'writing', 'writing', 'explicit_handler');
     const supplied: RequestScopeAssessment = { version: 1, source: 'supplied_content', operation: 'transform', scope: 'private',

@@ -36,6 +36,7 @@ import type { ShadowRouter } from './assistant/router.js';
 import type { ConversationShadow } from './assistant/conversation-state-shadow.js';
 import { enterConversationTurn, useLegacyConversationLookup } from './assistant/conversation-state-chat.js';
 import { publicConversationFollowup } from './assistant/public-conversation-followup.js';
+import { answerProvenanceRequest, explainPreviousAnswer, recordAnswerProvenance } from './assistant/answer-provenance.js';
 import type { JudgeShadow } from './assistant/judge-shadow.js';
 import { judge as judgeAnswer } from './assistant/judge.js';
 import { observeImageRelations, observeModelRelations, ruleBaseline } from './assistant/model-relations-shadow.js';
@@ -69,6 +70,7 @@ import { answerRuntimeStatus } from './assistant/runtime-status.js';
 import { evaluateSelfQuestion, type SelfFacts } from './assistant/self-knowledge.js';
 import { evaluateLocalSequence } from './assistant/local-sequence.js';
 import { isCampaignRequest } from './assistant/campaign-request.js';
+import { answerCampaignPlan, campaignPlanningTask, campaignPlanQuestion, composeCampaignPlan } from './assistant/campaign-planner.js';
 import { armProgressPause, createProgressRecovery, restoreProgressRecovery, resumeBrowserProgressAutomatically, resumeProgressAfterRetry, reviewProgressRecovery, type ProgressRecoveryContext } from './assistant/progress-recovery.js';
 import { rebindBrowserAction, reserveBrowserRecovery, transientBrowserFailure, type BrowserRecoveryEntry } from './assistant/browser-recovery.js';
 import { bootstrapRequestContext, parseRequestContextState, requestActionText, resolveRequestContext } from './assistant/request-context.js';
@@ -291,6 +293,13 @@ const PERSONAL_SIGN_IN_STOP = 'توقفت عند صفحة تسجيل الدخو�
 const GRANT_NEEDED_PROMPT = 'أحتاج إلى رؤية نافذة على كمبيوترك. افتح «التحكم بالكمبيوتر» من الأدوات المتقدمة، واربط الجهاز، واختر النافذة، وامنح إذنًا مؤقتًا، ثم اضغط «أكملت». ستُقرأ عناصر النافذة. وقد تُرسل العناصر أو الصورة إلى مزوّد النموذج المهيأ لهذه المحادثة إذا احتاجها الرد.';
 const LOCAL_READ_GRANT_PROMPT = 'افتح «التحكم بالكمبيوتر» من الأدوات المتقدمة، واربط الجهاز، واختر نافذة، وامنح إذن قراءة مؤقتًا، ثم اضغط «أكملت». سأقرأ عنوان النافذة والعناصر النصية المتاحة فيها.';
 
+function interruptedPlanningPrompt(status: string, state: Partial<BrainState> | null): string | undefined {
+  const lang = status === 'waiting_user' ? (state?.planner ?? state?.campaignPlan)?.lang : undefined;
+  if (!lang) return undefined;
+  return lang === 'ar' ? 'انقطع التخطيط بينما كانت الخطة تنتظر إجاباتك. أعد طلب الخطة ثم أجب عن أسئلة البطاقة الجديدة.'
+    : 'Planning was interrupted while waiting for your answers. Ask for the plan again, then answer the questions on the new card.';
+}
+
 /** Capture only a digest, before schema trimming or redaction can change literal note bytes. */
 function originalInputHash(raw: unknown, field: 'text' | 'goal'): string | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
@@ -510,7 +519,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   type Execution = { ownerId: string; id: string; runId: string; token: string; controller: AbortController; full: boolean;
     request?: string; previousRequest?: string | null; constraints?: UserRequestConstraints | null; state?: BrainState; page?: AgentPage;
     /** Pages this run read over HTTP (the last five, in memory only): the judge in shadow compares the reply's sentences with them. */
-    readPages?: AgentPage[] };
+    readPages?: AgentPage[];
+    councilReadUrls?: string[] };
   /** Tools that reach the owner's machine, projects or task runtime. */
   const OWNER_ONLY: ReadonlySet<string> = new Set(['workspace_list', 'code_change', 'studio_change', 'computer_view', 'computer_click', 'computer_type', 'computer_key', 'run_skill']);
   const fullReach = () => execution.getStore()?.full !== false;
@@ -703,7 +713,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const abandoned:{ownerId:string;state:unknown}[]=[];
     await db.transaction().execute(async tx => {
       const conversations = await tx.selectFrom('chat_conversations as c').innerJoin('chat_runs as r','r.id','c.active_run_id')
-        .select(['c.id','r.id as run_id','r.owner_id','r.state']).where('c.status','in',['running',...WAITING_STATUSES])
+        .select(['c.id','c.status','r.id as run_id','r.owner_id','r.state']).where('c.status','in',['running',...WAITING_STATUSES])
         .where(eb => eb.or([eb('r.lease_expires_at','<',sql<Date>`CURRENT_TIMESTAMP`),eb('r.worker_id','is',null)]))
         .forUpdate('c').skipLocked().limit(50).execute();
       for (const row of conversations) {
@@ -713,7 +723,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await tx.updateTable('chat_model_receipts').set({status:'unknown',error_code:'CHAT_LEASE_EXPIRED',finished_at:new Date()}).where('run_id','=',row.run_id).where('status','=','started').execute();
         await recordTerminalRun(tx, row.run_id, 'interrupted');
         await closeOpenCampaignTasks(tx, row.id, row.run_id, unresolved => campaignCancelEvent('run_interrupted', unresolved));
-        await tx.updateTable('chat_conversations').set({status:'failed',active_run_id:null,progress:null,question:null,approval:null,secure:null,error:'انتهت مهلة العامل أو انقطع. لم يُكرر أي إجراء؛ راجع الأثر قبل طلب جديد.',updated_at:new Date()}).where('id','=',row.id).execute();
+        await tx.updateTable('chat_conversations').set({status:'failed',active_run_id:null,progress:null,question:null,approval:null,secure:null,
+          error:interruptedPlanningPrompt(row.status, row.state) ?? 'انتهت مهلة العامل أو انقطع. لم يُكرر أي إجراء؛ راجع الأثر قبل طلب جديد.',updated_at:new Date()}).where('id','=',row.id).execute();
         abandoned.push({ownerId:row.owner_id,state:row.state});
       }
     });
@@ -839,6 +850,18 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       ...(experiment && { experiment }),
       // The council's members quote model outputs and page titles: the same scrub as the reply text.
       ...(council && role === 'assistant' && { council: JSON.stringify(vault.scrubValue(id, council, clean)) }) }).execute();
+  }
+
+  async function previousAssistantAnswer(ownerId: string, id: string, runId: string) {
+    const row = await db.selectFrom('chat_messages as m').innerJoin('chat_conversations as c', 'c.id', 'm.conversation_id')
+      .leftJoin('chat_runs as r', join => join.onRef('r.id', '=', 'm.run_id').onRef('r.conversation_id', '=', 'm.conversation_id').onRef('r.owner_id', '=', 'c.owner_id'))
+      .select(['m.text', 'r.state', 'r.status']).where('m.conversation_id', '=', id).where('c.owner_id', '=', ownerId)
+      .where('m.role', '=', 'assistant').where(eb => eb.or([eb('m.run_id', 'is', null), eb('m.run_id', '!=', runId)]))
+      .orderBy('m.created_at', 'desc').orderBy('m.id', 'desc').limit(1).executeTakeFirst();
+    if (!row) return null;
+    const state: BrainState | undefined = ['completed', 'partial', 'blocked'].includes(row.status) ? row.state ?? undefined : undefined;
+    const legacyUrls = [state?.handsFound?.url, state?.handsFound?.second?.url].filter((url): url is string => typeof url === 'string');
+    return { text: row.text, provenance: state?.answerProvenance, legacyUrls, calculation: state?.computed?.line };
   }
 
   async function addStep(id: string, runId: string, text: string) {
@@ -1480,7 +1503,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   /**
    * The council's own public search for a turn the pipeline left without pages: the chat's search engine and page
    * reader, behind the same public-query guard as the hands. Reads the best hits by question words, one per site,
-   * whatever the site; a page that cannot be read contributes its search snippet.
+   * whatever the site. Search snippets are not page reads.
    */
   async function councilSearch(ownerId: string, request: string, state: BrainState, question: string, signal: AbortSignal): Promise<CouncilSearchResult> {
     try { assertPublicSearch(request, question, state); }
@@ -1494,10 +1517,12 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const live = isLiveWebQuestion(question);
     const read = await Promise.all(ranked.map(async hit => {
       const page = config.readPage ? await config.readPage(hit.url, signal, { live }).catch(() => null) : null;
-      if (page && page !== 'disallowed' && page.text.trim()) return { kind: 'page' as const, url: page.url, title: page.title || hit.title, text: page.text.slice(0, 200_000) };
-      return hit.snippet?.trim() ? { kind: 'page' as const, url: hit.url, title: hit.title, text: hit.snippet } : null;
+      return page && page !== 'disallowed' && page.text.trim()
+        ? { kind: 'page' as const, url: page.url, title: page.title || hit.title, text: page.text.slice(0, 200_000) } : null;
     }));
     const pages = read.filter((page): page is NonNullable<typeof page> => page !== null);
+    const current = execution.getStore();
+    if (current) current.councilReadUrls = pages.map(page => page.url);
     return pages.length ? { pages } : { pages: [], note: 'لم تُقرأ أي صفحة من نتائج البحث.' };
   }
 
@@ -1609,7 +1634,11 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       });
       if (blockedMonitor && !monitorError) finalText += `\n\n${blockedMonitor.text}`;
       if (!experiment && !council?.changed && monitor?.v2 && !preparedMonitor && finalStatus === 'completed' && !judged.withheld && !memoryPublication && !state.questionAnswer && source?.request) finalText += await monitor.publishAnswerOffer(tx, { ownerId: source.ownerId, conversationId: id, runId, text: source.request, pages: [...(source.readPages ?? []), ...(source.page ? [source.page] : [])] }, finalText);
-      await addMessage(tx, id, 'assistant', experiment ? `${modelReply}${V5_CHAT_FOOTER}` : finalText, experiment, councilRecord);
+      const publishedText = experiment ? `${modelReply}${V5_CHAT_FOOTER}` : finalText;
+      state.answerProvenance = recordAnswerProvenance(clean(publishedText), [
+        state.handsFound?.url, source?.page?.url, ...(source?.readPages ?? []).map(page => page.url), ...(source?.councilReadUrls ?? []),
+      ].filter((url): url is string => typeof url === 'string'));
+      await addMessage(tx, id, 'assistant', publishedText, experiment, councilRecord);
       if (state.completionReview) await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId,
         kind: 'task_review', message: 'مراجعة شروط المهمة المعلنة؛ لا تعني تصديق كل عبارة في الجواب.',
         data: JSON.stringify({ contractHash: state.supervision?.contract.hash, review: state.completionReview }) }).execute();
@@ -2194,6 +2223,38 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       }
       if (await handleStructuredMemoryTurn({ db, ownerId, conversationId: id, runId, state, source: effectiveSource, constraints, task: run.intent === 'task', memoryAvailable: Boolean(tools?.memory), quota: MAX_MEMORY_SAVES, scrub: text => vault.scrub(id, clean(text)), lockedExecution, finish })) return;
       const actionRequest = requestActionText(requestScopeActionText(request));
+      const provenanceLanguage = run.intent === 'task' && !state.steps ? answerProvenanceRequest(actionRequest) : null;
+      if (provenanceLanguage) {
+        const previous = await previousAssistantAnswer(ownerId, id, runId);
+        if (previous) state.trail.push({ step: ++state.steps, action: 'explain_previous_answer', result: 'consulted the previous reply record', changed: false });
+        await finish(id, runId, state, vault.scrub(id, explainPreviousAnswer(provenanceLanguage, previous)), 'completed', undefined, undefined, true);
+        return;
+      }
+      const campaignPlan = run.intent === 'task' && !state.hands
+        ? state.campaignPlan ?? (!state.steps && state.routing?.handler === 'planning' ? campaignPlanningTask(actionRequest) : null) : null;
+      if (campaignPlan) {
+        if (state.dropHeld) {
+          await browser.dropHeld(ownerId, id);
+          state.dropHeld = false;
+        }
+        const answer = state.questionAnswer;
+        const task = answer ? answerCampaignPlan(campaignPlan, answer.fields ?? answer.text) : campaignPlan;
+        const ar = task.lang === 'ar';
+        state.questionAnswer = undefined;
+        const card = campaignPlanQuestion(task);
+        if (card) {
+          state.campaignPlan = task;
+          const question: ChatQuestion = { ...card, id: randomUUID(), options: [{ id: 'stop', label: ar ? 'توقف هنا' : 'Stop here' }] };
+          await addStep(id, runId, ar ? 'تفاصيل خطة الحملة' : 'Campaign plan details');
+          await pause(id, runId, state, 'waiting_user', { question: JSON.stringify(question) }, card.prompt);
+        } else {
+          delete state.campaignPlan;
+          await addStep(id, runId, ar ? 'إعداد خطة الحملة' : 'Preparing the campaign plan');
+          const composed = composeCampaignPlan(task);
+          await finish(id, runId, state, vault.scrub(id, composed.text), composed.status, undefined, undefined, true);
+        }
+        return;
+      }
       const conversationTurn = await enterConversationTurn({ db, ownerId, conversationId: id, turnId: runId, text: request, intent: run.intent, state, active, shadow: config.conversationShadow, chatModel: hasChatModel(), canReadPublicPage: Boolean(config.readPage) });
       const computationMemoryBinding = { ownerId, conversationId: id, runId, evaluatedAt: effectiveSource.evaluatedAt };
       const computationMemoryReceipt = createComputationMemoryReceipt(request, computationMemoryBinding);
@@ -4218,7 +4279,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
         state.requestResolution = resolution;
         if (resolution.nextState) state.requestContext = resolution.nextState;
-        if ((state.writer || state.planner || state.document || state.site) && row.question) state.questionAnswer = { questionId: row.question.id, text: clean(input.text),
+        if ((state.writer || state.planner || state.campaignPlan || state.document || state.site) && row.question) state.questionAnswer = { questionId: row.question.id, text: clean(input.text),
           ...(input.answers ? { fields: Object.fromEntries(input.answers.map(answer => [answer.fieldId, clean(answer.value)])) } : {}) };
         state.trail.push({ step: state.steps, action: 'asked the user', result: `user answered: ${clean(input.text).slice(0, 400)}`, changed: true });
         state.failures = 0;
@@ -4658,14 +4719,15 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     await Promise.allSettled([...workers.values()]);
     const abandoned:{ownerId:string;state:unknown}[]=[];
     await db.transaction().execute(async tx=>{
-      const rows=await tx.selectFrom('chat_conversations as c').innerJoin('chat_runs as r','r.id','c.active_run_id').select(['c.id','r.id as run_id','r.owner_id','r.state']).where('r.worker_id','=',instanceId).where('c.status','in',['running',...WAITING_STATUSES]).forUpdate('c').execute();
+      const rows=await tx.selectFrom('chat_conversations as c').innerJoin('chat_runs as r','r.id','c.active_run_id').select(['c.id','c.status','r.id as run_id','r.owner_id','r.state']).where('r.worker_id','=',instanceId).where('c.status','in',['running',...WAITING_STATUSES]).forUpdate('c').execute();
       for(const row of rows){
         await tx.updateTable('chat_runs').set({status:'interrupted',lease_token:randomUUID(),updated_at:new Date()}).where('id','=',row.run_id).execute();
         await tx.updateTable('chat_effect_receipts').set({status:'unknown',finished_at:new Date()}).where('run_id','=',row.run_id).where('status','=','started').execute();
         await tx.updateTable('chat_model_receipts').set({status:'unknown',error_code:'CHAT_SHUTDOWN',finished_at:new Date()}).where('run_id','=',row.run_id).where('status','=','started').execute();
         await recordTerminalRun(tx, row.run_id, 'interrupted');
         await closeOpenCampaignTasks(tx, row.id, row.run_id, unresolved => campaignCancelEvent('run_interrupted', unresolved));
-        await tx.updateTable('chat_conversations').set({status:'failed',active_run_id:null,question:null,approval:null,secure:null,progress:null,error:'توقفت جلسة التنفيذ. لم يُكرر أي إجراء؛ راجع الأثر قبل طلب جديد.',updated_at:new Date()}).where('id','=',row.id).execute();
+        await tx.updateTable('chat_conversations').set({status:'failed',active_run_id:null,question:null,approval:null,secure:null,progress:null,
+          error:interruptedPlanningPrompt(row.status, row.state) ?? 'توقفت جلسة التنفيذ. لم يُكرر أي إجراء؛ راجع الأثر قبل طلب جديد.',updated_at:new Date()}).where('id','=',row.id).execute();
         abandoned.push({ownerId:row.owner_id,state:row.state});
       }
     });
